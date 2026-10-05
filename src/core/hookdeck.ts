@@ -49,6 +49,7 @@ export interface Source {
   name: string;
   url: string;
   type?: string;
+  description?: string | null;
 }
 
 export interface Destination {
@@ -293,6 +294,11 @@ export class HookdeckClient {
       if (!next) return found;
     }
     return found;
+  }
+
+  /** Create or update a source by name. `config.auth.webhook_secret_key` sets a provider's signing secret. */
+  upsertSource(input: { name: string; type: string; description?: string; config?: Record<string, unknown> }) {
+    return this.api<Source & { description?: string | null }>('/sources', { method: 'PUT', body: input });
   }
 
   listSources(query: { name?: string; limit?: number } = {}) {

@@ -28,6 +28,8 @@ export class FakeEventGateway {
   readonly sources = new Map<string, Resource>();
   readonly destinations = new Map<string, Resource>();
   readonly connections = new Map<string, ConnectionResource>();
+  readonly issueTriggers = new Map<string, Record<string, unknown>>();
+  webhookNotifications: Record<string, unknown> | null = null;
   private counter = 0;
 
   private nextId(prefix: string) {
@@ -94,6 +96,40 @@ export class FakeEventGateway {
       }
       Object.assign(connection, { description: body.description, rules: body.rules ?? [] });
       return json(200, this.view(connection));
+    }
+
+    if (method === 'PUT' && path === '/sources') {
+      const body = JSON.parse(String(init?.body)) as { name: string; type: string; description?: string; config?: Record<string, unknown> };
+      if (!NAME.test(body.name)) return json(422, { data: ['source name fails to match the required pattern'] });
+      let source = this.byName(this.sources, body.name);
+      if (!source) {
+        const id = this.nextId('src');
+        source = { id, name: body.name, url: `https://hkdk.events/${id}` };
+        this.sources.set(id, source);
+      }
+      Object.assign(source, { type: body.type, ...(body.description !== undefined && { description: body.description }) });
+      if (body.config) source.config = { ...(source.config ?? {}), ...body.config };
+      const { config: _hidden, ...visible } = source;
+      return json(200, visible);
+    }
+
+    if (method === 'GET' && path === '/sources') {
+      const name = url.searchParams.get('name');
+      const models = [...this.sources.values()].filter((src) => !name || src.name === name).map(({ config: _hidden, ...visible }) => visible);
+      return json(200, { models });
+    }
+
+    if (method === 'PUT' && path === '/notifications/webhooks') {
+      this.webhookNotifications = JSON.parse(String(init?.body));
+      return json(200, this.webhookNotifications);
+    }
+
+    if (method === 'PUT' && path === '/issue-triggers') {
+      const body = JSON.parse(String(init?.body)) as { name: string };
+      const existing = this.issueTriggers.get(body.name);
+      const trigger = { id: (existing?.id as string) ?? this.nextId('it'), ...body };
+      this.issueTriggers.set(body.name, trigger);
+      return json(200, trigger);
     }
 
     if (method === 'GET' && path === '/connections') {

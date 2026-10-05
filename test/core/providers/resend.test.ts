@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { emailReceived, resend } from '../../../src/core/providers/resend.js';
+import { emailReceived, resendProvider as resend } from '../../../src/core/providers/resend.js';
 import { normalizeAddress, type InboundRequest } from '../../../src/core/providers/types.js';
 
 const fixture = JSON.parse(

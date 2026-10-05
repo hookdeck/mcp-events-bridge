@@ -7,9 +7,9 @@ import { normalizeAddress, type InboundRequest, type ProviderDefinition, type Pr
  * verifies the Svix signature, so the bridge only sees verified requests.
  */
 
-export interface ResendOptions {
+export type ResendOptions = {
   apiKey: string;
-}
+};
 
 const RESEND_API = 'https://api.resend.com';
 
@@ -102,10 +102,11 @@ async function resendApi(fetchFn: typeof fetch, apiKey: string, path: string, in
   return text ? (JSON.parse(text) as Record<string, unknown>) : {};
 }
 
-export const resend: ProviderDefinition<ResendOptions> = {
+export const resendProvider: ProviderDefinition<ResendOptions> = {
   type: 'resend',
   displayName: 'Resend',
   sourceType: 'RESEND',
+  inboundDedupeFields: ['headers.svix-id'],
   events: [emailReceived],
 
   async register({ sourceUrl, providerEvents, options, fetch: fetchFn }) {
