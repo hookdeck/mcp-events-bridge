@@ -2,7 +2,7 @@
 
 Status: draft, revised 5 Oct 2026. Repo `hookdeck/mcp-events-bridge`, npm package `@hookdeck/mcp-events-bridge`.
 
-This is the single source for the design and the build plan. Agents working on the repo should also read `AGENTS.md`.
+This is the design. The staged plan and its status are in [`PLAN.md`](PLAN.md), and spike results in [`SPIKES.md`](SPIKES.md). Agents working on the repo should also read `AGENTS.md` at the repo root.
 
 ## What it does
 
@@ -63,7 +63,7 @@ Rules that make it correct:
 - **The inbound retry rule finishes inside the dedupe window.** For example, linear retries that end within an hour.
 - **Publish to all matches in parallel,** so the inbound response stays well inside the destination timeout.
 - **Skip subscriptions created after the event's `occurredAt`,** so an inbound retry doesn't hand a new subscriber an old event.
-- **Outbound retries carry the first signature.** Event Gateway passes the published headers through unchanged, so a retry has the original `webhook-timestamp`. The spec says each retry attempt MUST regenerate the timestamp and signature, so this doesn't conform (see "Spec conformance"). Keep each subscription connection's retries inside 5 minutes, the window inside which receivers SHOULD accept a timestamp, until Event Gateway can sign Standard Webhooks itself. Spike 2 confirms the pass-through behavior.
+- **Outbound retries carry the first signature.** Event Gateway passes the published headers through unchanged, so a retry has the original `webhook-timestamp`. The spec says each retry attempt MUST regenerate the timestamp and signature, so this doesn't conform (see "Spec conformance"). Keep each subscription connection's retries inside 5 minutes, the window inside which receivers SHOULD accept a timestamp, until Event Gateway can sign Standard Webhooks itself. Stage 3 confirms the pass-through behavior.
 - **The inbound connection also dedupes** on `headers.svix-id`, to drop fast provider retries before they reach the bridge. Best-effort, as above.
 
 Both rules on dedupe come from the same caveat in the Event Gateway docs: "Deduplication is a best-effort feature and is not guaranteed."
@@ -308,7 +308,7 @@ SQLite, one file per deployment. No event table: Event Gateway is the record of 
 - **topics:** MCP event name, topic source id.
 - **subscriptions:** id, principal, event name, arguments, callback URL, secret, expiry, connection id, destination id, created and refreshed times.
 
-Subscription secrets are sensitive, and the relay needs them in plaintext to sign. Slice 1 keeps the database user-readable only, on an encrypted host volume. Before the bridge is promoted for others to deploy, the secret column is encrypted with AES-GCM using `BRIDGE_ENCRYPTION_KEY`, since other hosts may not encrypt disks; losing that key means subscribers re-subscribe. Once Event Gateway signs, secrets move to Event Gateway destinations.
+Subscription secrets are sensitive, and the relay needs them in plaintext to sign. Stage 6 keeps the database user-readable only, on an encrypted host volume. Before the bridge is promoted for others to deploy, the secret column is encrypted with AES-GCM using `BRIDGE_ENCRYPTION_KEY`, since other hosts may not encrypt disks; losing that key means subscribers re-subscribe. Once Event Gateway signs, secrets move to Event Gateway destinations.
 
 ## Provider manifests
 
@@ -347,14 +347,14 @@ interface ManifestEvent {
 
 `register()` matters beyond convenience: the signing secret the provider returns goes straight onto the Event Gateway source and never enters the model's context.
 
-Resend, first manifest (settled in spike 3; see `SPIKES.md` and `test/fixtures/resend/email-received.json`):
+Resend, first manifest (settled in stage 2; see `SPIKES.md` and `test/fixtures/resend/email-received.json`):
 
 - `sourceType`: `RESEND`. Event Gateway verifies Resend's Svix signature.
 - `register()`: Resend's create-webhook API with the source URL and `email.received`; it returns `signing_secret`.
 - `matches`: `body.type === "email.received"`.
 - `eventId`: the `svix-id` header.
 - `occurredAt`: `body.data.created_at` (the received email's time, millisecond precision).
-- `summarize`: `emailId` (`data.email_id`), `from`, `to`, `cc`, `subject`, `messageId`, `attachmentCount`, plus normalized `fromAddress` and `toAddresses` (bare, lowercased). Resend sent a bare `from` in spike 3, but normalization stays. The webhook carries metadata only; the body comes from Resend's own MCP server.
+- `summarize`: `emailId` (`data.email_id`), `from`, `to`, `cc`, `subject`, `messageId`, `attachmentCount`, plus normalized `fromAddress` and `toAddresses` (bare, lowercased). Resend sent a bare `from` in stage 2, but normalization stays. The webhook carries metadata only; the body comes from Resend's own MCP server.
 - `inputSchema`: `from` and `to` filters, matched on the normalized addresses. Recommend `from` in the event description, since it limits who can wake the agent.
 
 ## Adding a provider
@@ -382,7 +382,7 @@ Gaps, and where the config file leaves them:
 
 ### Second provider: GitHub
 
-GitHub is the slice 3 manifest. It differs from Resend in ways that test the provider interface, though not every gap above.
+GitHub is the stage 8 manifest. It differs from Resend in ways that test the provider interface, though not every gap above.
 
 | | Resend | GitHub (check each against the GitHub docs and a real delivery) |
 | --- | --- | --- |
@@ -484,7 +484,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 
 | Requirement | Level | Status | Notes |
 | --- | --- | --- | --- |
-| Authenticated principal; reject with `-32012` | MUST | **Unknown** | Behind Secure MCP Tunnel there's no OAuth. Spike 1 has to show what identity, if any, ChatGPT presents through the tunnel. Fallback: static bearer tokens mapped to principals, as the demo does |
+| Authenticated principal; reject with `-32012` | MUST | **Unknown** | Behind Secure MCP Tunnel there's no OAuth. Stage 5 has to show what identity, if any, ChatGPT presents through the tunnel. Fallback: static bearer tokens mapped to principals, as the demo does |
 | Principal authorized for the event and arguments | MUST | **Gap** | Single-tenant: any principal the deployment accepts can subscribe to any configured event. No per-resource access model |
 | Re-check access during the subscription; stop on revocation | SHOULD (spec), required by OpenAI | **Gap** | Only "remove the principal's token". No revocation signal from providers |
 | `https` callback URLs; reject others with `-32602` | MUST | Designed | ChatGPT callbacks are `https`; local agents use Hookdeck source URLs, which are `https`. The demo's `allowLocal` (`http` on localhost) is dev-only and doesn't conform |
@@ -519,7 +519,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Body at most 256 KiB | SHOULD (spec), hard limit for ChatGPT | Designed | The relay checks size before publishing |
 | **Each retry regenerates timestamp and signature** | MUST | **Gap** | Event Gateway redelivers the original headers. Mitigation: retries finish inside 5 minutes, the window inside which receivers SHOULD accept a timestamp. Inbound retries do re-sign. Closes with Standard Webhooks destination signing |
 | Exponential backoff, bounded attempts | SHOULD | Designed | Event Gateway retry rule, exponential, inside 5 minutes |
-| Don't retry `410` or `413` | MUST | Designed | `!410,!413` on the retry rule; syntax unverified (spike 2) |
+| Don't retry `410` or `413` | MUST | Designed | `!410,!413` on the retry rule; syntax unverified (stage 3) |
 | Stable `eventId`, duplicates and out-of-order delivery tolerated | MUST | Designed | Provider event id; dedupe is best-effort, receivers dedupe on `webhook-id` |
 | Event content treated as untrusted data | MUST | Designed | No instructions in payloads |
 
@@ -528,7 +528,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Feature | Level | Status | Notes |
 | --- | --- | --- | --- |
 | `gap` and `terminated` control envelopes | MUST when used; `terminated` SHOULD on revocation or removed events | Not planned | ChatGPT doesn't support them. `bridge setup --prune` should send `terminated` if a client ever does |
-| Poll mode (`events/poll`) | Optional mode | Planned (after slice 1) | Replaces the custom pull tools as the primary pull interface; backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
+| Poll mode (`events/poll`) | Optional mode | Planned (after stage 6) | Replaces the custom pull tools as the primary pull interface; backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
 | Push mode (`events/stream`) | Optional mode | Not planned | |
 | Replay: non-null `cursor`, `maxAgeMs` | MAY | Not planned | Possible later: Event Gateway keeps every inbound request, so a cursor could be a position in that history |
 | Asymmetric `v1a,` signatures and JWKS | MAY | Not planned | |
@@ -537,7 +537,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 
 - **Known gaps:** re-signing on every retry, per-principal authorization, and access re-checks. The first is a known limit of the relay and closes with Event Gateway destination signing. The other two come from single-tenant hosting and matter more for anything multi-tenant.
 - **Delegated to Event Gateway:** the delivery-time SSRF and no-redirect rules apply to whoever makes the deliveries, which is Event Gateway.
-- **Unknown:** what principal ChatGPT presents through the tunnel (spike 1).
+- **Unknown:** what principal ChatGPT presents through the tunnel (stage 5).
 - **Everything ChatGPT tests in its checklist** is designed, mostly ported from the demo that passed it. That's design, not a passing implementation.
 
 ## Verified facts
@@ -582,7 +582,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - Non-interactive login into a private config: `hookdeck ci --api-key $HOOKDECK_API_KEY --hookdeck-config <path>`.
 - `hookdeck listen <port> <source> <connection> --output compact --device-name <name> --hookdeck-config <path>`, with the exact connection name. If that connection doesn't exist, `listen` creates a shared `cli-<source>` connection.
 - "Connected" on stdout means the session is up; that's the recovery trigger.
-- Relevant `gateway connection upsert` flags: `--source-type`, `--source-webhook-secret`, `--destination-type`, `--destination-cli-path`, `--destination-url`, `--rule-filter-headers`, `--rule-retry-strategy`, `--rule-retry-count`, `--rule-retry-interval`, `--rule-retry-response-status-codes`. Whether the last accepts `!410,!413` is unverified (spike 2).
+- Relevant `gateway connection upsert` flags: `--source-type`, `--source-webhook-secret`, `--destination-type`, `--destination-cli-path`, `--destination-url`, `--rule-filter-headers`, `--rule-retry-strategy`, `--rule-retry-count`, `--rule-retry-interval`, `--rule-retry-response-status-codes`. Whether the last accepts `!410,!413` is unverified (stage 3).
 
 **CLI destination behavior:**
 
@@ -602,65 +602,15 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 - Webhooks are Svix-signed, with `svix-id`, `svix-timestamp` and `svix-signature` headers.
 - The create-webhook API returns a `signing_secret`.
-- `email.received` carries metadata only: `type`, `created_at`, and `data` with `email_id`, `from`, `to`, `received_for`, `cc`, `bcc`, `subject`, `message_id`, `attachments`, `created_at` (spike 3).
+- `email.received` carries metadata only: `type`, `created_at`, and `data` with `email_id`, `from`, `to`, `received_for`, `cc`, `bcc`, `subject`, `message_id`, `attachments`, `created_at` (stage 2).
 - Every account gets a receiving domain, `<id>.resend.app`; mail to any address on it is received. No custom domain needed.
-- Event Gateway passes `svix-*` headers through and rejects unsigned requests to a `RESEND` source as `VERIFICATION_FAILED` without forwarding them; the sender still gets `200` (spike 3).
+- Event Gateway passes `svix-*` headers through and rejects unsigned requests to a `RESEND` source as `VERIFICATION_FAILED` without forwarding them; the sender still gets `200` (stage 2).
 - Event Gateway has a `RESEND` source type.
 - Test emails are sent through Resend's API from a verified sending domain in the dedicated account.
 
-## Build plan
+## Plan
 
-### Step 0: spikes
-
-Results go in `SPIKES.md`.
-
-1. **Spike 3, Resend inbound (first).** Upsert `spike-resend` with `--source-type RESEND` and a CLI destination. Create a Resend webhook for `email.received` at the source URL and set the returned `signing_secret` with `--source-webhook-secret`. Run `hookdeck listen` to a local endpoint that logs headers and body, and send an email to `RESEND_INBOUND_ADDRESS`. Pass: Event Gateway accepts it as verified, the endpoint gets it, and a redacted fixture is saved. From the fixture, settle the paths for event id, occurred-at, email id, from, to and subject. Then send one unsigned request and record what Event Gateway does.
-2. **Spike 1, ChatGPT through Secure MCP Tunnel (needs the maintainer; now on the critical path).** Run the demo server locally with no public tunnel. The maintainer creates the tunnel, points `tunnel-client` at the demo's MCP URL, and creates a developer-mode app with Tunnel as the connection. The maintainer subscribes from a Work chat, then run `npm run order`. Pass: subscribe, the challenge and one delivery work. Record anything that differs from the 1 Oct public-URL test.
-3. **Spike 2, pass-through of signed requests.** Run a public receiver on a cloudflared quick tunnel that logs every attempt's headers and a SHA-256 of the raw body, verifies with `standardwebhooks`, and returns `500` first and `200` after. Upsert `spike-passthrough`: a `PUBLISH_API` source, an HTTP destination at the receiver, `--rule-filter-headers` on `X-MCP-Subscription-Id`, retry linear, 2 retries, 30 seconds, `--rule-retry-response-status-codes` `!410,!413`. Publish one request signed with the demo's `signStandardWebhook`. Record: body hash across attempts and against the publisher's; which headers change, especially `webhook-timestamp` and `webhook-signature`; headers added or dropped; whether verification passes on the retry. Confirm a `410` stops retries. Then fail a delivery, delete its connection while a retry is scheduled, and record whether another attempt arrives.
-4. **Spike 4, topology.** On the `spike-passthrough` source, add a second filtered connection and a dedupe rule on `headers.webhook-id`. Publish to each subscription and the same request twice. Record: each connection gets only its own request; the duplicate becomes an ignored event; the `FILTERED` records on the other connection. Check filter behavior for later: `$in` on a string, array matching, case sensitivity. Then enable webhook notifications to a `spike-notifications` source, add a delivery issue trigger on the spike connections, let a delivery fail, and save a redacted `issue.opened` payload: record its shape, how it's signed, and whether it carries the failing response status (needed to act on `410`).
-
-### Slice 1: hosted relay, Resend, test subscriber, ChatGPT
-
-Build in this order, with tests as you go.
-
-1. **Scaffold.** `package.json`, `tsconfig`, `vitest`, `.env.example`, and the layout above. Pick `node:sqlite` or `better-sqlite3` and note why (lean `node:sqlite`: no native build).
-2. **Shared pieces.** Port `secret.ts`, `standard-webhooks.ts`, `errors.ts`, `identity.ts` and `callback.ts` from the demo, splitting `callback.ts` as above.
-3. **Store.** The `Store` interface and the SQLite implementation.
-4. **Event Gateway client.** Sources, connections, destinations, request and event listing, and the Publish API. Port from the fleet demo's `shared/src/hookdeck.ts` and keep its comments on the gotchas.
-5. **Resend manifest.** Use the spike 3 fixture for unit tests of `matches`, `eventId`, `occurredAt`, `summarize` and `accepts`.
-6. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance. `list_providers`.
-7. **Subscriptions.** Port `subscriptions.ts` from the demo, creating and deleting the per-subscription Event Gateway resources. Long default lifetime; sweeper for expiry.
-8. **Inbound route and relay.** Verify the Hookdeck signature, map, match, sign, publish in parallel, `200` only if all succeed.
-9. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). The bridge records issues on the subscription or provider instance, reports them in `list_providers`, and returns `deliveryStatus` on refresh. Transformation issues wait for the direct path.
-10. **MCP server.** `events/*` handlers plus `get_event` and `list_recent_events`, on `127.0.0.1`.
-11. **CLI entry.** `serve` and `setup`. `doctor` and `--prune` can be stubs.
-12. **End-to-end script.** Start the bridge with a public inbound URL (cloudflared for development), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
-13. **Deploy.** Dockerfile (bridge plus `tunnel-client`) and a Fly.io config with a volume for SQLite; deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
-14. **ChatGPT.** Through Secure MCP Tunnel to the deployed bridge, as in spike 1.
-
-Done when:
-
-- An email to the Resend address reaches the test subscriber, and `webhook-id` equals the `svix-id`.
-- A `from` filter drops other senders.
-- A forced publish failure for one of two subscribers makes the inbound event retry, and each subscriber receives the email once.
-- A duplicate provider delivery doesn't reach a subscriber twice.
-- `get_event` returns the summary.
-- A subscription whose callback keeps failing shows up in `list_providers` and in `deliveryStatus` on its next refresh, from an Event Gateway delivery issue.
-- The bridge runs on Fly.io, and ChatGPT subscribes through the tunnel and receives an email event.
-- `npm test` passes, and the end-to-end steps are in the README.
-
-### Slice 2: local
-
-- Local agents through the CLI, including the Claude Code channel shim, using the MCP Events source type (in progress) for the challenge and verification.
-- The bridge on a laptop: CLI destination, `listen` supervisor and recovery from the fleet demo. Done when stopping `listen`, sending two emails and restarting delivers both, once each, and restarting during the roughly 2-minute grace window also delivers once.
-
-### Slice 3
-
-Poll mode (`events/poll`) and a Smithery listing. Deploy docs and automation for Railway and Render. App-level encryption of subscription secrets (`BRIDGE_ENCRYPTION_KEY`). `bridge doctor` and `setup --prune`, the GitHub provider (see "Second provider: GitHub"), and the README.
-
-### Later
-
-Standard Webhooks destination signing and publish-once; delivering straight from the provider source; a public MCP endpoint with OAuth.
+The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results are in [`SPIKES.md`](SPIKES.md).
 
 ## Decisions
 
@@ -671,11 +621,11 @@ Standard Webhooks destination signing and publish-once; delivering straight from
 - **5 Oct, poll mode.** The spec's `events/poll` replaces the custom pull tools as the pull interface; tools wrap it only for hosts without MCP Events support.
 - **5 Oct, Smithery.** List the bridge on Smithery as an ordinary MCP server first; triggers support only if there's interest.
 - **5 Oct, test email.** A verified sending domain in the dedicated Resend account; agents send test emails through Resend's API, so the end-to-end script runs unattended.
-- **5 Oct, hosting.** The deliverable is a Docker image (bridge plus `tunnel-client`). Fly.io is the reference host for slice 1 (a Machine with a volume for SQLite). Deploy docs and automation for Railway and Render follow.
+- **5 Oct, hosting.** The deliverable is a Docker image (bridge plus `tunnel-client`). Fly.io is the reference host for stage 6 (a Machine with a volume for SQLite). Deploy docs and automation for Railway and Render follow.
 - **5 Oct, name.** GitHub `hookdeck/mcp-events-bridge`, npm `@hookdeck/mcp-events-bridge`, CLI `mcp-events-bridge`.
-- **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in slice 1; transformation issues come with the direct path.
-- **5 Oct, secrets at rest.** File permissions and host volume encryption in slice 1; app-level AES-GCM encryption of subscription secrets before the bridge is promoted for others to deploy.
-- **5 Oct, ChatGPT plan.** Slice 1 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
+- **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 6; transformation issues come with the direct path.
+- **5 Oct, secrets at rest.** File permissions and host volume encryption in stage 6; app-level AES-GCM encryption of subscription secrets before the bridge is promoted for others to deploy.
+- **5 Oct, ChatGPT plan.** Stage 6 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 
 ## Open questions
@@ -683,14 +633,13 @@ Standard Webhooks destination signing and publish-once; delivering straight from
 - [ ] Standard Webhooks destination auth in Event Gateway: not planned yet. Decides when the re-sign gap closes and publish-once can happen. Needs per-destination secret rotation as well as signing.
 - [ ] Delivering straight from the provider source: the research questions in "Evolution".
 - [ ] Adding a provider: gaps 2 and 4 in "Adding a provider", and the manual paste in gap 1. Pick a third provider that tests them.
-- [ ] Principal through Secure MCP Tunnel: what ChatGPT presents (spike 1). The Outpost demo's ChatGPT app used "No Authentication", which gives no principal; if the tunnel adds no identity, configure a bearer token on the ChatGPT app if Developer mode allows it.
+- [ ] Principal through Secure MCP Tunnel: what ChatGPT presents (stage 5). The Outpost demo's ChatGPT app used "No Authentication", which gives no principal; if the tunnel adds no identity, configure a bearer token on the ChatGPT app if Developer mode allows it.
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
-- [ ] Do delivery issue notifications carry the failing response status? If so, delete a subscription on `410` (spike 4).
-- [ ] Spike 2 results: byte-identical bodies, and whether retries change headers.
+- [ ] Do delivery issue notifications carry the failing response status? If so, delete a subscription on `410` (stage 4).
+- [ ] Stage 3 results: byte-identical bodies, and whether retries change headers.
 - [ ] What ChatGPT does when a refresh fails while the bridge is offline. Lean: long default lifetime until tested.
-- [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for slice 1.
+- [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 6.
 - [ ] One `listen` per connection, or one for all sources (local bridge only). Lean: one per connection until checked.
-- [x] Slice 2 order. Superseded: ChatGPT is in slice 1 through the tunnel; slice 2 is local.
 
 ## Prior art
 

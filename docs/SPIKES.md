@@ -1,8 +1,8 @@
 # Spikes
 
-Results of the step 0 spikes in `ARCHITECTURE.md`. Raw captures stay in `spikes/raw/` (gitignored); redacted fixtures are committed under `test/fixtures/`.
+Results of the spike stages in [`PLAN.md`](PLAN.md). Raw captures stay in `spikes/raw/` (gitignored); redacted fixtures are committed under `test/fixtures/`.
 
-## Spike 3: Resend inbound
+## Stage 2: Resend inbound
 
 Run on 5 Oct 2026. **Passed.**
 
@@ -44,5 +44,5 @@ Resend manifest paths, settled from the fixture (`test/fixtures/resend/email-rec
 
 ### Resources
 
-- Event Gateway, left in place (inert without the Resend webhook): connection `spike-resend`, source `spike-resend`, destination `spike-resend-cli`. Delete with the other spike resources at the end of step 0.
+- Event Gateway, left in place (inert without the Resend webhook): connection `spike-resend`, source `spike-resend`, destination `spike-resend-cli`. Delete with the other spike resources once stages 2 to 5 are done.
 - Resend webhook: deleted.
