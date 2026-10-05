@@ -121,6 +121,28 @@ describe('EventGatewayStore', () => {
     expect(gateway.destinations.get(second.destinationId)?.config?.auth).toMatchObject({ signing_secret: rotated });
   });
 
+  it('serializes concurrent writes', async () => {
+    const { gateway, store } = setup();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const original = gateway.fetch;
+    const tracking = (async (input: URL | string, init?: RequestInit) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      try {
+        return await original(input, init);
+      } finally {
+        inFlight--;
+      }
+    }) as typeof fetch;
+    const concurrent = new EventGatewayStore(new HookdeckClient({ apiKey: 'test', fetch: tracking }));
+    await Promise.all(['a', 'b', 'c', 'd'].map((x) => concurrent.put(input({ id: `sub_${x.repeat(32)}` }))));
+    expect(maxInFlight).toBe(1);
+    expect(gateway.connections.size).toBe(4);
+    void store;
+  });
+
   it('lists expired subscriptions', async () => {
     const { store } = setup();
     await store.put(input({ expiresAt: '2026-10-01T00:00:00.000Z' }));

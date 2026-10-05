@@ -205,7 +205,10 @@ export class HookdeckClient {
       const text = await res.text();
       if (res.ok) return (text ? JSON.parse(text) : {}) as T;
       const delay = this.retryDelaysMs[attempt];
-      if (res.status === 429 && delay !== undefined) {
+      // 429s always back off. Server errors are retried only for idempotent methods: concurrent upserts that
+      // create the same new source can fail with 500 FATAL_ERROR (stage 5).
+      const retryable = res.status === 429 || (method !== 'POST' && [500, 502, 503, 504].includes(res.status));
+      if (retryable && delay !== undefined) {
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }

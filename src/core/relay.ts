@@ -71,7 +71,8 @@ export class Relay {
 
   private async route(path: string, headers: Record<string, string | undefined>, rawBody: string): Promise<InboundResponse> {
     if (!verifyHookdeckSignature(rawBody, headers, this.deps.signingSecret)) return { status: 401, body: { error: 'invalid signature' } };
-    const match = /^\/inbound\/([A-Za-z0-9_-]+)$/.exec(path);
+    // Event Gateway joins the destination path with the request's path, so `/inbound/hookdeck` can arrive as `/inbound/hookdeck/`.
+    const match = /^\/inbound\/([A-Za-z0-9_-]+)\/?$/.exec(path);
     if (!match) return { status: 404, body: { error: 'not found' } };
 
     let body: unknown;

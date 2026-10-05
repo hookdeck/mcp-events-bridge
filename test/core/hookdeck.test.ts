@@ -67,6 +67,15 @@ describe('HookdeckClient', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('retries idempotent calls on server errors, but not publishes', async () => {
+    const upsert = client([[500, '{"code":"FATAL_ERROR"}'], [200, { id: 'web_1' }]]);
+    await expect(upsert.hookdeck.upsertConnection({ name: 'c', source: { name: 's' }, destination: { name: 'd' } })).resolves.toMatchObject({ id: 'web_1' });
+    expect(upsert.calls).toHaveLength(2);
+    const publish = client([[503, 'unavailable'], [200, {}]]);
+    await expect(publish.hookdeck.publish('src', {}, '{}')).rejects.toMatchObject({ status: 503 });
+    expect(publish.calls).toHaveLength(1);
+  });
+
   it('throws HookdeckApiError with the status once retries run out or on other errors', async () => {
     const limited = client([[429, ''], [429, ''], [429, 'still limited']]);
     await expect(limited.hookdeck.getEvent('evt_1')).rejects.toMatchObject({ status: 429 });

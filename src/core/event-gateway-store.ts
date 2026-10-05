@@ -57,6 +57,14 @@ const isHealthy = (d: SubscriptionInput['delivery']) => d.active && d.lastError 
 export class EventGatewayStore implements SubscriptionStore {
   private readonly records = new Map<string, SubscriptionRecord>();
   private readonly previousSecrets = new Map<string, { secret: string; expiresAt: string }>();
+  /** Writes run one at a time: concurrent connection upserts creating the same new topic source can fail in Event Gateway. */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(work, work);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
 
   constructor(private readonly hookdeck: HookdeckClient) {}
 
@@ -94,7 +102,15 @@ export class EventGatewayStore implements SubscriptionStore {
     return [...this.records.values()].filter((r) => Date.parse(r.expiresAt) <= now.getTime()).map((r) => this.withPrevious(r)!);
   }
 
-  async put(input: SubscriptionInput): Promise<SubscriptionRecord> {
+  put(input: SubscriptionInput): Promise<SubscriptionRecord> {
+    return this.serialize(() => this.write(input));
+  }
+
+  delete(id: string): Promise<void> {
+    return this.serialize(() => this.remove(id));
+  }
+
+  private async write(input: SubscriptionInput): Promise<SubscriptionRecord> {
     const name = subscriptionResourceName(input.id);
     const metadata: Metadata = {
       v: 1,
@@ -138,7 +154,7 @@ export class EventGatewayStore implements SubscriptionStore {
     return this.withPrevious(record)!;
   }
 
-  async delete(id: string) {
+  private async remove(id: string) {
     const record = this.records.get(id);
     if (!record) return;
     await this.hookdeck.deleteConnection(record.connectionId);

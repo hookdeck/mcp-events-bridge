@@ -48,6 +48,10 @@ export interface SubscriberOptions {
   /** Log each `webhook-signature` entry and which secret (current or previous) produced it. */
   debug?: boolean;
   onEvent?: (event: McpEvent, headers: http.IncomingHttpHeaders) => void;
+  /** Tests: the status to answer a verified event delivery with (default 200), for example 410 or 500. Not recorded as received unless 2xx. */
+  respondWith?: (event: McpEvent) => number;
+  /** Called for every verified event delivery attempt, whatever the response. */
+  onAttempt?: (event: McpEvent, status: number) => void;
   log?: (message: string) => void;
 }
 
@@ -283,6 +287,12 @@ export class Subscriber {
     }
 
     const webhookId = String(req.headers['webhook-id']);
+    const status = this.options.respondWith?.(body as unknown as McpEvent) ?? 200;
+    this.options.onAttempt?.(body as unknown as McpEvent, status);
+    if (status < 200 || status >= 300) {
+      this.log(`answered ${webhookId} with ${status}`);
+      return send(status);
+    }
     if (this.seenIds.has(webhookId)) {
       this.log(`duplicate delivery ${webhookId} ignored`);
       return send(200, { duplicate: true });

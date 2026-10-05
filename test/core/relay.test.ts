@@ -73,6 +73,12 @@ describe('Relay: provider events', () => {
     expect((await relay.handle('/inbound/resend', fixture.headers, raw)).status).toBe(401);
   });
 
+  it('accepts a trailing slash, as Event Gateway sends when it joins paths', async () => {
+    const { relay } = setup();
+    const raw = JSON.stringify(fixture.body);
+    expect((await relay.handle('/inbound/resend/', signed(raw, fixture.headers), raw)).status).toBe(200);
+  });
+
   it('accepts the rotation signature header too', async () => {
     const { relay } = setup();
     const raw = JSON.stringify(fixture.body);

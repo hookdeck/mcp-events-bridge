@@ -8,6 +8,10 @@
   "engines": {
     "node": ">=22"
   },
+  "exports": {
+    ".": "./src/index.ts",
+    "./providers": "./src/providers.ts"
+  },
   "bin": {
     "mcp-events-bridge": "./src/cli.ts"
   },

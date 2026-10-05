@@ -2,7 +2,9 @@
 import { parseArgs } from 'node:util';
 import { ConfigError } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
-import { mcpUrl, runSetup } from './core/setup.js';
+import type { ResolvedConfig } from './core/config.js';
+import { providerConnectionName, providerSourceName } from './core/names.js';
+import { NOTIFICATIONS_SOURCE, mcpUrl, runSetup } from './core/setup.js';
 import { loadConfig } from './host/load-config.js';
 import { createBridgeServer } from './host/server.js';
 
@@ -19,6 +21,14 @@ Commands:
   serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper
   doctor  Check the deployment (not built yet)`;
 
+/** For CLI inbound: the `hookdeck listen` commands that forward provider events and issue notifications to the bridge. */
+function listenCommands(config: ResolvedConfig): string[] {
+  return [
+    ...config.providers.map((p) => `hookdeck listen ${config.port} ${providerSourceName(p.id)} ${providerConnectionName(p.id, config.deployment)}`),
+    `hookdeck listen ${config.port} ${NOTIFICATIONS_SOURCE} bridge-notifications-${config.deployment}`,
+  ];
+}
+
 async function setup(configFile: string | undefined) {
   const config = await loadConfig({ file: configFile });
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
@@ -31,9 +41,7 @@ async function setup(configFile: string | undefined) {
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
-    for (const p of report.providers) {
-      console.log(`\nForward provider events to the bridge with:\n  hookdeck listen ${config.port} bridge-${p.id} ${p.connection}`);
-    }
+    console.log(`\nWith \`serve\` running, forward events to the bridge (one terminal each):\n${listenCommands(config).map((c) => `  ${c}`).join('\n')}`);
   }
   if (report.mcp.generated) {
     console.log(`\nGenerated an MCP secret. Set it before running serve, and keep it private (the URL is a credential):`);
@@ -48,7 +56,7 @@ async function serve(configFile: string | undefined) {
   const { host, port } = await bridge.listen();
   console.log(`[bridge] listening on ${host}:${port} (${config.inbound} inbound, deployment "${config.deployment}")`);
   if (config.inbound === 'cli') {
-    for (const p of config.providers) console.log(`[bridge] forward events with: hookdeck listen ${port} bridge-${p.id} bridge-${p.id}-${config.deployment}`);
+    for (const command of listenCommands({ ...config, port })) console.log(`[bridge] forward events with: ${command}`);
   }
   console.log(`[bridge] MCP endpoint: ${mcpUrl(config, '<BRIDGE_MCP_SECRET>')}`);
   const stop = async () => {
