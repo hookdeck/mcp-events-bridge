@@ -91,13 +91,15 @@ async function main() {
 
   // 1. The bridge: a deployed one, or a local one with CLI inbound (and notifications through the CLI too).
   let bridgeUrl: string;
+  let deployment = config.deployment;
   /** Local only: make the next publish to this subscription fail once. */
   let failNextPublishFor: string | undefined;
   if (REMOTE) {
     bridgeUrl = REMOTE;
-    const health = await fetch(`${REMOTE}/healthz`).then((r) => r.ok, () => false);
-    record('deployed bridge healthy', health, REMOTE);
+    const health = (await fetch(`${REMOTE}/healthz`).then((r) => (r.ok ? r.json() : undefined), () => undefined)) as { deployment?: string } | undefined;
+    record('deployed bridge healthy', Boolean(health), `${REMOTE}, deployment ${health?.deployment}`);
     if (!health) return;
+    deployment = health.deployment ?? deployment;
   } else {
     const failing = new (class extends HookdeckClient {
       override async publish(sourceName: string, headers: Record<string, string>, body: string) {
@@ -202,7 +204,7 @@ async function main() {
   if (EXTENDED) {
     await extended({
       hookdeck, subs, attempts, from, run, sourceId: source.id,
-      inboundConnectionName: providerConnectionName(provider.id, config.deployment),
+      inboundConnectionName: providerConnectionName(provider.id, deployment),
       failNextPublish: (id) => (failNextPublishFor = id),
     });
   }
@@ -232,6 +234,10 @@ async function extended(ctx: {
   const failing = subs.get('failing');
   const findRequest = (subject: string) =>
     until(async () => (await hookdeck.listRequests({ source_id: ctx.sourceId, limit: 10, includeData: true })).models.find((r) => requestSubject(r) === subject), 60_000, 3000);
+  const inboundConnection = (await hookdeck.listConnections({ name: ctx.inboundConnectionName })).models[0];
+  /** This deployment's inbound event for a request (other deployments in the project get their own). */
+  const inboundEventFor = (requestId: string, accept: (status: string) => boolean = () => true) =>
+    until(async () => (await hookdeck.listEventsForRequest(requestId)).models.find((e) => e.webhook_id === inboundConnection?.id && accept(e.status)), 60_000, 3000);
 
   // A. A forced publish failure for one of two subscribers: the bridge answers 5xx, the inbound event is retried,
   //    and each subscriber gets the email once. Local only (the failure is injected). The retry is triggered by hand;
@@ -242,7 +248,7 @@ async function extended(ctx: {
   await until(() => countSubject(main, subject) > 0, 240_000);
   const request = await findRequest(subject);
   if (second && request) {
-    const inboundEvent = (await hookdeck.listEventsForRequest(request.id)).models.find((e) => e.status !== 'SUCCESSFUL');
+    const inboundEvent = await inboundEventFor(request.id, (status) => status !== 'SUCCESSFUL' && status !== 'QUEUED');
     record('a failed publish returns 5xx, so Event Gateway schedules a retry', Boolean(inboundEvent), inboundEvent ? `inbound event ${inboundEvent.status}` : 'none found');
     if (inboundEvent) await hookdeck.retryEvent(inboundEvent.id);
     await until(() => countSubject(second, subject) > 0, 120_000);
@@ -256,8 +262,7 @@ async function extended(ctx: {
 
   // B. A duplicate provider delivery (the same svix-id delivered to the bridge again) doesn't reach a subscriber twice.
   //    Simulated by retrying this deployment's inbound event (Event Gateway only retries whole requests that were rejected or ignored).
-  const inboundConnection = (await hookdeck.listConnections({ name: ctx.inboundConnectionName })).models[0];
-  const inboundEvent = request && inboundConnection && (await hookdeck.listEventsForRequest(request.id)).models.find((e) => e.webhook_id === inboundConnection.id);
+  const inboundEvent = request && (await inboundEventFor(request.id));
   if (inboundEvent) {
     await until(async () => (await hookdeck.getEvent(inboundEvent.id)).status === 'SUCCESSFUL', 60_000, 3000);
     await hookdeck.retryEvent(inboundEvent.id);

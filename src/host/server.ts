@@ -105,7 +105,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
         return json(res, response.status, response.body);
       }
 
-      if (pathname === '/healthz') return json(res, 200, { ok: true, subscriptions: store.list().length });
+      if (pathname === '/healthz') return json(res, 200, { ok: true, deployment: config.deployment, subscriptions: store.list().length });
       json(res, 404, { error: 'not found' });
     } catch (error) {
       log(`request error on ${redactPath(pathname)}: ${(error as Error).message}`);
