@@ -29,6 +29,10 @@ export class FakeEventGateway {
   readonly destinations = new Map<string, Resource>();
   readonly connections = new Map<string, ConnectionResource>();
   readonly issueTriggers = new Map<string, Record<string, unknown>>();
+  readonly issues = new Map<string, { id: string; type: string; status: string; aggregation_keys: Record<string, unknown[]> }>();
+  readonly published: Array<{ sourceName: string; headers: Record<string, string>; body: string }> = [];
+  /** Subscription ids (X-MCP-Subscription-Id) whose publish should fail with 503. */
+  readonly failPublishFor = new Set<string>();
   webhookNotifications: Record<string, unknown> | null = null;
   private counter = 0;
 
@@ -96,6 +100,21 @@ export class FakeEventGateway {
       }
       Object.assign(connection, { description: body.description, rules: body.rules ?? [] });
       return json(200, this.view(connection));
+    }
+
+    if (method === 'POST' && url.host === 'hkdk.events' && url.pathname === '/v1/publish') {
+      const headers = init?.headers as Record<string, string>;
+      if (this.failPublishFor.has(headers['X-MCP-Subscription-Id'] ?? '')) return json(503, { message: 'unavailable' });
+      this.published.push({ sourceName: headers['X-Hookdeck-Source-Name']!, headers, body: String(init?.body) });
+      return json(200, { status: 'SUCCESS', request_id: this.nextId('req') });
+    }
+
+    const issueMatch = /^\/issues\/([^/]+)$/.exec(path);
+    if (issueMatch) {
+      const issue = this.issues.get(issueMatch[1]!);
+      if (!issue) return json(404, { message: 'not found' });
+      if (method === 'PUT') issue.status = (JSON.parse(String(init?.body)) as { status: string }).status;
+      return json(200, issue);
     }
 
     if (method === 'PUT' && path === '/sources') {
