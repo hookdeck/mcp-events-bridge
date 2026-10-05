@@ -14,7 +14,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 1 | Repo setup | Build | Done |
 | 2 | Resend inbound | Spike | Done ([results](SPIKES.md#stage-2-resend-inbound)) |
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
-| 4 | Event Gateway topology and issue notifications | Spike | Ready |
+| 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | ChatGPT through Secure MCP Tunnel | Spike | Needs the maintainer |
 | 6 | Hosted bridge | Build | Not started |
 | 7 | Local agents | Build | Not started |
@@ -70,7 +70,7 @@ The bridge running on Fly.io: Resend events relayed to the test subscriber and t
 5. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance. `list_providers`.
 6. **Subscriptions.** Port `subscriptions.ts` from the demo, creating and deleting the per-subscription Event Gateway resources. Long default lifetime; sweeper for expiry.
 7. **Inbound route and relay.** Verify the Hookdeck signature, map, match, sign, publish in parallel, `200` only if all succeed.
-8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). The bridge records issues on the subscription or provider instance, reports them in `list_providers`, and returns `deliveryStatus` on refresh.
+8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`, `final_attempt`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). The bridge records issues on the subscription or provider instance, reports them in `list_providers`, and returns `deliveryStatus` on refresh.
 9. **MCP server.** `events/*` handlers plus `get_event` and `list_recent_events`, on `127.0.0.1`.
 10. **CLI entry.** `serve` and `setup`. `doctor` and `--prune` can be stubs.
 11. **End-to-end script.** Start the bridge with CLI inbound (`hookdeck listen` to the inbound port), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.

@@ -44,7 +44,7 @@ Resend manifest paths, settled from the fixture (`test/fixtures/resend/email-rec
 
 ### Resources
 
-- Event Gateway, left in place (inert without the Resend webhook): connection `spike-resend`, source `spike-resend`, destination `spike-resend-cli`. Delete with the other spike resources once stages 2 to 5 are done.
+- Event Gateway: connection `spike-resend`, source `spike-resend`, destination `spike-resend-cli`. Deleted at the end of stage 4.
 - Resend webhook: deleted.
 
 ## Stage 3: Signed pass-through and retries
@@ -78,4 +78,35 @@ Run on 5 Oct 2026. **Passed, with one correction to the design's retry rule.**
 
 ### Resources
 
-- Event Gateway: source `spike-passthrough`, connection and destination `spike-passthrough-a` (left for stage 4). `spike-passthrough-del` was deleted during the test.
+- Event Gateway: source `spike-passthrough`, connection and destination `spike-passthrough-a` (reused in stage 4, then deleted). `spike-passthrough-del` was deleted during the test.
+
+## Stage 4: Event Gateway topology and issue notifications
+
+Run on 5 Oct 2026. **Passed.**
+
+### What we ran
+
+1. On the `PUBLISH_API` source `spike-passthrough`: connections `spike-passthrough-a` and `-b`, each with a header filter on its own subscription id (`sub_a`, `sub_b`), a dedupe rule on `headers.webhook-id` (1-hour window), and the corrected retry rule from stage 3.
+2. One request published to each subscription, then the same `webhook-id` published twice to `sub_a`. The second copy had a different body (a new envelope timestamp), so the dedupe key was the header alone.
+3. Filter checks on three more connections (`spike-filter-1` to `-3`), each matching a subscription header plus a body condition: `$in` on a string, an array value, and a mixed-case string.
+4. Webhook notifications (`issue.opened`, `issue.updated`) to a `WEBHOOK` source, `spike-notifications`, delivered through the Hookdeck CLI to a local logger; a delivery issue trigger (`first_attempt`) on `spike-passthrough-*`; deliveries failed with `500` and `410`.
+
+### What we saw
+
+- **Routing.** Each request created exactly one event, on its own subscription's connection, and a `FILTERED` ignored event on the other.
+- **Dedupe.** The repeated `webhook-id` became an ignored event with cause `DUPLICATE` on `sub_a` (and `FILTERED` on `sub_b`). Only one copy was delivered. `DUPLICATE` isn't in the docs' list of causes.
+- **Filters.** `{"$in": "needle"}` matched `"haystack needle haystack"` and not `"nothing here"`: a substring match. `["b@example.com"]` matched `["a@example.com", "b@example.com"]` and not `["a@example.com"]`. `"Alice@Example.com"` didn't match `"alice@example.com"`: case-sensitive.
+- **Issue trigger API.** The strategy values are `first_attempt` and `final_attempt`; the `*_failure` names from the docs page are rejected with `422`.
+- **Default triggers.** The project already had default issue triggers. One had opened a request issue for the stage 2 unsigned request, and delivery issues from stage 3 were already open.
+- **Aggregation.** Delivery issues are keyed by connection, response status and error code: the `500` and `410` failures were separate issues. While an issue was open, new failures with the same key sent no notification, which is why the first test produced nothing until the open issues were resolved.
+- **Notifications.** Resolving two issues sent two `issue.updated`; the next `410` sent `issue.opened` within seconds. Payload: `topic`, `issue` (with `aggregation_keys.response_status`, `data.trigger_event`, `data.trigger_attempt` including `response_status`, and `reference`), `trigger`, and `trigger_webhook` (the connection, including its `name`). They arrive Hookdeck-signed (`x-hookdeck-signature`), like any delivery. Redacted fixture: `test/fixtures/hookdeck/issue-opened-delivery.json`.
+
+### What it means for the design
+
+- The topic-source topology works as designed: one connection per subscription, routed by header filter, with dedupe on `webhook-id`.
+- Matching in Event Gateway later (after destination signing) has to filter on normalized, lowercased fields: string matching is case-sensitive.
+- The bridge can act on `410`: `trigger_webhook.name` identifies the subscription and the attempt carries the status. Use `final_attempt` for delivery triggers, and resolve each issue after acting on it so the next failure notifies again. Updated in `ARCHITECTURE.md`.
+
+### Resources
+
+All stage 2 to 4 Event Gateway resources (`spike-*` connections, sources and destinations) and the `spike-delivery` issue trigger were deleted, and webhook notifications were disabled. The project's default issue triggers were left as they were.

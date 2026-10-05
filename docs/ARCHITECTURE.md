@@ -163,7 +163,7 @@ Issue triggers, scoped by name pattern:
 
 | Issue type | Scope | What it tells the bridge | Bridge action |
 | --- | --- | --- | --- |
-| Delivery, `last_attempt_failure` | connections `mcp-sub-*` | A subscriber's callback is failing after all retries | Record it on the subscription; surface it in `list_providers` and `bridge doctor`; candidate for expiring the subscription early |
+| Delivery, `final_attempt` | connections `mcp-sub-*` | A subscriber's callback is failing after all retries, with the response status | `410`: delete the subscription. Otherwise record it on the subscription, surface it in `list_providers` and `bridge doctor`, and return it in `deliveryStatus`. Then resolve the issue so the next failure notifies again |
 | Request, rejection causes | sources `bridge-*` | The provider's requests fail verification, e.g. a rotated Resend secret | Mark the provider unhealthy; `bridge doctor` suggests re-running `bridge setup` |
 | Backpressure | destinations `bridge-*-inbound` | The bridge is slow or down | Operator alert only |
 | Transformation, `log_level` `fatal` | transformations `mcp-sub-*` (direct path, later) | Mapping is broken for a subscription | Mark the subscription unhealthy |
@@ -171,8 +171,11 @@ Issue triggers, scoped by name pattern:
 Notes:
 
 - Webhook notifications are set per project (`PUT /notifications/webhooks` with `topics` and `source_id`). This project is dedicated to the bridge, so that's fine; in a shared project it would need agreeing.
-- Issues are aggregated per resource, not sent once per event, so the bridge gets "this connection is failing" and fetches detail (`GET /issues/{id}`, ignored events) if it needs it.
-- To check: the notification payload shape and how it's signed; whether a `410` from a callback reaches the bridge with the status code (MCP Events treats `410` as "subscription gone", so the bridge should delete the subscription); and whether every `TRANSFORMATION_FAILED` ignored event opens a transformation issue.
+- A delivery issue is aggregated per connection and response status (`aggregation_keys`: `webhook_id`, `response_status`, `error_code`). While it's open, further failures with the same key don't notify again, so the bridge resolves the issue (`PUT /issues/{id}` with `RESOLVED`) after acting on it.
+- `issue.opened` carries the connection (`trigger_webhook`, including its `name`, which identifies the subscription), the failing attempt with its `response_status`, and the event (stage 4, `test/fixtures/hookdeck/issue-opened-delivery.json`). Resolving an issue sends `issue.updated`.
+- Notifications are Hookdeck-signed deliveries like any other, so the inbound route verifies them the same way.
+- New projects come with default issue triggers. `bridge setup` adds its own, scoped by name pattern; the most specific trigger wins.
+- To check: whether every `TRANSFORMATION_FAILED` ignored event opens a transformation issue (direct path only).
 
 Nothing goes back to the subscriber: if its callback is failing, there's no channel to reach it. Issue notifications are for the bridge and its operator.
 
@@ -572,15 +575,15 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **Rules and ignored events:**
 
-- Filters ([docs](https://hookdeck.com/docs/filters)) apply to body, headers, query and path. Operators: `$eq`, `$neq`, `$in`, `$nin`, `$startsWith`, `$endsWith`, `$gt`, `$gte`, `$lt`, `$lte`, `$exist`, `$and`, `$or`, `$not`, `$ref`. No regex; case sensitivity and `$in` on strings (substring or not) are undocumented. An array in a filter means the array must contain all the values.
+- Filters ([docs](https://hookdeck.com/docs/filters)) apply to body, headers, query and path. Operators: `$eq`, `$neq`, `$in`, `$nin`, `$startsWith`, `$endsWith`, `$gt`, `$gte`, `$lt`, `$lte`, `$exist`, `$and`, `$or`, `$not`, `$ref`. No regex. Verified in stage 4: `$in` on a string is a substring match; an array in a filter matches when the array contains all the values; string matching is case-sensitive.
 - Dedupe ([docs](https://hookdeck.com/docs/deduplication)) is a connection rule with `include_fields` or `exclude_fields` (paths start with `headers`, `body`, `query` or `path`) and a window of 1 minute to 1 hour. Duplicates become ignored events. Best-effort. Rule order is configurable.
-- Ignored event causes ([docs](https://hookdeck.com/docs/requests)): `DISABLED`, `FILTERED`, `TRANSFORMATION_FAILED`, `CLI_DISCONNECTED`. A non-matching filter records one per connection per request.
+- Ignored event causes ([docs](https://hookdeck.com/docs/requests)): `DISABLED`, `FILTERED`, `TRANSFORMATION_FAILED`, `CLI_DISCONNECTED`, and `DUPLICATE` for a dedupe hit (stage 4; not in the docs' list). A non-matching filter records one per connection per request.
 - Destination auth ([docs](https://hookdeck.com/docs/authentication)): Hookdeck Signature, Custom SHA-256, Basic, API key, Bearer. No Standard Webhooks.
 - Transformations ([docs](https://hookdeck.com/docs/transformations)): no IO, no async, 1-second limit, 5 MB code, environment variables for secrets, can set headers, no built-in crypto.
 
 **Issues and notifications** ([issue triggers](https://hookdeck.com/docs/issue-triggers), [issues](https://hookdeck.com/docs/issues)):
 
-- Issue types: delivery (`strategy`: `first_attempt_failure` or `last_attempt_failure`, scoped by `connections`), transformation (`log_level`: `warn`, `error`, `fatal`, scoped by `transformations`), backpressure (`delay`, default 600000 ms, scoped by `destinations`), request (`rejection_causes`, scoped by `sources`).
+- Issue types: delivery (`strategy`: `first_attempt` or `final_attempt` in the API, scoped by `connections`), transformation (`log_level`: `warn`, `error`, `fatal`, scoped by `transformations`), backpressure (`delay`, default 600000 ms, scoped by `destinations`), request (`rejection_causes`, scoped by `sources`).
 - Scope is `*`, ids, or name patterns with wildcards and exclusions (`prod-*`, `!staging-*`). The most specific matching trigger runs.
 - Webhook notifications: topics `issue.opened`, `issue.updated`, `event.successful`, `deprecated.attempt-failed`, sent to a source in the project.
 
@@ -643,7 +646,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [ ] Adding a provider: gaps 2 and 4 in "Adding a provider", and the manual paste in gap 1. Pick a third provider that tests them.
 - [ ] Principal through Secure MCP Tunnel: what ChatGPT presents (stage 5). The Outpost demo's ChatGPT app used "No Authentication", which gives no principal; if the tunnel adds no identity, configure a bearer token on the ChatGPT app if Developer mode allows it.
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
-- [ ] Do delivery issue notifications carry the failing response status? If so, delete a subscription on `410` (stage 4).
+- [x] Delivery issue notifications carry the failing response status, so the bridge deletes a subscription on `410` (stage 4).
 - [x] Stage 3: bodies are byte-identical across attempts and match the publisher's, and the signature headers don't change between attempts (see `SPIKES.md`).
 - [ ] What ChatGPT does when a refresh fails while the bridge is offline. Lean: long default lifetime until tested.
 - [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 6.

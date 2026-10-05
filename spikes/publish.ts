@@ -10,7 +10,7 @@ import { readSpikeSecret } from './spike-secret.js';
  * Standard Webhooks (as the relay would), and sends it through the Hookdeck
  * Publish API. Logs what it sent to spikes/raw/published.jsonl.
  *
- *   npx tsx spikes/publish.ts --source spike-passthrough --sub sub_a --mode fail-once [--id evt_...]
+ *   npx tsx spikes/publish.ts --source spike-passthrough --sub sub_a --mode fail-once [--id evt_...] [--data '{...}']
  */
 try {
   process.loadEnvFile();
@@ -24,6 +24,7 @@ const { values } = parseArgs({
     sub: { type: 'string', default: 'sub_a' },
     mode: { type: 'string', default: 'ok' },
     id: { type: 'string' },
+    data: { type: 'string' },
   },
 });
 
@@ -32,7 +33,7 @@ const body = JSON.stringify({
   eventId,
   name: 'email.received',
   timestamp: new Date().toISOString(),
-  data: { emailId: 'spike', subject: `stage spike (${values.mode})` },
+  data: values.data ? JSON.parse(values.data) : { emailId: 'spike', subject: `stage spike (${values.mode})` },
   cursor: null,
 });
 const now = new Date();
