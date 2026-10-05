@@ -157,9 +157,13 @@ export class Subscriber {
     if (!this.subscription?.refreshBefore) return;
     const remaining = Date.parse(this.subscription.refreshBefore) - Date.now();
     const margin = Math.min(Math.max(remaining * 0.2, 5000), 5 * 60 * 1000);
+    // setTimeout overflows past about 24.8 days (and then fires after 1 ms), so long grants wake up early and reschedule.
+    const delay = Math.max(remaining - margin, 1000);
+    const MAX_TIMEOUT = 2_000_000_000;
     this.refreshTimer = setTimeout(() => {
+      if (delay > MAX_TIMEOUT) return this.scheduleRefresh();
       this.refresh().catch((error) => this.log(`refresh failed: ${(error as Error).message}`));
-    }, Math.max(remaining - margin, 1000));
+    }, Math.min(delay, MAX_TIMEOUT));
     this.refreshTimer.unref();
   }
 

@@ -14,7 +14,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "bridge": "tsx src/cli.ts"
+    "bridge": "tsx src/cli.ts",
+    "e2e": "tsx scripts/e2e.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.2.0",

@@ -15,7 +15,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 2 | Resend inbound | Spike | Done ([results](SPIKES.md#stage-2-resend-inbound)) |
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
-| 5 | Hosted bridge | Build | In progress: steps 1 to 8 done |
+| 5 | Hosted bridge | Build | In progress: steps 1 to 11 done; `npm run e2e` passes 8/8 live |
 | 6 | Local agents | Build | Not started |
 | 7 | Production readiness and reach | Build | Not started |
 | Later | Depends on Event Gateway features or later decisions | | |
