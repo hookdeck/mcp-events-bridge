@@ -1,0 +1,16 @@
+# Internal notes: Hookdeck-internal details, never published
+internal/
+
+# Secrets and local state
+.env
+.env.*
+!.env.example
+data/
+.tunnel-url
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Hookdeck CLI private config (hookdeck ci --hookdeck-config)
+.hookdeck/
