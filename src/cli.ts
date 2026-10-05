@@ -2,20 +2,21 @@
 import { parseArgs } from 'node:util';
 import { ConfigError } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
-import { runSetup } from './core/setup.js';
+import { mcpUrl, runSetup } from './core/setup.js';
 import { loadConfig } from './host/load-config.js';
+import { createBridgeServer } from './host/server.js';
 
 /*
  * mcp-events-bridge setup | serve | doctor
  *
- * `serve` and `doctor` come in later steps of stage 5.
+ * `doctor` comes in stage 7.
  */
 
 const USAGE = `Usage: mcp-events-bridge <command> [--config <file>]
 
 Commands:
   setup   Create or update the Event Gateway resources and provider webhooks in bridge.config.ts
-  serve   Run the bridge (not built yet)
+  serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper
   doctor  Check the deployment (not built yet)`;
 
 async function setup(configFile: string | undefined) {
@@ -41,6 +42,23 @@ async function setup(configFile: string | undefined) {
   console.log(`\nMCP URL for ChatGPT (Developer mode, "No Authentication"):\n  ${report.mcp.url}`);
 }
 
+async function serve(configFile: string | undefined) {
+  const config = await loadConfig({ file: configFile });
+  const bridge = await createBridgeServer(config);
+  const { host, port } = await bridge.listen();
+  console.log(`[bridge] listening on ${host}:${port} (${config.inbound} inbound, deployment "${config.deployment}")`);
+  if (config.inbound === 'cli') {
+    for (const p of config.providers) console.log(`[bridge] forward events with: hookdeck listen ${port} bridge-${p.id} bridge-${p.id}-${config.deployment}`);
+  }
+  console.log(`[bridge] MCP endpoint: ${mcpUrl(config, '<BRIDGE_MCP_SECRET>')}`);
+  const stop = async () => {
+    await bridge.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+}
+
 async function main() {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: { config: { type: 'string' } } });
   try {
@@ -51,6 +69,8 @@ async function main() {
   switch (positionals[0]) {
     case 'setup':
       return setup(values.config);
+    case 'serve':
+      return serve(values.config);
     default:
       console.error(USAGE);
       process.exitCode = 1;

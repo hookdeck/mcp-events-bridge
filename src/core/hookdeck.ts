@@ -215,10 +215,22 @@ export class HookdeckClient {
 
   // --- requests and events (recovery, get_event, poll) ---
 
-  listRequests(query: { source_id?: string; created_at_gte?: string; limit?: number; order_by?: string; dir?: 'asc' | 'desc'; next?: string }) {
+  /** `headers` filters on request headers (Hookdeck filter syntax); `includeData` adds headers and body to each request. */
+  listRequests(query: {
+    source_id?: string;
+    created_at_gte?: string;
+    limit?: number;
+    order_by?: string;
+    dir?: 'asc' | 'desc';
+    next?: string;
+    headers?: Record<string, unknown>;
+    includeData?: boolean;
+  }) {
     return this.api<Page<HookdeckRequest>>('/requests', {
       query: {
         source_id: query.source_id,
+        headers: query.headers ? JSON.stringify(query.headers) : undefined,
+        include: query.includeData ? 'data' : undefined,
         // The API takes bracketed comparison operators for date filters.
         'created_at[gte]': query.created_at_gte,
         limit: query.limit ?? 100,

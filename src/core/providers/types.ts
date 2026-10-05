@@ -52,6 +52,8 @@ export interface ProviderDefinition<Options = Record<string, unknown>> {
   sourceType: string;
   /** Request fields that identify a provider delivery, for a dedupe rule on the inbound connection (e.g. headers.svix-id). */
   inboundDedupeFields?: string[];
+  /** The header carrying the provider's event id, to find an event's request in Event Gateway (e.g. svix-id). */
+  eventIdHeader?: string;
   // Each event has its own argument and summary types.
   events: ProviderEvent<any, any>[];
   /** Creates the provider-side webhook at the source URL. The returned secret goes straight onto the source. */

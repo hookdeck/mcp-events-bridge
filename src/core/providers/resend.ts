@@ -107,6 +107,7 @@ export const resendProvider: ProviderDefinition<ResendOptions> = {
   displayName: 'Resend',
   sourceType: 'RESEND',
   inboundDedupeFields: ['headers.svix-id'],
+  eventIdHeader: 'svix-id',
   events: [emailReceived],
 
   async register({ sourceUrl, providerEvents, options, fetch: fetchFn }) {
