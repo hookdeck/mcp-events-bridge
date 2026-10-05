@@ -376,7 +376,7 @@ const resend = defineProvider({
     apiKey: secretRef(),
     events: z.array(z.enum(['email.received'])),
   }),
-  events: [/* ManifestEvent */],
+  events: [/* ProviderEvent */],
   register?(ctx: { sourceUrl: string; providerEvents: string[]; options: ResolvedOptions; fetch: typeof fetch }):
     Promise<{ webhookId: string; signingSecret: string }>;
   unregister?(ctx: { webhookId: string; options: ResolvedOptions; fetch: typeof fetch }): Promise<void>;
