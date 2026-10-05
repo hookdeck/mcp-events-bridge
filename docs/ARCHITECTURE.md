@@ -690,6 +690,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, authentication.** Tiers by friction: a secret URL by default, then built-in single-user OAuth, then bring-your-own identity provider. The OpenAI Secure MCP Tunnel is optional, for private networks. No extra service is required.
 - **5 Oct, local delivery.** Local agents receive webhooks through Event Gateway's MCP Events source and the Hookdeck CLI, with recovery of events missed while offline. Poll from Event Gateway's history is the fallback; push is not planned.
 - **5 Oct, Outpost.** A future option for spec-conformant delivery, not the default: it adds a second service.
+- **5 Oct, store.** `node:sqlite`: built into Node 22.13+, so no native module to compile in Docker or on a laptop. It still prints an ExperimentalWarning, which the CLI suppresses.
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 
 ## Open questions
