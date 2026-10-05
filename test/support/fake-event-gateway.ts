@@ -38,13 +38,20 @@ export class FakeEventGateway {
     return [...map.values()].find((r) => r.name === name);
   }
 
+  /** Destinations as the API returns them: auth masked unless asked for. */
+  private destinationView(d: Resource, includeAuth = false) {
+    const config = d.config ? { ...d.config } : d.config;
+    if (config && 'auth' in config && !includeAuth) config.auth = {};
+    return { ...d, config };
+  }
+
   private view(c: ConnectionResource) {
     return {
       id: c.id,
       name: c.name,
       description: c.description ?? null,
       source: this.sources.get(c.sourceId),
-      destination: this.destinations.get(c.destinationId),
+      destination: this.destinationView(this.destinations.get(c.destinationId)!),
       rules: c.rules,
     };
   }
@@ -91,6 +98,13 @@ export class FakeEventGateway {
 
     if (method === 'GET' && path === '/connections') {
       return json(200, { models: [...this.connections.values()].map((c) => this.view(c)), pagination: {} });
+    }
+
+    const destinationMatch = /^\/destinations\/([^/]+)$/.exec(path);
+    if (method === 'GET' && destinationMatch) {
+      const destination = this.destinations.get(destinationMatch[1]!);
+      if (!destination) return json(404, { message: 'not found' });
+      return json(200, this.destinationView(destination, url.searchParams.get('include') === 'config.auth'));
     }
 
     const match = /^\/(connections|destinations|sources)\/([^/]+)$/.exec(path);

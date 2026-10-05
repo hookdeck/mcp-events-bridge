@@ -1,6 +1,5 @@
 import { SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient } from './hookdeck.js';
 import { SUBSCRIPTION_PREFIX, subscriptionResourceName, topicSourceName } from './names.js';
-import { open, seal } from './sealed.js';
 import {
   SubscriptionTooLargeError,
   healthyDelivery,
@@ -13,59 +12,53 @@ import {
  * Event Gateway as the subscription store.
  *
  * Each subscription is one connection, `mcp-sub-<id>`, from its topic's
- * PUBLISH_API source to an HTTP destination at the callback URL. State that
- * Event Gateway has no field for is sealed (AES-256-GCM, BRIDGE_ENCRYPTION_KEY)
- * into the 500-character descriptions:
+ * PUBLISH_API source to an HTTP destination at the callback URL:
  *
- *   connection description   secrets: current, previous, previous expiry
- *   destination description  metadata: principal, event name, arguments,
- *                            expiry, timestamps, delivery state (omitted
- *                            while healthy)
+ *   connection description   readable JSON metadata: principal, event name,
+ *                            arguments, expiry, timestamps, delivery state
+ *                            (omitted while healthy). Versioned: it starts
+ *                            with {"v":1, so a sealed format could be added
+ *                            later (for example for multi-tenant hosting)
+ *                            and told apart when reading.
+ *   destination auth         the signing secret, as CUSTOM_SIGNATURE config:
+ *                            Event Gateway's credential field, masked in the
+ *                            dashboard and in every listing. When Event
+ *                            Gateway can sign Standard Webhooks, the secret is
+ *                            already where it's needed.
  *
- * The callback URL is the destination's own config.url. Keys are short and
- * times are epoch milliseconds to leave room for arguments within the limit.
+ * Side effect: with CUSTOM_SIGNATURE, Event Gateway adds an HMAC of the body
+ * under SECRET_CARRIER_HEADER to each delivery. Subscribers ignore it, and it
+ * reveals nothing about the secret.
  *
- * The associated data binds each blob to its subscription id, so a description
- * edited in the dashboard, or copied to another connection, fails to open and
- * that subscription is skipped (and reported) at load.
+ * The previous secret during a rotation has no slot, so it's kept in memory
+ * for its grace window; a restart inside the window ends dual-signing early.
  *
- * Reads come from an in-memory index built by `load()` and kept current by
+ * Reads come from an in-memory index built by `load()` (one listing, plus one
+ * destination read per subscription for its secret) and kept current by
  * `put()` and `delete()`. One bridge instance per deployment.
  */
 
 const DESCRIPTION_LIMIT = 500;
+export const SECRET_CARRIER_HEADER = 'x-mcp-bridge-hmac';
 
-interface SealedSecrets {
-  s: string;
-  ps?: string;
-  pe?: number;
-}
-
-interface SealedMeta {
+interface Metadata {
   v: 1;
-  p: string; // principal
-  n: string; // MCP event name (topic source names are slugged, so not recoverable from them)
-  a: Record<string, unknown>; // arguments
-  e: number; // expiresAt
-  c: number; // createdAt
-  m: number; // updatedAt
-  d?: SubscriptionInput['delivery']; // only when not healthy
+  principal: string;
+  event: string;
+  arguments: Record<string, unknown>;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  delivery?: SubscriptionInput['delivery'];
 }
 
-const ms = (iso: string) => Date.parse(iso);
-const iso = (epochMs: number) => new Date(epochMs).toISOString();
 const isHealthy = (d: SubscriptionInput['delivery']) => d.active && d.lastError === null && d.failedSince === null;
-
-const secretsAad = (id: string) => `${id}:secrets`;
-const metaAad = (id: string) => `${id}:meta`;
 
 export class EventGatewayStore implements SubscriptionStore {
   private readonly records = new Map<string, SubscriptionRecord>();
+  private readonly previousSecrets = new Map<string, { secret: string; expiresAt: string }>();
 
-  constructor(
-    private readonly hookdeck: HookdeckClient,
-    private readonly key: Buffer,
-  ) {}
+  constructor(private readonly hookdeck: HookdeckClient) {}
 
   async load() {
     this.records.clear();
@@ -73,7 +66,10 @@ export class EventGatewayStore implements SubscriptionStore {
     for (const connection of await this.hookdeck.listAllConnections()) {
       if (!connection.name.startsWith(SUBSCRIPTION_PREFIX)) continue;
       try {
-        const record = this.decode(connection);
+        const destination = await this.hookdeck.getDestination(connection.destination.id, { includeAuth: true });
+        const secret = destination.config?.auth?.signing_secret;
+        if (!secret) throw new Error('no signing secret');
+        const record = this.decode(connection, secret);
         this.records.set(record.id, record);
       } catch {
         unreadable.push(connection.name);
@@ -83,63 +79,63 @@ export class EventGatewayStore implements SubscriptionStore {
   }
 
   get(id: string) {
-    return this.records.get(id);
+    return this.withPrevious(this.records.get(id));
   }
 
   list(filter: { name?: string } = {}) {
-    return [...this.records.values()].filter((r) => filter.name === undefined || r.name === filter.name);
+    return [...this.records.values()].filter((r) => filter.name === undefined || r.name === filter.name).map((r) => this.withPrevious(r)!);
   }
 
   findByConnection(connectionId: string) {
-    return [...this.records.values()].find((r) => r.connectionId === connectionId);
+    return this.withPrevious([...this.records.values()].find((r) => r.connectionId === connectionId));
   }
 
   listExpired(now: Date) {
-    return [...this.records.values()].filter((r) => Date.parse(r.expiresAt) <= now.getTime());
+    return [...this.records.values()].filter((r) => Date.parse(r.expiresAt) <= now.getTime()).map((r) => this.withPrevious(r)!);
   }
 
   async put(input: SubscriptionInput): Promise<SubscriptionRecord> {
     const name = subscriptionResourceName(input.id);
-    const secrets: SealedSecrets = {
-      s: input.secret,
-      ...(input.previousSecret && { ps: input.previousSecret }),
-      ...(input.previousSecretExpiresAt && { pe: ms(input.previousSecretExpiresAt) }),
-    };
-    const meta: SealedMeta = {
+    const metadata: Metadata = {
       v: 1,
-      p: input.principal,
-      n: input.name,
-      a: input.arguments,
-      e: ms(input.expiresAt),
-      c: ms(input.createdAt),
-      m: ms(input.updatedAt),
-      ...(!isHealthy(input.delivery) && { d: input.delivery }),
+      principal: input.principal,
+      event: input.name,
+      arguments: input.arguments,
+      expiresAt: input.expiresAt,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+      ...(!isHealthy(input.delivery) && { delivery: input.delivery }),
     };
-    const connectionDescription = seal(this.key, JSON.stringify(secrets), secretsAad(input.id));
-    const destinationDescription = seal(this.key, JSON.stringify(meta), metaAad(input.id));
-    if (connectionDescription.length > DESCRIPTION_LIMIT || destinationDescription.length > DESCRIPTION_LIMIT) {
-      throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
-    }
+    const description = JSON.stringify(metadata);
+    if (description.length > DESCRIPTION_LIMIT) throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
 
     const connection = await this.hookdeck.upsertConnection({
       name,
-      description: connectionDescription,
+      description,
       source: { name: topicSourceName(input.name), type: 'PUBLISH_API' },
-      destination: { name, type: 'HTTP', description: destinationDescription, config: { url: input.url } },
+      destination: {
+        name,
+        type: 'HTTP',
+        config: { url: input.url, auth_type: 'CUSTOM_SIGNATURE', auth: { key: SECRET_CARRIER_HEADER, signing_secret: input.secret } },
+      },
       rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': input.id } }, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
     });
+
+    if (input.previousSecret && input.previousSecretExpiresAt) {
+      this.previousSecrets.set(input.id, { secret: input.previousSecret, expiresAt: input.previousSecretExpiresAt });
+    } else {
+      this.previousSecrets.delete(input.id);
+    }
     const record: SubscriptionRecord = {
       ...input,
-      expiresAt: iso(meta.e),
-      createdAt: iso(meta.c),
-      updatedAt: iso(meta.m),
-      previousSecretExpiresAt: secrets.pe === undefined ? null : iso(secrets.pe),
+      previousSecret: null,
+      previousSecretExpiresAt: null,
       connectionId: connection.id,
       destinationId: connection.destination.id,
       topicSourceId: connection.source.id,
     };
     this.records.set(record.id, record);
-    return record;
+    return this.withPrevious(record)!;
   }
 
   async delete(id: string) {
@@ -148,29 +144,42 @@ export class EventGatewayStore implements SubscriptionStore {
     await this.hookdeck.deleteConnection(record.connectionId);
     await this.hookdeck.deleteDestination(record.destinationId);
     this.records.delete(id);
+    this.previousSecrets.delete(id);
     const topicStillUsed = [...this.records.values()].some((r) => r.topicSourceId === record.topicSourceId);
     if (!topicStillUsed) await this.hookdeck.deleteSource(record.topicSourceId);
   }
 
-  private decode(connection: Connection): SubscriptionRecord {
+  /** Adds the in-memory previous secret while its grace window is open. */
+  private withPrevious(record: SubscriptionRecord | undefined): SubscriptionRecord | undefined {
+    if (!record) return undefined;
+    const previous = this.previousSecrets.get(record.id);
+    if (!previous || Date.parse(previous.expiresAt) <= Date.now()) return record;
+    return { ...record, previousSecret: previous.secret, previousSecretExpiresAt: previous.expiresAt };
+  }
+
+  private decode(connection: Connection, secret: string): SubscriptionRecord {
     const id = connection.name.slice(SUBSCRIPTION_PREFIX.length);
-    const secrets = JSON.parse(open(this.key, connection.description ?? '', secretsAad(id))) as SealedSecrets;
-    const meta = JSON.parse(open(this.key, connection.destination.description ?? '', metaAad(id))) as SealedMeta;
+    const raw = connection.description ?? '';
+    if (!raw.startsWith('{')) throw new Error('unsupported description format');
+    const metadata = JSON.parse(raw) as Metadata;
+    if (metadata.v !== 1 || typeof metadata.principal !== 'string' || typeof metadata.event !== 'string') {
+      throw new Error('invalid metadata');
+    }
     const url = connection.destination.config?.url;
-    if (!url) throw new Error(`${connection.name}: destination has no URL`);
+    if (!url) throw new Error('destination has no URL');
     return {
       id,
-      principal: meta.p,
-      name: meta.n,
-      arguments: meta.a,
+      principal: metadata.principal,
+      name: metadata.event,
+      arguments: metadata.arguments ?? {},
       url,
-      secret: secrets.s,
-      previousSecret: secrets.ps ?? null,
-      previousSecretExpiresAt: secrets.pe === undefined ? null : iso(secrets.pe),
-      delivery: meta.d ?? healthyDelivery(),
-      expiresAt: iso(meta.e),
-      createdAt: iso(meta.c),
-      updatedAt: iso(meta.m),
+      secret,
+      previousSecret: null,
+      previousSecretExpiresAt: null,
+      delivery: metadata.delivery ?? healthyDelivery(),
+      expiresAt: metadata.expiresAt,
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.updatedAt,
       connectionId: connection.id,
       destinationId: connection.destination.id,
       topicSourceId: connection.source.id,

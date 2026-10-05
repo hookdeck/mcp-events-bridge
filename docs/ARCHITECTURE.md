@@ -93,11 +93,11 @@ source:      bridge-out-<event name, slugged>     (PUBLISH_API: only Publish API
 Per subscription:
 
 ```text
-connection:  mcp-sub-<id>, from the topic source; description = sealed secrets
+connection:  mcp-sub-<id>, from the topic source; description = readable metadata
   filter:    headers X-MCP-Subscription-Id = <id>
   dedupe:    include_fields [headers.webhook-id], window <= 1h
   retry:     exponential, bounded under 5 min, response_status_codes [">=300", "!410", "!413"]
-destination: mcp-sub-<id> -> callback URL (no auth; the bridge signs); description = sealed metadata
+destination: mcp-sub-<id> -> callback URL; auth = the signing secret (CUSTOM_SIGNATURE); the bridge signs
 ```
 
 Why this shape:
@@ -111,7 +111,7 @@ Why this shape:
 
 This needs a Standard Webhooks destination auth type in Event Gateway. Today's destination auth methods are Hookdeck Signature, Custom SHA-256, Basic, API key and Bearer; both signature methods sign the body only.
 
-Status: not available today. Event Gateway already verifies Standard Webhooks on inbound sources; outbound signing would need the signer itself, per-destination secret rotation, and a choice of where `webhook-id` comes from.
+Status: not available today. The subscription's secret already lives in its destination's auth config, so enabling it would be a switch of `auth_type`. Event Gateway already verifies Standard Webhooks on inbound sources; outbound signing would need the signer itself, per-destination secret rotation, and a choice of where `webhook-id` comes from.
 
 What the feature has to do, for this design:
 
@@ -271,9 +271,8 @@ src/
     sign.ts             Standard Webhooks signing
     callback.ts         parse and check callback URLs, build the challenge; CallbackTransport interface
     store.ts            SubscriptionStore interface
-    event-gateway-store.ts  subscriptions kept in Event Gateway, sealed state in descriptions
+    event-gateway-store.ts  subscriptions kept in Event Gateway: metadata in descriptions, secrets in destination auth
     memory-store.ts     for tests
-    sealed.ts           AES-256-GCM sealing with BRIDGE_ENCRYPTION_KEY
     names.ts            Event Gateway resource names
     hookdeck.ts         Event Gateway API and Publish API client
     mcp.ts              MCP server: tools + hand-registered events/* handlers
@@ -362,17 +361,20 @@ The bridge ships as the npm package `@hookdeck/mcp-events-bridge` with a CLI bin
 No database. Event Gateway is the store, so the bridge is stateless and needs no volume:
 
 - **Events:** never stored by the bridge; Event Gateway is the record of every event.
-- **Subscriptions:** one connection each, `mcp-sub-<id>`, from the topic source to a destination at the callback URL (the destination's `config.url`). State Event Gateway has no field for is sealed into the two 500-character descriptions:
-  - connection description: the current secret, and the previous secret and its expiry during a rotation;
-  - destination description: principal, MCP event name, arguments, expiry, created and updated times, and delivery state while it isn't healthy.
+- **Subscriptions:** one connection each, `mcp-sub-<id>`, from the topic source to an HTTP destination at the callback URL:
+  - **connection description:** readable JSON metadata, so the operator can see it in the dashboard: `{"v":1,"principal":…,"event":…,"arguments":…,"expiresAt":…,"createdAt":…,"updatedAt":…}`, plus `delivery` while it isn't healthy. At most 500 characters; subscribe rejects arguments that don't fit.
+  - **destination auth:** the signing secret, as `CUSTOM_SIGNATURE` config. This is Event Gateway's field for credentials: masked in the dashboard and in every listing, returned only by `GET /destinations/{id}?include=config.auth`. It's also where the secret will be used once Event Gateway can sign Standard Webhooks.
 - **Topics:** found by name, `bridge-out-<event name, slugged>`.
 - **Provider instances:** found by name, `bridge-<instance id>` and `bridge-<instance id>-<deployment>`, with the provider's webhook id in the source description.
 
-Sealing is AES-256-GCM with `BRIDGE_ENCRYPTION_KEY`; the associated data binds each blob to its subscription id, so a description edited in the dashboard, or copied to another connection, fails to open and that subscription is skipped and reported at startup. Keys are short and times are epoch milliseconds; in the worst case (two 64-byte secrets during a rotation, both arguments, failing delivery) the descriptions are about 340 and 375 characters (measured against the live API). Subscribe rejects arguments that don't fit.
+At startup the bridge lists `mcp-sub-*` connections, reads each destination's secret, and builds an in-memory index; subscribe, unsubscribe, refresh and issue handling keep it current. That assumes one bridge instance per deployment, which fits single tenancy. A description edited into something unreadable is skipped and reported at startup.
 
-At startup the bridge lists `mcp-sub-*` connections and builds an in-memory index; subscribe, unsubscribe, refresh and issue handling keep it current. That assumes one bridge instance per deployment, which fits single tenancy.
+Two consequences of keeping the secret in destination auth:
 
-Losing `BRIDGE_ENCRYPTION_KEY` means every subscriber has to re-subscribe. Once Event Gateway signs Standard Webhooks, secrets move onto destinations natively and only metadata stays sealed.
+- **An extra header.** With `CUSTOM_SIGNATURE`, Event Gateway adds an HMAC of the body under `x-mcp-bridge-hmac` to each delivery (verified live). Subscribers ignore it; it reveals nothing about the secret. It goes away when the destination switches to Standard Webhooks auth.
+- **The previous secret during a rotation has no slot,** so it's kept in memory for its grace window. A restart inside the window ends dual-signing early (dual-signing is a SHOULD).
+
+The description format is versioned (`{"v":1,…`) so a sealed, encrypted format could be added later, for example for multi-tenant hosting, and told apart when reading.
 
 ## Provider manifests
 
@@ -518,7 +520,6 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 - `BRIDGE_INBOUND`: `http` (deployed; the default when `FLY_APP_NAME` is set) or `cli` (development; inbound through `hookdeck listen`).
 - `BRIDGE_PUBLIC_URL`: for `http` inbound, an optional override for the base URL Event Gateway delivers to. Unset, it comes from `FLY_APP_NAME` (`https://<app>.fly.dev`). `bridge setup` fails if `http` inbound has no `https` URL.
 - `BRIDGE_PORT`.
-- `BRIDGE_ENCRYPTION_KEY`: required; 32 random bytes, base64url, for sealing subscription state. `bridge setup` generates one if it's unset and says where to set it.
 - `BRIDGE_MCP_SECRET`: the secret path segment of the MCP URL (see "Authentication").
 - Provider credentials, under whatever names the config references, for example `RESEND_API_KEY`.
 - Optional, stage 7: `CONTROL_PLANE_API_KEY` and `OPENAI_TUNNEL_ID`, for `tunnel-client` (Secure MCP Tunnel).
@@ -560,8 +561,8 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | `whsec_` secret, 24 to 64 bytes | MUST | Designed (ported) | |
 | Deterministic id; idempotent upsert on (principal, URL, name, canonical arguments) | MUST | Designed (ported) | |
 | `refreshBefore`; no more than `ttlMs`; `null` only if `ttlMs: null` | MUST | Designed (ported) | ChatGPT sent no `ttlMs`, so the server default applies |
-| Keep subscriptions for the granted lifetime, across restarts | MUST (for long TTLs) | Designed | Kept in Event Gateway (connections plus sealed descriptions) and reloaded at startup; verified against the live API |
-| Replace the secret on refresh; dual-sign during rotation | MUST; SHOULD | Designed (ported) | The relay signs with both secrets for a grace window. Destination signing in Event Gateway must support this too (see "Evolution") |
+| Keep subscriptions for the granted lifetime, across restarts | MUST (for long TTLs) | Designed | Kept in Event Gateway (connection metadata, secrets in destination auth) and reloaded at startup; verified against the live API |
+| Replace the secret on refresh; dual-sign during rotation | MUST; SHOULD | Designed (ported) | The new secret replaces the one in destination auth. The relay signs with both for the grace window; the previous secret is kept in memory, so a restart inside the window ends dual-signing early |
 | `cursor` in the subscribe response (`null` if no replay) | MUST | Designed | Always `null`: no replay |
 | `truncated` | MAY | Designed (ported) | `true` when a client supplies a cursor, since there's no replay |
 | `deliveryStatus` | MAY | Designed | From Event Gateway delivery issues on the subscription's connection |
@@ -629,6 +630,8 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - A `PUBLISH_API` source accepts only Publish API requests. Published requests count as verified. No idempotency key is documented.
 
 **Resource names and descriptions:** connection, source and destination names must match `^[A-Za-z0-9_-]+$` (no dots); descriptions are at most 500 characters. The mock destination type is `MOCK_API`. A connection listing includes each destination's `config.url` and `description`.
+
+**Destination auth as credential storage** (stage 5, verified live): a `CUSTOM_SIGNATURE` destination stores `auth.signing_secret`; the value is masked (`auth: {}`) in create, get and list responses, and returned only by `GET /destinations/{id}?include=config.auth` (listings don't return it even with `include`). Event Gateway adds the configured header with an HMAC of the body to each delivery.
 
 **Retry rules** (stage 3, [docs](https://hookdeck.com/docs/retries)): `response_status_codes` takes codes, ranges (`500-599`), comparisons (`>=500`) and negations (`!410`), evaluated last match wins. A list of negations alone (`["!410", "!413"]`) matches every other status, `2xx` included, so a successful attempt is retried again until the count runs out; use `[">=300", "!410", "!413"]`. Unset, any non-`2xx` is retried. The CLI's `--rule-retry-response-status-codes` accepts integers only.
 
@@ -699,13 +702,13 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, hosting.** The deliverable is a Docker image of the bridge. Fly.io is the reference host for stage 5 (a Machine; no volume, since Event Gateway is the store). Deploy docs and automation for Railway and Render follow.
 - **5 Oct, name.** GitHub `hookdeck/mcp-events-bridge`, npm `@hookdeck/mcp-events-bridge`, CLI `mcp-events-bridge`.
 - **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 5; transformation issues come with the direct path.
-- **5 Oct, secrets at rest.** Sealed with AES-256-GCM (`BRIDGE_ENCRYPTION_KEY`) in Event Gateway descriptions, from stage 5.
+- **5 Oct, secrets at rest.** Subscription secrets live in Event Gateway destination auth (masked credential storage); no bridge encryption key. Metadata is readable in connection descriptions, since the operator owns it.
 - **5 Oct, ChatGPT plan.** Stage 5 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
 - **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared only when a synchronous response is needed, or for the MCP Events challenge until the MCP Events source type ships.
 - **5 Oct, authentication.** Tiers by friction: a secret URL by default, then built-in single-user OAuth, then bring-your-own identity provider. The OpenAI Secure MCP Tunnel is optional, for private networks. No extra service is required.
 - **5 Oct, local delivery.** Local agents receive webhooks through Event Gateway's MCP Events source and the Hookdeck CLI, with recovery of events missed while offline. Poll from Event Gateway's history is the fallback; push is not planned.
 - **5 Oct, Outpost.** A future option for spec-conformant delivery, not the default: it adds a second service.
-- **5 Oct, store.** Event Gateway is the store: subscriptions are connections with sealed state in their descriptions, indexed in memory at startup. No database or volume (replaces an earlier SQLite store).
+- **5 Oct, store.** Event Gateway is the store: subscriptions are connections with readable metadata in their descriptions and secrets in destination auth, indexed in memory at startup. No database, volume or encryption key (replaces an earlier SQLite store, then a sealed-description version).
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 
 ## Open questions
@@ -713,6 +716,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [ ] Standard Webhooks destination auth in Event Gateway: not planned yet. Decides when the re-sign gap closes and publish-once can happen. Needs per-destination secret rotation as well as signing.
 - [ ] Delivering straight from the provider source: the research questions in "Evolution".
 - [ ] Adding a provider: gaps 2 and 4 in "Adding a provider", and the manual paste in gap 1. Pick a third provider that tests them.
+- [ ] Multi-tenant hosting: encrypt connection descriptions? The format is versioned so a sealed variant can be added; bigger questions (a Hookdeck project per tenant, quotas, per-user OAuth) come first.
 - [ ] Built-in OAuth: which maintained library supports CIMD and resource indicators (for example `oidc-provider`)?
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
 - [x] Delivery issue notifications carry the failing response status, so the bridge deletes a subscription on `410` (stage 4).

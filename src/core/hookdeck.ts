@@ -56,7 +56,13 @@ export interface Destination {
   name: string;
   type?: string;
   description?: string | null;
-  config?: { url?: string; path?: string } | null;
+  config?: {
+    url?: string;
+    path?: string;
+    auth_type?: string | null;
+    /** Masked (`{}`) unless fetched with `getDestination(id, { includeAuth: true })`. Lists never return it. */
+    auth?: { key?: string; signing_secret?: string } | null;
+  } | null;
 }
 
 export interface Connection {
@@ -299,6 +305,14 @@ export class HookdeckClient {
 
   deleteSource(id: string) {
     return this.api<unknown>(`/sources/${id}`, { method: 'DELETE' });
+  }
+
+  /**
+   * One destination. With `includeAuth`, its auth config (credentials) is
+   * returned; otherwise auth comes back masked. Listings never include it.
+   */
+  getDestination(id: string, { includeAuth = false }: { includeAuth?: boolean } = {}) {
+    return this.api<Destination>(`/destinations/${id}`, { query: { include: includeAuth ? 'config.auth' : undefined } });
   }
 
   deleteDestination(id: string) {
