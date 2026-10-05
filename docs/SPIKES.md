@@ -46,3 +46,36 @@ Resend manifest paths, settled from the fixture (`test/fixtures/resend/email-rec
 
 - Event Gateway, left in place (inert without the Resend webhook): connection `spike-resend`, source `spike-resend`, destination `spike-resend-cli`. Delete with the other spike resources once stages 2 to 5 are done.
 - Resend webhook: deleted.
+
+## Stage 3: Signed pass-through and retries
+
+Run on 5 Oct 2026. **Passed, with one correction to the design's retry rule.**
+
+### What we ran
+
+1. A receiver (`spikes/passthrough-receiver.ts`) behind a cloudflared quick tunnel. It logs each attempt's headers and the SHA-256 of the raw body, verifies with `standardwebhooks`, and answers by an `x-spike-mode` header: `fail-once` (500 then 200), `gone` (410), `always-fail` (500).
+2. Connection `spike-passthrough-a`: `PUBLISH_API` source `spike-passthrough`, HTTP destination at the receiver, filter on header `x-mcp-subscription-id` = `sub_a`, retry linear, 2 retries, 30 seconds.
+3. A publisher (`spikes/publish.ts`) that builds an MCP Events envelope, signs it once with Standard Webhooks, and sends it through the Publish API, recording the body hash and headers it sent.
+4. Retry status codes, first as `["!410", "!413"]`, then as `[">=300", "!410", "!413"]`.
+5. Connection `spike-passthrough-del` (filter `sub_del`, same retry rule), deleted right after its first failed attempt.
+
+### What we saw
+
+- **Body.** Byte-identical on every attempt, and the same SHA-256 as the publisher's.
+- **Signature headers.** `webhook-id`, `webhook-timestamp` and `webhook-signature` arrive exactly as published, on every attempt. Between attempts only `x-hookdeck-attempt-count` and `x-hookdeck-attempt-trigger` (`INITIAL`, then `AUTOMATIC`) change, plus the tunnel's own `cf-ray`.
+- **Verification on retry.** Passed: the retry 30 seconds later was within the receiver's 5-minute timestamp tolerance.
+- **Headers added.** Event Gateway adds `idempotency-key`, the `x-hookdeck-*` headers (including `x-hookdeck-will-retry-after`), and `sentry-trace` and `baggage`. Publisher headers such as `user-agent` pass through. Nothing published was dropped.
+- **CLI.** `--rule-retry-response-status-codes '!410,!413'` is rejected ("must be an integer"). The API accepts negated codes, ranges and comparisons.
+- **`["!410", "!413"]` retries successes.** With only negations, an event whose second attempt returned `200` got a third attempt 30 seconds later, also `200`. Event Gateway's docs say entries are evaluated last match wins, so a lone negation matches every other status, `2xx` included.
+- **`[">=300", "!410", "!413"]` behaves as intended.** `fail-once`: 500, then 200, then no more attempts. `gone`: one attempt, 410, event `FAILED`, no retry.
+- **Deleting a connection** after its first failed attempt cancelled the scheduled retries: nothing arrived at +30 or +60 seconds.
+
+### What it means for the design
+
+- The relay's pass-through works: the bridge signs once, and every Event Gateway attempt carries the same verifiable request. Receivers accept retries while they're inside the 5-minute timestamp window, which confirms the cap on retry duration until Event Gateway can sign.
+- Subscription connections use `response_status_codes: [">=300", "!410", "!413"]`, set through the API (the bridge uses the API anyway). Updated in `ARCHITECTURE.md`.
+- Unsubscribe can rely on connection deletion to stop pending retries.
+
+### Resources
+
+- Event Gateway: source `spike-passthrough`, connection and destination `spike-passthrough-a` (left for stage 4). `spike-passthrough-del` was deleted during the test.

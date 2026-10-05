@@ -13,7 +13,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | --- | --- | --- | --- |
 | 1 | Repo setup | Build | Done |
 | 2 | Resend inbound | Spike | Done ([results](SPIKES.md#stage-2-resend-inbound)) |
-| 3 | Signed pass-through and retries | Spike | Ready |
+| 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Ready |
 | 5 | ChatGPT through Secure MCP Tunnel | Spike | Needs the maintainer |
 | 6 | Hosted bridge | Build | Not started |

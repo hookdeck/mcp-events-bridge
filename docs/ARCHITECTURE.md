@@ -93,7 +93,7 @@ Per subscription:
 connection:  mcp-sub-<event name>-<id>, from the topic source
   filter:    headers X-MCP-Subscription-Id = <id>
   dedupe:    include_fields [headers.webhook-id], window <= 1h
-  retry:     exponential, bounded under 5 min, response codes !410, !413
+  retry:     exponential, bounded under 5 min, response_status_codes [">=300", "!410", "!413"]
 destination: mcp-sub-<event name>-<id> -> callback URL (no auth; the bridge signs)
 ```
 
@@ -497,7 +497,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | `truncated` | MAY | Designed (ported) | `true` when a client supplies a cursor, since there's no replay |
 | `deliveryStatus` | MAY | Designed | From Event Gateway delivery issues on the subscription's connection |
 | `-32013` on limits | MUST when limited | Designed (ported) | Event Gateway has no documented limits on the number of sources, connections or destinations, so limits are the bridge's own |
-| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. Whether a retry already scheduled can still arrive after deletion is checked in stage 3 |
+| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. In stage 3, deleting a connection cancelled its scheduled retries |
 
 ### Endpoint verification and SSRF
 
@@ -519,7 +519,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Body at most 256 KiB | SHOULD (spec), hard limit for ChatGPT | Designed | The relay checks size before publishing |
 | **Each retry regenerates timestamp and signature** | MUST | **Gap** | Event Gateway redelivers the original headers. Mitigation: retries finish inside 5 minutes, the window inside which receivers SHOULD accept a timestamp. Inbound retries do re-sign. Closes with Standard Webhooks destination signing |
 | Exponential backoff, bounded attempts | SHOULD | Designed | Event Gateway retry rule, exponential, inside 5 minutes |
-| Don't retry `410` or `413` | MUST | Designed | `!410,!413` on the retry rule; syntax unverified (stage 3) |
+| Don't retry `410` or `413` | MUST | Designed | Retry rule `response_status_codes: [">=300", "!410", "!413"]`, verified in stage 3. Negations alone also retry `2xx` |
 | Stable `eventId`, duplicates and out-of-order delivery tolerated | MUST | Designed | Provider event id; dedupe is best-effort, receivers dedupe on `webhook-id` |
 | Event content treated as untrusted data | MUST | Designed | No instructions in payloads |
 
@@ -559,6 +559,12 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - Pick the source with `X-Hookdeck-Source-Name` or `X-Hookdeck-Source-Id`. Headers, body, path and query pass through as is.
 - A `PUBLISH_API` source accepts only Publish API requests. Published requests count as verified. No idempotency key is documented.
 
+**Retry rules** (stage 3, [docs](https://hookdeck.com/docs/retries)): `response_status_codes` takes codes, ranges (`500-599`), comparisons (`>=500`) and negations (`!410`), evaluated last match wins. A list of negations alone (`["!410", "!413"]`) matches every other status, `2xx` included, so a successful attempt is retried again until the count runs out; use `[">=300", "!410", "!413"]`. Unset, any non-`2xx` is retried. The CLI's `--rule-retry-response-status-codes` accepts integers only.
+
+**Publish API pass-through** (stage 3): published headers and body reach the destination unchanged on every attempt, including `webhook-id`, `webhook-timestamp` and `webhook-signature`. Between attempts only `x-hookdeck-attempt-count` and `x-hookdeck-attempt-trigger` change. Event Gateway adds `idempotency-key`, the `x-hookdeck-*` headers, and `sentry-trace` and `baggage` tracing headers.
+
+**Connection deletion** (stage 3): deleting a connection after a failed attempt cancelled its scheduled retries.
+
 **Resource limits:** the [limits page](https://hookdeck.com/docs/limits) covers payload size, delivery timeout, retry attempts and throughput, with no limit on the number of sources, connections or destinations; "Each source supports an unlimited number of unique connections."
 
 **Rules and ignored events:**
@@ -580,7 +586,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - Non-interactive login into a private config: `hookdeck ci --api-key $HOOKDECK_API_KEY --hookdeck-config <path>`.
 - `hookdeck listen <port> <source> <connection> --output compact --device-name <name> --hookdeck-config <path>`, with the exact connection name. If that connection doesn't exist, `listen` creates a shared `cli-<source>` connection.
 - "Connected" on stdout means the session is up; that's the recovery trigger.
-- Relevant `gateway connection upsert` flags: `--source-type`, `--source-webhook-secret`, `--destination-type`, `--destination-cli-path`, `--destination-url`, `--rule-filter-headers`, `--rule-retry-strategy`, `--rule-retry-count`, `--rule-retry-interval`, `--rule-retry-response-status-codes`. Whether the last accepts `!410,!413` is unverified (stage 3).
+- Relevant `gateway connection upsert` flags: `--source-type`, `--source-webhook-secret`, `--destination-type`, `--destination-cli-path`, `--destination-url`, `--rule-filter-headers`, `--rule-retry-strategy`, `--rule-retry-count`, `--rule-retry-interval`, `--rule-retry-response-status-codes`. The last accepts integers only, so negated codes have to be set through the API (stage 3).
 
 **CLI destination behavior:**
 
@@ -634,7 +640,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [ ] Principal through Secure MCP Tunnel: what ChatGPT presents (stage 5). The Outpost demo's ChatGPT app used "No Authentication", which gives no principal; if the tunnel adds no identity, configure a bearer token on the ChatGPT app if Developer mode allows it.
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
 - [ ] Do delivery issue notifications carry the failing response status? If so, delete a subscription on `410` (stage 4).
-- [ ] Stage 3 results: byte-identical bodies, and whether retries change headers.
+- [x] Stage 3: bodies are byte-identical across attempts and match the publisher's, and the signature headers don't change between attempts (see `SPIKES.md`).
 - [ ] What ChatGPT does when a refresh fails while the bridge is offline. Lean: long default lifetime until tested.
 - [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 6.
 - [ ] One `listen` per connection, or one for all sources (local bridge only). Lean: one per connection until checked.
