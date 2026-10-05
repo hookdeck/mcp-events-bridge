@@ -13,7 +13,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bridge": "tsx src/cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.2.0",

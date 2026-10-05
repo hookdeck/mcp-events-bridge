@@ -85,7 +85,13 @@ export type Rule =
 export interface UpsertConnectionInput {
   name: string;
   description?: string;
-  source: { name: string; type?: string; config?: Record<string, unknown> };
+  /**
+   * An inline source is created or updated by name, and its type defaults to
+   * WEBHOOK with config replaced: naming an existing typed source here resets
+   * it (found in stage 5). Bind an existing source with `source_id` instead.
+   */
+  source?: { name: string; type?: string; config?: Record<string, unknown> };
+  source_id?: string;
   destination: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK_API'; description?: string; config?: Record<string, unknown> };
   rules?: Rule[];
 }
@@ -305,8 +311,11 @@ export class HookdeckClient {
     return this.api<Page<Source>>('/sources', { query: { name: query.name, limit: query.limit ?? 100 } });
   }
 
-  getSource(id: string) {
-    return this.api<Source>(`/sources/${id}`);
+  /** One source; with `includeAuth`, its auth config (a provider's signing secret) is returned. */
+  getSource(id: string, { includeAuth = false }: { includeAuth?: boolean } = {}) {
+    return this.api<Source & { config?: { auth?: Record<string, unknown> | null } | null }>(`/sources/${id}`, {
+      query: { include: includeAuth ? 'config.auth' : undefined },
+    });
   }
 
   deleteSource(id: string) {

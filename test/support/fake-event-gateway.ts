@@ -72,10 +72,16 @@ export class FakeEventGateway {
       const body = JSON.parse(String(init?.body)) as {
         name: string;
         description?: string;
-        source: { name: string; type?: string };
+        source_id?: string;
+        source: { name: string; type?: string; config?: Record<string, unknown> };
         destination: { name: string; type?: string; description?: string; config?: Record<string, unknown> };
         rules?: unknown[];
       };
+      if (body.source_id) {
+        const bound = this.sources.get(body.source_id);
+        if (!bound) return json(422, { data: ['source_id not found'] });
+        body.source = { name: bound.name };
+      }
       const names = [body.name, body.source.name, body.destination.name];
       const errors = names.filter((n) => !NAME.test(n)).map((n) => `name with value ${n} fails to match the required pattern`);
       for (const d of [body.description, body.destination.description]) if (d && d.length > 500) errors.push('description too long');
@@ -84,8 +90,12 @@ export class FakeEventGateway {
       let source = this.byName(this.sources, body.source.name);
       if (!source) {
         const id = this.nextId('src');
-        source = { id, name: body.source.name, type: body.source.type, url: `https://hkdk.events/${id}` };
+        source = { id, name: body.source.name, type: body.source.type ?? 'WEBHOOK', url: `https://hkdk.events/${id}` };
         this.sources.set(id, source);
+      } else if (!body.source_id) {
+        // Like the real API: an inline source by name is updated, type defaulting to WEBHOOK and config replaced.
+        source.type = body.source.type ?? 'WEBHOOK';
+        source.config = body.source.config;
       }
       let destination = this.byName(this.destinations, body.destination.name);
       if (!destination) {
@@ -130,6 +140,14 @@ export class FakeEventGateway {
       if (body.config) source.config = { ...(source.config ?? {}), ...body.config };
       const { config: _hidden, ...visible } = source;
       return json(200, visible);
+    }
+
+    const sourceMatch = /^\/sources\/([^/]+)$/.exec(path);
+    if (method === 'GET' && sourceMatch) {
+      const found = this.sources.get(sourceMatch[1]!);
+      if (!found) return json(404, { message: 'not found' });
+      const { config, ...visible } = found;
+      return json(200, url.searchParams.get('include') === 'config.auth' ? found : { ...visible, config: config ? { ...config, auth: {} } : config });
     }
 
     if (method === 'GET' && path === '/sources') {

@@ -52,6 +52,18 @@ describe('bridge setup', () => {
     expect([...gateway.connections.values()].filter((c) => c.name === 'bridge-resend-dev')).toHaveLength(1);
   });
 
+  it('replaces the provider webhook if the source lost its signing secret', async () => {
+    const { gateway, run, resendFake } = setup();
+    await run();
+    const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!;
+    source.config = {};
+    const report = await run();
+    expect(report.providers[0]!.webhook).toBe('registered');
+    expect(resendFake.calls.map((c) => c.url)).toEqual(['https://api.resend.com/webhooks', 'https://api.resend.com/webhooks/wh_1', 'https://api.resend.com/webhooks']);
+    expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
+    expect(source.type).toBe('RESEND');
+  });
+
   it('uses an HTTP destination with Hookdeck signatures for http inbound', async () => {
     const { gateway, run } = setup({ inbound: 'http', publicUrl: 'https://bridge.example.com' });
     await run();

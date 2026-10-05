@@ -77,14 +77,23 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   ];
   await hookdeck.upsertConnection({
     name: connectionName,
-    source: { name: sourceName },
+    source_id: source.id,
     destination: inboundDestination(config, connectionName, `/inbound/${provider.id}`),
     rules,
   });
   log(`upserted connection ${connectionName} (${config.inbound} inbound)`);
 
-  if (existing?.webhookId) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'existing' as const };
   if (!definition.register) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'none' as const };
+  if (existing?.webhookId) {
+    const secretSet = Boolean((await hookdeck.getSource(source.id, { includeAuth: true })).config?.auth?.webhook_secret_key);
+    if (secretSet) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'existing' as const };
+    // The source lost its signing secret: replace the provider webhook, since its secret can't be read back.
+    log(`${sourceName} has no signing secret; replacing the ${definition.displayName} webhook`);
+    const staleId = existing.webhookId;
+    await definition.unregister?.({ webhookId: staleId, options: provider.options, fetch: deps.fetch }).catch((error: Error) =>
+      log(`could not remove the old webhook ${staleId}: ${error.message}`),
+    );
+  }
 
   const { webhookId, signingSecret } = await definition.register({ sourceUrl: source.url, providerEvents, options: provider.options, fetch: deps.fetch });
   const description: SourceDescription = { provider: definition.type, events: provider.events, webhookId };
