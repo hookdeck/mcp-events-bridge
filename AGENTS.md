@@ -15,7 +15,7 @@ You can't do these. Each is needed before the step that uses it.
 | Everything | A dedicated Hookdeck project for this work (not a production project) and its Project API key | `HOOKDECK_API_KEY` |
 | Stages 2 and 5 | A Resend account with a verified sending domain and a full-access API key. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address). The spikes create the `email.received` webhook through the API | `RESEND_API_KEY`, `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
 | Stage 5 | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
-| Everything | Hookdeck CLI with `gateway connection upsert`, Node 22.13 or later (for `node:sqlite`) | |
+| Everything | Hookdeck CLI with `gateway connection upsert`, Node 22 or later | |
 | Stage 5 deploy | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
 
 Secrets go in `.env` (gitignored); `.env.example` lists every variable with a comment, grouped by the step that needs it. Never print keys or signing secrets in logs, test output, commit messages or chat.
@@ -26,7 +26,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 - **Events only.** Don't add tools that wrap provider APIs (sending email, reading email bodies). Vendors' own MCP servers do that.
 - **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-` or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
 - **Provider resources:** the same for Resend webhooks. Delete spike webhooks when the spike is done.
-- **Conventions,** as in `hookdeck/mcp-events-outpost-demo`: TypeScript ESM, Node 22.13+, `tsx`, `vitest`, `zod` v4, `@modelcontextprotocol/server` / `node` / `client` v2, `standardwebhooks`.
+- **Conventions,** as in `hookdeck/mcp-events-outpost-demo`: TypeScript ESM, Node 22+, `tsx`, `vitest`, `zod` v4, `@modelcontextprotocol/server` / `node` / `client` v2, `standardwebhooks`.
 - **Public repo.** Never put Hookdeck-internal details (private repo paths, internal PR numbers, security findings) in tracked files. They belong in `internal/`, which is gitignored.
 - **Local endpoints:** reach them through the Hookdeck CLI (`hookdeck listen`). Use a cloudflared quick tunnel only when the caller needs the local response synchronously (for example a receiver whose status code Event Gateway acts on), or for the MCP Events challenge until Event Gateway's MCP Events source type ships.
 - **Docs and comments:** American English, no em dashes. Check Mermaid diagrams render before committing.

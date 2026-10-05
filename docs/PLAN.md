@@ -53,17 +53,17 @@ Then enable webhook notifications to a `spike-notifications` source, add a deliv
 The bridge running on Fly.io: Resend events relayed to the test subscriber and to ChatGPT, with secret-URL authentication and issue feedback. Build in this order, with tests as you go.
 
 1. **Shared pieces.** Port `secret.ts`, `standard-webhooks.ts`, `errors.ts`, `identity.ts` and `callback.ts` from the demo, splitting `callback.ts` as in "Module layout".
-2. **Store.** The `Store` interface and the SQLite implementation. Pick `node:sqlite` or `better-sqlite3` and note why (lean `node:sqlite`: no native build).
+2. **Store.** Event Gateway as the store: subscriptions as connections with sealed state (`BRIDGE_ENCRYPTION_KEY`) in their descriptions, indexed in memory at startup; an in-memory store for tests.
 3. **Event Gateway client.** Sources, connections, destinations, issues and issue triggers, notifications, request and event listing, and the Publish API. Port from the fleet demo's `shared/src/hookdeck.ts` and keep its comments on the gotchas.
 4. **Resend manifest.** Unit tests of `matches`, `eventId`, `occurredAt`, `summarize` and `accepts` against the stage 2 fixture.
-5. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance: inbound connection (`cli` in development, `http` when deployed), Resend webhook, and the MCP secret (generated and printed if unset). `list_providers`.
+5. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance: inbound connection (`cli` in development, `http` when deployed), Resend webhook, and the MCP secret and encryption key (generated and printed if unset). `list_providers`.
 6. **Subscriptions.** Port `subscriptions.ts` from the demo, creating and deleting the per-subscription Event Gateway resources with the retry rule `[">=300", "!410", "!413"]` and dedupe on `headers.webhook-id`. Long default lifetime; sweeper for expiry.
 7. **Inbound route and relay.** Verify the Hookdeck signature, map, match, sign, publish in parallel, `200` only if all succeed.
 8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`, `final_attempt`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). On a delivery issue with `410`, delete the subscription; otherwise record it, report it in `list_providers`, and return `deliveryStatus` on refresh. Resolve the issue after acting on it.
 9. **MCP server and auth.** `events/*` handlers plus `get_event` and `list_recent_events`, served at `/mcp/<secret>` with the secret checked in constant time and redacted from logs.
 10. **CLI entry.** `serve` and `setup`. `doctor`, `--prune` and `--rotate-mcp-secret` can be stubs.
 11. **End-to-end script.** Start the bridge with CLI inbound (`hookdeck listen` to the bridge's port), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
-12. **Deploy.** Dockerfile and a Fly.io config with a volume for SQLite; set secrets, deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
+12. **Deploy.** Dockerfile and a Fly.io config (no volume); set secrets, deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
 13. **ChatGPT.** Add the printed MCP URL in ChatGPT (Developer mode, "No Authentication"), subscribe from a Work chat, and send an email.
 
 Done when:
@@ -94,7 +94,6 @@ Done when a local agent subscribed through the subscriber command receives an em
 - Built-in single-user OAuth (auth tier 2), on a maintained library that supports CIMD and resource indicators.
 - Bring your own identity provider (auth tier 3).
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
-- App-level encryption of subscription secrets (`BRIDGE_ENCRYPTION_KEY`).
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
 - The GitHub provider (see "Second provider: GitHub" in `ARCHITECTURE.md`).
 - Deploy docs and automation for Railway and Render.

@@ -55,11 +55,14 @@ export interface Destination {
   id: string;
   name: string;
   type?: string;
+  description?: string | null;
+  config?: { url?: string; path?: string } | null;
 }
 
 export interface Connection {
   id: string;
   name: string;
+  description?: string | null;
   source: Source;
   destination: Destination;
   rules?: Rule[];
@@ -76,7 +79,7 @@ export interface UpsertConnectionInput {
   name: string;
   description?: string;
   source: { name: string; type?: string; config?: Record<string, unknown> };
-  destination: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK'; config?: Record<string, unknown> };
+  destination: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK_API'; description?: string; config?: Record<string, unknown> };
   rules?: Rule[];
 }
 
@@ -267,8 +270,27 @@ export class HookdeckClient {
     return this.api<unknown>(`/connections/${id}`, { method: 'DELETE' });
   }
 
-  listConnections(query: { name?: string; limit?: number } = {}) {
-    return this.api<Page<Connection>>('/connections', { query: { name: query.name, limit: query.limit ?? 100 } });
+  listConnections(query: { name?: string; limit?: number; next?: string } = {}) {
+    return this.api<Page<Connection>>('/connections', { query: { name: query.name, limit: query.limit ?? 100, next: query.next } });
+  }
+
+  /** Every connection in the project, following pagination. */
+  async listAllConnections(): Promise<Connection[]> {
+    const found: Connection[] = [];
+    let next: string | undefined;
+    for (let page = 0; page < 100; page++) {
+      const result = await this.listConnections({ limit: 250, next });
+      found.push(...result.models);
+      const cursor = result.pagination?.next;
+      if (!cursor || result.models.length === 0) return found;
+      next = cursor.startsWith('http') ? (new URL(cursor).searchParams.get('next') ?? undefined) : cursor;
+      if (!next) return found;
+    }
+    return found;
+  }
+
+  listSources(query: { name?: string; limit?: number } = {}) {
+    return this.api<Page<Source>>('/sources', { query: { name: query.name, limit: query.limit ?? 100 } });
   }
 
   getSource(id: string) {

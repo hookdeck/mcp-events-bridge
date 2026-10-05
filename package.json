@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22"
   },
   "bin": {
     "mcp-events-bridge": "./src/cli.ts"
