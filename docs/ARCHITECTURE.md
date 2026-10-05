@@ -377,23 +377,24 @@ const resend = defineProvider({
     events: z.array(z.enum(['email.received'])),
   }),
   events: [/* ManifestEvent */],
-  register?(ctx: { sourceUrl: string; providerEvents: string[]; options: ResolvedOptions }):
+  register?(ctx: { sourceUrl: string; providerEvents: string[]; options: ResolvedOptions; fetch: typeof fetch }):
     Promise<{ webhookId: string; signingSecret: string }>;
-  unregister?(ctx: { webhookId: string; options: ResolvedOptions }): Promise<void>;
+  unregister?(ctx: { webhookId: string; options: ResolvedOptions; fetch: typeof fetch }): Promise<void>;
   nativeMcpEvents?: { serverUrl: string; events: string[] }; // vendor ships its own
 });
 
-interface ManifestEvent {
+interface ProviderEvent<Args, Summary> {
   name: string;                        // MCP event name: "email.received"
   description: string;
   providerEvent: string;               // the provider's event type
   matches(req: InboundRequest): boolean;
   eventId(req: InboundRequest): string;     // stable provider id
   occurredAt(req: InboundRequest): string;  // ISO 8601
-  summarize(req: InboundRequest): Record<string, unknown>; // well under 256 KiB; includes normalized fields
+  summarize(req: InboundRequest): Summary;  // well under 256 KiB; includes normalized fields
   inputSchema: JsonSchema;             // subscribe arguments
-  accepts(args: unknown, summary: Record<string, unknown>): boolean;
-  toFilter?(args: unknown): HookdeckFilter; // for matching in Event Gateway later
+  parseArguments(args: unknown): Args; // validate and normalize (e.g. lower-cased addresses); throws on invalid input
+  accepts(args: Args, summary: Summary): boolean;
+  toFilter?(args: Args): HookdeckFilter; // for matching in Event Gateway later
   payloadSchema: JsonSchema;
 }
 ```
