@@ -28,6 +28,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 - **Provider resources:** the same for Resend webhooks. Delete spike webhooks when the spike is done.
 - **Conventions,** as in `hookdeck/mcp-events-outpost-demo`: TypeScript ESM, Node 22+, `tsx`, `vitest`, `zod` v4, `@modelcontextprotocol/server` / `node` / `client` v2, `standardwebhooks`.
 - **Public repo.** Never put Hookdeck-internal details (private repo paths, internal PR numbers, security findings) in tracked files. They belong in `internal/`, which is gitignored.
+- **Local endpoints:** reach them through the Hookdeck CLI (`hookdeck listen`). Use a cloudflared quick tunnel only when the caller needs the local response synchronously (for example a receiver whose status code Event Gateway acts on), or for the MCP Events challenge until Event Gateway's MCP Events source type ships.
 - **Docs and comments:** American English, no em dashes. Check Mermaid diagrams render before committing.
 - **Keep the docs true.** If what you learn contradicts `docs/ARCHITECTURE.md`, update it and say so in `docs/SPIKES.md` or your summary. Tick off open questions the work answers, and add new ones. Update the status table in `docs/PLAN.md` when a stage starts or finishes.
 

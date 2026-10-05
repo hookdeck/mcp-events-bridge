@@ -194,7 +194,7 @@ Running it unattended on a laptop (stage 7) brings back what the fleet demo solv
 - a supervisor for `hookdeck listen`, with "Connected" on stdout as the recovery trigger;
 - missed-event recovery, ported from `recover.ts` (see "Verified facts").
 
-A plain public tunnel (cloudflared) is still used where something needs a public HTTPS URL that answers synchronously: the spike receivers, and a development test subscriber's callback until the MCP Events source type can answer the challenge.
+Anything local is reached through the Hookdeck CLI by default. A plain public tunnel (cloudflared) is used only when the caller needs the local response synchronously, or for the MCP Events challenge until Event Gateway's MCP Events source type ships. Today that means the spike receivers, whose status codes Event Gateway acts on, and a development test subscriber's callback.
 
 ## Process model
 
@@ -633,7 +633,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 6; transformation issues come with the direct path.
 - **5 Oct, secrets at rest.** File permissions and host volume encryption in stage 6; app-level AES-GCM encryption of subscription secrets before the bridge is promoted for others to deploy.
 - **5 Oct, ChatGPT plan.** Stage 6 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
-- **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared stays for spike receivers and a development subscriber's callback.
+- **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared only when a synchronous response is needed, or for the MCP Events challenge until the MCP Events source type ships.
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 
 ## Open questions
