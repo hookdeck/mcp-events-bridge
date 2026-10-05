@@ -18,7 +18,8 @@ import { Subscriber } from '../test/support/subscriber.js';
  * and BRIDGE_MCP_SECRET. The subscriber's callback goes through a cloudflared
  * quick tunnel, because the MCP Events challenge needs a synchronous answer.
  *
- *   npm run e2e
+ *   npm run e2e                                               local bridge, CLI inbound
+ *   E2E_BRIDGE_URL=https://<app>.fly.dev npm run e2e          a deployed bridge
  */
 
 process.loadEnvFile();
@@ -65,20 +66,30 @@ async function main() {
   const provider = config.providers[0]!;
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
 
-  // 1. The bridge, with CLI inbound.
-  const bridge = await createBridgeServer(config, { log: (m) => console.log(`[bridge] ${m}`) });
-  const { port } = await bridge.listen();
-  stopBridge = () => bridge.close();
+  // 1. The bridge: a deployed one, or a local one with CLI inbound.
+  const remote = process.env.E2E_BRIDGE_URL?.replace(/\/$/, '');
+  let bridgeUrl: string;
+  if (remote) {
+    bridgeUrl = remote;
+    const health = await fetch(`${remote}/healthz`).then((r) => r.ok, () => false);
+    record('deployed bridge healthy', health, remote);
+    if (!health) return;
+  } else {
+    const bridge = await createBridgeServer(config, { log: (m) => console.log(`[bridge] ${m}`) });
+    const { port } = await bridge.listen();
+    stopBridge = () => bridge.close();
+    bridgeUrl = `http://127.0.0.1:${port}`;
 
-  spawnSync('hookdeck', ['ci', '--api-key', config.hookdeck.apiKey, '--hookdeck-config', CLI_CONFIG], { stdio: 'ignore' });
-  const listen = spawn('hookdeck', [
-    'listen', String(port), providerSourceName(provider.id), providerConnectionName(provider.id, config.deployment),
-    '--output', 'compact', '--device-name', 'e2e', '--hookdeck-config', CLI_CONFIG,
-  ]);
-  children.push(listen);
-  let listenOutput = '';
-  listen.stdout?.on('data', (chunk) => (listenOutput += chunk));
-  record('hookdeck listen connected', Boolean(await until(() => listenOutput.includes('Connected'), 30_000)));
+    spawnSync('hookdeck', ['ci', '--api-key', config.hookdeck.apiKey, '--hookdeck-config', CLI_CONFIG], { stdio: 'ignore' });
+    const listen = spawn('hookdeck', [
+      'listen', String(port), providerSourceName(provider.id), providerConnectionName(provider.id, config.deployment),
+      '--output', 'compact', '--device-name', 'e2e', '--hookdeck-config', CLI_CONFIG,
+    ]);
+    children.push(listen);
+    let listenOutput = '';
+    listen.stdout?.on('data', (chunk) => (listenOutput += chunk));
+    record('hookdeck listen connected', Boolean(await until(() => listenOutput.includes('Connected'), 30_000)));
+  }
 
   // 2. The subscriber's public callback.
   if (!fs.existsSync(bin)) await install(bin);
@@ -89,7 +100,7 @@ async function main() {
   const from = env('RESEND_TEST_FROM');
   const webhookIds: string[] = [];
   subscriber = new Subscriber({
-    serverUrl: `http://127.0.0.1:${port}/mcp/${config.auth.mcpSecret}`,
+    serverUrl: `${bridgeUrl}/mcp/${config.auth.mcpSecret}`,
     token: '',
     eventName: 'email.received',
     arguments: { from },
@@ -125,7 +136,7 @@ async function main() {
 
     // 5. get_event over MCP.
     const client = new Client({ name: 'e2e', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
-    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${config.auth.mcpSecret}`)));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${bridgeUrl}/mcp/${config.auth.mcpSecret}`)));
     type ToolResult = { structuredContent?: { data?: { subject?: string } } };
     const result = ((await until(async () => {
       const r = (await client.callTool({ name: 'get_event', arguments: { eventId: webhookId } })) as ToolResult;

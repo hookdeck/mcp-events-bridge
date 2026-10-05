@@ -1,0 +1,30 @@
+# Reference deployment on Fly.io. Secrets (fly secrets set): HOOKDECK_API_KEY,
+# HOOKDECK_SIGNING_SECRET, RESEND_API_KEY, BRIDGE_MCP_SECRET.
+app = 'mcp-events-bridge-dev'
+primary_region = 'ams'
+
+[build]
+
+[env]
+  BRIDGE_DEPLOYMENT = 'fly'
+  BRIDGE_INBOUND = 'http'
+  BRIDGE_PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always on: Event Gateway retries inbound deliveries, but a running machine keeps relay latency low.
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = '30s'
+    interval = '30s'
+    method = 'GET'
+    path = '/healthz'
+    timeout = '5s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'

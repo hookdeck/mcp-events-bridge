@@ -720,6 +720,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [ ] Standard Webhooks destination auth in Event Gateway: not planned yet. Decides when the re-sign gap closes and publish-once can happen. Needs per-destination secret rotation as well as signing.
 - [ ] Delivering straight from the provider source: the research questions in "Evolution".
 - [ ] Adding a provider: gaps 2 and 4 in "Adding a provider", and the manual paste in gap 1. Pick a third provider that tests them.
+- [ ] Deployments sharing a Hookdeck project: `dev` and `fly` share the provider source (each gets its own inbound connection, so each email goes to both) and the subscription connections, which every running bridge loads. Fine while only one bridge runs; lean: one Hookdeck project per deployment, documented in the README.
 - [ ] Multi-tenant hosting: encrypt connection descriptions? The format is versioned so a sealed variant can be added; bigger questions (a Hookdeck project per tenant, quotas, per-user OAuth) come first.
 - [ ] Built-in OAuth: which maintained library supports CIMD and resource indicators (for example `oidc-provider`)?
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.

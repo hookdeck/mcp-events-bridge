@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.hookdeck
+internal
+node_modules
+spikes
+test
+docs
+scripts
+.git
+.tunnel-url

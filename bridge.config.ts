@@ -3,6 +3,7 @@ import { defineConfig, env } from './src/index.js';
 import { resend } from './src/providers.js';
 
 export default defineConfig({
-  deployment: 'dev',
+  // Names this deployment's Event Gateway resources: `dev` locally, `fly` on Fly.io (set in fly.toml).
+  deployment: process.env.BRIDGE_DEPLOYMENT ?? 'dev',
   providers: [resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] })],
 });

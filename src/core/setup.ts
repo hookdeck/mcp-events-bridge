@@ -39,7 +39,7 @@ export interface SetupDeps {
 /** Where Event Gateway delivers to the bridge, by inbound mode. */
 function inboundDestination(config: ResolvedConfig, name: string, path: string): UpsertConnectionInput['destination'] {
   if (config.inbound === 'cli') return { name, type: 'CLI', config: { path } };
-  return { name, type: 'HTTP', config: { url: `${config.publicUrl}${path}`, auth_type: 'HOOKDECK_SIGNATURE' } };
+  return { name, type: 'HTTP', config: { url: `${config.publicUrl}${path}`, auth_type: 'HOOKDECK_SIGNATURE', auth: {} } };
 }
 
 function parseSourceDescription(value: string | null | undefined): SourceDescription | null {
