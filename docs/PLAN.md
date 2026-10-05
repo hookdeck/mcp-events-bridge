@@ -15,13 +15,10 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 2 | Resend inbound | Spike | Done ([results](SPIKES.md#stage-2-resend-inbound)) |
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
-| 5 | ChatGPT through Secure MCP Tunnel | Spike | Needs the maintainer |
-| 6 | Hosted bridge | Build | Not started |
-| 7 | Local agents | Build | Not started |
-| 8 | Production readiness and reach | Build | Not started |
-| Later | Depends on Event Gateway features | | |
-
-Stages 3, 4 and 5 are independent and can run in any order. Stage 6 needs all three.
+| 5 | Hosted bridge | Build | Not started |
+| 6 | Local agents | Build | Not started |
+| 7 | Production readiness and reach | Build | Not started |
+| Later | Depends on Event Gateway features or later decisions | | |
 
 ## Stage 1: Repo setup
 
@@ -51,31 +48,23 @@ On the `spike-passthrough` source, add a second filtered connection and a dedupe
 
 Then enable webhook notifications to a `spike-notifications` source, add a delivery issue trigger on the spike connections, let a delivery fail, and save a redacted `issue.opened` payload: its shape, how it's signed, and whether it carries the failing response status (needed to act on `410`).
 
-## Stage 5: ChatGPT through Secure MCP Tunnel (spike)
+## Stage 5: Hosted bridge (build)
 
-Question: does ChatGPT subscribe and receive through the tunnel, and what principal does it present?
-
-Needs the maintainer. Run the Outpost demo server locally with no public tunnel. The maintainer creates the tunnel, points `tunnel-client` at the demo's MCP URL, and creates a Developer mode app with Tunnel as the connection. The maintainer subscribes from a Work chat, then run `npm run order`.
-
-Passes when subscribe, the challenge and one delivery work. Record what identity, if any, reaches the MCP server, and anything that differs from the 1 Oct public-URL test.
-
-## Stage 6: Hosted bridge (build)
-
-The bridge running on Fly.io: Resend events relayed to the test subscriber and to ChatGPT, with issue feedback. Build in this order, with tests as you go.
+The bridge running on Fly.io: Resend events relayed to the test subscriber and to ChatGPT, with secret-URL authentication and issue feedback. Build in this order, with tests as you go.
 
 1. **Shared pieces.** Port `secret.ts`, `standard-webhooks.ts`, `errors.ts`, `identity.ts` and `callback.ts` from the demo, splitting `callback.ts` as in "Module layout".
 2. **Store.** The `Store` interface and the SQLite implementation. Pick `node:sqlite` or `better-sqlite3` and note why (lean `node:sqlite`: no native build).
-3. **Event Gateway client.** Sources, connections, destinations, request and event listing, and the Publish API. Port from the fleet demo's `shared/src/hookdeck.ts` and keep its comments on the gotchas.
+3. **Event Gateway client.** Sources, connections, destinations, issues and issue triggers, notifications, request and event listing, and the Publish API. Port from the fleet demo's `shared/src/hookdeck.ts` and keep its comments on the gotchas.
 4. **Resend manifest.** Unit tests of `matches`, `eventId`, `occurredAt`, `summarize` and `accepts` against the stage 2 fixture.
-5. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance. `list_providers`.
-6. **Subscriptions.** Port `subscriptions.ts` from the demo, creating and deleting the per-subscription Event Gateway resources. Long default lifetime; sweeper for expiry.
+5. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance: inbound connection (`cli` in development, `http` when deployed), Resend webhook, and the MCP secret (generated and printed if unset). `list_providers`.
+6. **Subscriptions.** Port `subscriptions.ts` from the demo, creating and deleting the per-subscription Event Gateway resources with the retry rule `[">=300", "!410", "!413"]` and dedupe on `headers.webhook-id`. Long default lifetime; sweeper for expiry.
 7. **Inbound route and relay.** Verify the Hookdeck signature, map, match, sign, publish in parallel, `200` only if all succeed.
-8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`, `final_attempt`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). The bridge records issues on the subscription or provider instance, reports them in `list_providers`, and returns `deliveryStatus` on refresh.
-9. **MCP server.** `events/*` handlers plus `get_event` and `list_recent_events`, on `127.0.0.1`.
-10. **CLI entry.** `serve` and `setup`. `doctor` and `--prune` can be stubs.
-11. **End-to-end script.** Start the bridge with CLI inbound (`hookdeck listen` to the inbound port), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
-12. **Deploy.** Dockerfile (bridge plus `tunnel-client`) and a Fly.io config with a volume for SQLite; deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
-13. **ChatGPT.** Through Secure MCP Tunnel to the deployed bridge, as in stage 5.
+8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`, `final_attempt`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). On a delivery issue with `410`, delete the subscription; otherwise record it, report it in `list_providers`, and return `deliveryStatus` on refresh. Resolve the issue after acting on it.
+9. **MCP server and auth.** `events/*` handlers plus `get_event` and `list_recent_events`, served at `/mcp/<secret>` with the secret checked in constant time and redacted from logs.
+10. **CLI entry.** `serve` and `setup`. `doctor`, `--prune` and `--rotate-mcp-secret` can be stubs.
+11. **End-to-end script.** Start the bridge with CLI inbound (`hookdeck listen` to the bridge's port), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
+12. **Deploy.** Dockerfile and a Fly.io config with a volume for SQLite; set secrets, deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
+13. **ChatGPT.** Add the printed MCP URL in ChatGPT (Developer mode, "No Authentication"), subscribe from a Work chat, and send an email.
 
 Done when:
 
@@ -84,20 +73,29 @@ Done when:
 - A forced publish failure for one of two subscribers makes the inbound event retry, and each subscriber receives the email once.
 - A duplicate provider delivery doesn't reach a subscriber twice.
 - `get_event` returns the summary.
-- A subscription whose callback keeps failing shows up in `list_providers` and in `deliveryStatus` on its next refresh, from an Event Gateway delivery issue.
-- The bridge runs on Fly.io, and ChatGPT subscribes through the tunnel and receives an email event.
+- A subscription whose callback returns `410` is deleted from an Event Gateway delivery issue; one that keeps failing otherwise shows up in `list_providers` and in `deliveryStatus` on its next refresh.
+- A request to the MCP endpoint without the secret is rejected.
+- The bridge runs on Fly.io, and ChatGPT subscribes through the secret URL and receives an email event.
 - `npm test` passes, and the end-to-end steps are in the README.
 
-## Stage 7: Local agents (build)
+## Stage 6: Local agents (build)
 
-- Local agents through the CLI, including the Claude Code channel shim, using the MCP Events source type (in progress in Event Gateway) for the challenge and verification.
-- The bridge on a laptop: CLI destination, `listen` supervisor and recovery from the fleet demo. Done when stopping `listen`, sending two emails and restarting delivers both, once each, and restarting during the roughly 2-minute grace window also delivers once.
+Local delivery through Event Gateway and the Hookdeck CLI. Needs Event Gateway's MCP Events source type for the challenge; until it ships, a cloudflared callback stands in during development.
 
-## Stage 8: Production readiness and reach (build)
+- **Subscriber command.** `mcp-events-bridge subscriber`: creates the agent's MCP Events source and CLI connection, supervises `hookdeck listen`, recovers events missed while offline (ported from the fleet demo's `recover.ts`), and forwards deliveries to the local agent.
+- **Claude Code channel shim.** Built on the subscriber command; emits `notifications/claude/channel`.
+- **Local bridge.** Inbound connection with a CLI destination, `listen` supervision and recovery; MCP endpoint on `127.0.0.1`; `bridge serve --tunnel` for ChatGPT through a cloudflared quick tunnel.
+- **Poll mode** (`events/poll`) from Event Gateway's stored requests, with cursor replay; tools wrapping it for hosts without MCP Events support.
 
-- Poll mode (`events/poll`).
+Done when a local agent subscribed through the subscriber command receives an email; stopping `listen`, sending two emails and restarting delivers both, once each; restarting during the roughly 2-minute grace window also delivers once; and a poll with a stale cursor returns the missed events.
+
+## Stage 7: Production readiness and reach (build)
+
+- Built-in single-user OAuth (auth tier 2), on a maintained library that supports CIMD and resource indicators.
+- Bring your own identity provider (auth tier 3).
+- Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - App-level encryption of subscription secrets (`BRIDGE_ENCRYPTION_KEY`).
-- `bridge doctor` and `setup --prune`.
+- `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
 - The GitHub provider (see "Second provider: GitHub" in `ARCHITECTURE.md`).
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.
@@ -109,4 +107,5 @@ Depends on Event Gateway features or later decisions:
 
 - Standard Webhooks destination signing, then publish once per topic.
 - Delivering straight from the provider source.
-- A public MCP endpoint with OAuth.
+- Outpost for spec-conformant delivery, as an option.
+- Push mode (`events/stream`), only if a client needs it.

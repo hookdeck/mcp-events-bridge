@@ -19,8 +19,10 @@ Worked example: Resend inbound email. Someone emails an address on Resend, Resen
 Goals:
 
 - Events for providers that haven't shipped MCP Events, starting with Resend.
-- **Hosted first.** The bridge runs as a service; ChatGPT reaches its MCP endpoint through Secure MCP Tunnel.
-- **Local agents later, through the Hookdeck CLI,** without changing the bridge's subscribe or delivery model.
+- **Hosted first.** The bridge runs as a service with a public MCP endpoint that ChatGPT connects to directly.
+- **Local agents through the Hookdeck CLI.** Events reach a laptop through Event Gateway and `hookdeck listen`, including events that arrive while it's offline.
+- **Low friction for self-hosters.** Nothing beyond Hookdeck and the providers themselves is required: no identity provider, no tunnel service.
+- **Built on Hookdeck.** Event Gateway and the Hookdeck CLI do the receiving, delivering and local delivery; where they can't yet, the design says what would close the gap (see "Evolution").
 - Setup through a typed config file (`bridge.config.ts`) that a coding agent can edit: "add Resend inbound email".
 - Event Gateway as the single record of every provider's events, inbound and outbound.
 - A path to taking the bridge out of the data path entirely (see "Evolution").
@@ -29,7 +31,7 @@ Non-goals for now:
 
 - **Wrapping provider APIs as tools.** Vendors' own MCP servers do that. Resend's already lists and reads inbound emails. The bridge supplies events only.
 - **Hosting the bridge for other people.** That's the multi-tenant product and a separate decision.
-- **OAuth.** Not needed behind Secure MCP Tunnel. Needed later for a public MCP endpoint.
+- **A required identity provider or tunnel service.** Authentication starts with a secret URL; OAuth and tunnels are optional (see "Authentication").
 
 ## System overview
 
@@ -39,9 +41,9 @@ flowchart TB
     SRC -- "inbound connection<br>HTTP destination" --> B["Bridge, hosted<br>map, match, sign"]
     B -- "Publish API<br>one request per subscriber" --> T["Event Gateway<br>topic source per MCP event"]
     T -- "connection per subscription<br>filter, dedupe, retry" --> CG["ChatGPT callback"]
-    T -. "connection per subscription<br>later" .-> HS["Local agent's<br>Hookdeck source"]
+    T -. "connection per subscription<br>later" .-> HS["Local agent's<br>MCP Events source"]
     HS -. "hookdeck listen" .-> LA["Local agent"]
-    AG["Agent host<br>ChatGPT"] -- "MCP via Secure MCP Tunnel<br>events/*, tools" --> B
+    AG["Agent host<br>ChatGPT"] -- "MCP over HTTPS<br>secret URL or OAuth" --> B
 ```
 
 The challenge at subscribe time is the one thing the bridge sends straight to a callback, because it needs the echo back synchronously.
@@ -133,6 +135,19 @@ Then the topology changes in place:
 
 Matching moves into Hookdeck filter syntax, which has no regex and no documented case-insensitive matching. The bridge still builds the envelope, so it adds normalized fields before publishing (for example a lowercased bare `fromAddress` parsed from `Name <addr>`), and connection filters use only `$eq` and `$in`. Each manifest declares how its subscribe arguments map to a filter, and subscribe rejects arguments it can't express.
 
+### Hookdeck capabilities that would simplify the design
+
+| Capability | What it would replace or enable |
+| --- | --- |
+| Standard Webhooks destination auth in Event Gateway | Spec-conformant re-signing on every retry; publish once per topic (above) |
+| An MCP Events source type, answering the challenge at the source | Local agents receiving through the Hookdeck CLI (in progress; see "Local agents and the bridge on a laptop") |
+| CLI redelivery of events missed while a session was disconnected | The app-side recovery code ported from the fleet demo |
+| A request/response mode for the Hookdeck CLI | The cloudflared tunnel for a local MCP endpoint, which needs synchronous responses |
+
+### Outpost for delivery (future option)
+
+Hookdeck Outpost already delivers Standard Webhooks with a fresh signature on every attempt, one destination per subscription, and retries; the Outpost demo passed OpenAI's MCP Events checklist that way on 1 Oct. Using it for the bridge's outbound side would close the re-signing gap today. It's a future option rather than the default because it adds a second service to run or sign up for, and the design keeps Event Gateway as the single product and the single record.
+
 ### Research: deliver straight from the provider source
 
 The further step: attach each subscription's connection to the RESEND source itself, with a transformation that builds the envelope. Resend then reaches the agent through Event Gateway alone, and the bridge is control plane only (catalog, subscribe, challenge, connection lifecycle).
@@ -179,36 +194,67 @@ Notes:
 
 Nothing goes back to the subscriber: if its callback is failing, there's no channel to reach it. Issue notifications are for the bridge and its operator.
 
-## Local agents, through the CLI
+## Local agents and the bridge on a laptop
 
-A local agent takes part as an ordinary subscriber with a public callback: its callback URL is a Hookdeck source, and it runs `hookdeck listen` to receive on localhost. To the bridge it looks like any other subscriber, so nothing in the bridge assumes a local callback.
+Local delivery goes through Event Gateway and the Hookdeck CLI, so a laptop gets Hookdeck's durability: events are kept while it's offline and delivered when it reconnects.
 
-The catch is the challenge. Subscribe sends a signed challenge and needs the value echoed back in the same HTTP response. A Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore depend on Event Gateway handling the challenge at the source. An MCP Events source type is in progress: the source answers the signed challenge itself (after checking the signature) and verifies the Standard Webhooks signature on deliveries. A source holds one `whsec_` secret, so a local agent runtime uses one secret for all its subscriptions, points them at one source, and routes on `X-MCP-Subscription-Id` with connection filters. A dedupe rule on `headers.webhook-id` is recommended. Dual-signed deliveries during a rotation still verify while the old secret is one of the signatures.
+### A local agent receiving events
 
-The Claude Code channel shim (from `hookdeck/claude-channel-plugin`) is one such local subscriber: a thin stdio MCP server that receives through the CLI and turns each delivery into a `notifications/claude/channel` notification.
+A local agent subscribes like any other subscriber, with webhook delivery. Its callback URL is a Hookdeck source in its own Hookdeck project, and `hookdeck listen` delivers to localhost. To the bridge it looks like any other subscriber, so nothing in the bridge assumes a local callback.
+
+The catch is the challenge. Subscribe sends a signed challenge and needs the value echoed back in the same HTTP response. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore use Event Gateway's MCP Events source type, which is in progress: the source answers the signed challenge itself (after checking the signature) and verifies the Standard Webhooks signature on deliveries. A source holds one `whsec_` secret, so a local agent runtime uses one secret for all its subscriptions, points them at one source, and routes on `X-MCP-Subscription-Id` with connection filters. A dedupe rule on `headers.webhook-id` is recommended. Dual-signed deliveries during a rotation still verify while the old secret is one of the signatures.
+
+Agent-side tooling packages this: a `mcp-events-bridge subscriber` command creates the MCP Events source and its CLI connection, supervises `hookdeck listen`, recovers events missed while the laptop was offline, and forwards them to the local agent. The Claude Code channel shim (from `hookdeck/claude-channel-plugin`) builds on it, turning each delivery into a `notifications/claude/channel` notification.
+
+Offline recovery, as in the fleet demo: with a CLI destination and no session connected, a request is kept with an ignored event of cause `CLI_DISCONNECTED`; within roughly 2 minutes of a drop, events are created and then fail. On reconnect ("Connected" on stdout), recovery lists the source's requests since a watermark, retries `FAILED` events, and retries `CLI_DISCONNECTED` requests for this connection (see "Verified facts").
+
+Fallbacks:
+
+- **Poll** (`events/poll`): for agents that can't run the CLI or receive webhooks. Backed by Event Gateway's stored requests, with the cursor as a position in that history, so it also gives catch-up. Hosts without MCP Events support (Codex CLI, Cursor) get the same implementation as tools.
+- **Push** (`events/stream`): not planned. It would bypass Event Gateway; build it only if a client needs it.
 
 ### Running the bridge itself locally
 
-The same code runs on a laptop if the inbound connection uses a CLI destination instead of the bridge's public URL. Development uses this from stage 6: the config's inbound mode is `cli`, `bridge setup` upserts the inbound connection with a CLI destination at path `/inbound/<instance id>`, and `hookdeck listen` forwards to the bridge's inbound port. Requests forwarded by the CLI carry the same Hookdeck signature as HTTP deliveries (stage 2), so the inbound route doesn't change. No public URL or tunnel is needed for inbound.
+The same code runs on a laptop if the inbound connection uses a CLI destination instead of the bridge's public URL. Development uses this from stage 5: the config's inbound mode is `cli`, `bridge setup` upserts the inbound connection with a CLI destination at path `/inbound/<instance id>`, and `hookdeck listen` forwards to the bridge's port. Requests forwarded by the CLI carry the same Hookdeck signature as HTTP deliveries (stage 2), so the inbound route doesn't change. No public URL or tunnel is needed for inbound.
 
-Running it unattended on a laptop (stage 7) brings back what the fleet demo solved:
+Running it unattended on a laptop (stage 6) brings back what the fleet demo solved:
 
 - the bridge upserts its own connection first and fails closed, because `listen` creates a shared `cli-<source>` connection if the named one doesn't exist;
 - a supervisor for `hookdeck listen`, with "Connected" on stdout as the recovery trigger;
-- missed-event recovery, ported from `recover.ts` (see "Verified facts").
+- missed-event recovery, ported from `recover.ts`.
 
-Anything local is reached through the Hookdeck CLI by default. A plain public tunnel (cloudflared) is used only when the caller needs the local response synchronously, or for the MCP Events challenge until Event Gateway's MCP Events source type ships. Today that means the spike receivers, whose status codes Event Gateway acts on, and a development test subscriber's callback.
+Local agents on the same machine connect to the bridge's MCP endpoint on `127.0.0.1`. For ChatGPT to reach a local bridge, the MCP endpoint needs a public URL with synchronous responses: `bridge serve --tunnel` starts a cloudflared quick tunnel and prints the ChatGPT URL, with the same secret-URL authentication.
+
+### When a public tunnel is used
+
+Anything local is reached through the Hookdeck CLI by default. A plain public tunnel (cloudflared) is used only when the caller needs the local response synchronously, or for the MCP Events challenge until Event Gateway's MCP Events source type ships. Today that means the spike receivers, whose status codes Event Gateway acts on; a development test subscriber's callback; and a local bridge's MCP endpoint for ChatGPT.
+
+## Authentication
+
+Single tenant: one deployment, one owner. Tiers, from least friction:
+
+| Tier | How ChatGPT (or any MCP client) connects | Extra service | Stage |
+| --- | --- | --- | --- |
+| **1. Secret URL** (default) | `https://<bridge>/mcp/<secret>`, with "No Authentication" in ChatGPT | None | 5 |
+| **2. Built-in single-user OAuth** | `https://<bridge>/mcp`; the bridge is its own authorization server, and the owner approves once with an admin password | None | 7 |
+| **3. Bring your own identity provider** | `https://<bridge>/mcp`; tokens from the provider, verified against its published keys | Yes, optional | 7 |
+| Optional: OpenAI Secure MCP Tunnel | For private-network deployments; `tunnel-client` beside the bridge | Yes, optional | 7 |
+
+**Secret URL.** `BRIDGE_MCP_SECRET` holds at least 32 random bytes, base64url. If it's unset, `bridge setup` generates one and says where to set it (for example `fly secrets set`), then prints the full MCP URL to paste into ChatGPT. The URL is a credential: the bridge redacts the secret segment in its own logs, compares it in constant time, and `bridge setup --rotate-mcp-secret` replaces it (ChatGPT then needs the new URL). Every caller with the URL is the deployment's owner, so there is one principal, `owner`.
+
+**Built-in OAuth.** For real tokens without a third party: authorization code with PKCE `S256`, the `resource` parameter copied into the token audience, ChatGPT's redirect URIs allowlisted, and client registration by CIMD (Client ID Metadata Documents) or dynamic registration. Built on a maintained library rather than hand-written; which one supports CIMD and resource indicators is still to check. The token subject becomes the principal.
+
+**Bring your own identity provider.** `auth: { issuer, audience, allowedPrincipals }`: standard discovery and signature checks, so any compliant provider works.
 
 ## Process model
 
 One service per deployment:
 
-- **Inbound HTTP listener, public:** `POST /inbound/<instance id>` only. Verifies the Hookdeck signature, runs the relay, returns `200` or `5xx`.
-- **MCP listener on `127.0.0.1`:** Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. `tunnel-client` runs on the same host and is the only way in.
+- **One HTTP listener** (`BRIDGE_PORT`): `POST /inbound/<instance id>` (Hookdeck-signed only; runs the relay; `200` or `5xx`) and the MCP endpoint at `/mcp/<secret>` (or `/mcp` with OAuth): Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. Deployed, it's public; on a laptop it binds to `127.0.0.1`.
 - **The subscription store** (SQLite).
 - **The sweeper:** expires subscriptions and deletes their connections and destinations.
 
-Pull-only hosts use the spec's poll mode, `events/poll`, backed by Event Gateway's stored requests. For hosts that support neither MCP Events nor poll mode (Codex CLI, Cursor, as far as known), the same implementation can also be exposed as tools.
+Pull-only hosts use poll mode (see "Local agents and the bridge on a laptop").
 
 ## Module layout
 
@@ -226,16 +272,17 @@ src/
     store.ts            Store interface
     hookdeck.ts         Event Gateway API and Publish API client
     mcp.ts              MCP server: tools + hand-registered events/* handlers
+    auth.ts             secret-URL check; OAuth token verification later
   host/
     callback-transport.ts  CallbackTransport over node:http(s) with a pinned, public-only DNS lookup
     sqlite-store.ts
-    server.ts           public inbound listener + 127.0.0.1 MCP listener
+    server.ts           HTTP listener: inbound routes and the MCP endpoint
   config.ts             defineConfig, env(), config loading and validation
   cli.ts                serve | setup [--prune] | doctor
 test/
 ```
 
-Later: poll mode (`core/poll.ts`). For the local cases: `host/cli-supervisor.ts`, `host/recovery.ts`, `adapters/claude-channel.ts`.
+Later: `host/cli-supervisor.ts` and `host/recovery.ts` (local bridge and the subscriber command), `core/poll.ts`, `adapters/claude-channel.ts`, and built-in OAuth.
 
 The `core/` boundary keeps a serverless build possible. `node:crypto` is allowed because Workers (with `nodejs_compat`), Deno and Bun support it. Sending to a callback is not: the SSRF guard resolves the host, rejects non-public addresses and pins the connection to the checked IP, which `fetch` can't do. So `core/` calls a `CallbackTransport`, and `host/` implements it with `node:dns` and `node:http(s)`. A serverless host would supply its own. Today only the challenge uses it, since Event Gateway makes the deliveries.
 
@@ -287,6 +334,7 @@ export default defineConfig({
     }),
     acmeCrm({ webhookSecret: env('ACME_WEBHOOK_SECRET'), events: ['contact.created'] }),
   ],
+  auth: { mode: 'secret-url' },                    // later: 'builtin-oauth' or { issuer, audience, allowedPrincipals }
   subscriptions: { defaultTtlMs: 30 * 24 * 3600_000 },
 });
 ```
@@ -313,7 +361,7 @@ SQLite, one file per deployment. No event table: Event Gateway is the record of 
 - **topics:** MCP event name, topic source id.
 - **subscriptions:** id, principal, event name, arguments, callback URL, secret, expiry, connection id, destination id, created and refreshed times.
 
-Subscription secrets are sensitive, and the relay needs them in plaintext to sign. Stage 6 keeps the database user-readable only, on an encrypted host volume. Before the bridge is promoted for others to deploy, the secret column is encrypted with AES-GCM using `BRIDGE_ENCRYPTION_KEY`, since other hosts may not encrypt disks; losing that key means subscribers re-subscribe. Once Event Gateway signs, secrets move to Event Gateway destinations.
+Subscription secrets are sensitive, and the relay needs them in plaintext to sign. Stage 5 keeps the database user-readable only, on an encrypted host volume. Before the bridge is promoted for others to deploy, the secret column is encrypted with AES-GCM using `BRIDGE_ENCRYPTION_KEY`, since other hosts may not encrypt disks; losing that key means subscribers re-subscribe. Once Event Gateway signs, secrets move to Event Gateway destinations.
 
 ## Provider manifests
 
@@ -387,7 +435,7 @@ Gaps, and where the config file leaves them:
 
 ### Second provider: GitHub
 
-GitHub is the stage 8 manifest. It differs from Resend in ways that test the provider interface, though not every gap above.
+GitHub is the stage 7 manifest. It differs from Resend in ways that test the provider interface, though not every gap above.
 
 | | Resend | GitHub (check each against the GitHub docs and a real delivery) |
 | --- | --- | --- |
@@ -457,14 +505,16 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 - `HOOKDECK_SIGNING_SECRET`: to verify Hookdeck signatures on the inbound route.
 - `BRIDGE_INBOUND`: `http` (deployed; the default when `FLY_APP_NAME` is set) or `cli` (development; inbound through `hookdeck listen`).
 - `BRIDGE_PUBLIC_URL`: for `http` inbound, an optional override for the base URL Event Gateway delivers to. Unset, it comes from `FLY_APP_NAME` (`https://<app>.fly.dev`). `bridge setup` fails if `http` inbound has no `https` URL.
-- `BRIDGE_INBOUND_PORT`, `BRIDGE_MCP_PORT`, `BRIDGE_DATA_DIR`.
+- `BRIDGE_PORT`, `BRIDGE_DATA_DIR`.
+- `BRIDGE_MCP_SECRET`: the secret path segment of the MCP URL (see "Authentication").
 - Provider credentials, under whatever names the config references, for example `RESEND_API_KEY`.
-- `CONTROL_PLANE_API_KEY` and `OPENAI_TUNNEL_ID`: for `tunnel-client` (Secure MCP Tunnel).
+- Optional, stage 7: `CONTROL_PLANE_API_KEY` and `OPENAI_TUNNEL_ID`, for `tunnel-client` (Secure MCP Tunnel).
 - `.env.example` lists them all.
 
 ## Security
 
-- The inbound route is public and accepts only Hookdeck-signed requests. The MCP endpoint binds to `127.0.0.1`; Secure MCP Tunnel is the access boundary, usable only from the Platform organizations and ChatGPT workspaces it's associated with. A public MCP endpoint later needs OAuth.
+- The inbound route accepts only Hookdeck-signed requests.
+- The MCP endpoint is protected by the secret URL by default (see "Authentication"). The URL is a credential: it's redacted from the bridge's logs and can be rotated. OAuth tiers give per-request tokens instead. On a laptop the listener binds to `127.0.0.1`.
 - Topic sources are `PUBLISH_API`, so only holders of the project API key can publish to them.
 - The callback allowlist and no-redirect rule apply at subscribe, since Event Gateway makes the deliveries.
 - Provider keys and signing secrets never pass through tool arguments or results.
@@ -490,7 +540,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 
 | Requirement | Level | Status | Notes |
 | --- | --- | --- | --- |
-| Authenticated principal; reject with `-32012` | MUST | **Unknown** | Behind Secure MCP Tunnel there's no OAuth. Stage 5 has to show what identity, if any, ChatGPT presents through the tunnel. Fallback: static bearer tokens mapped to principals, as the demo does |
+| Authenticated principal; reject with `-32012` | MUST | **Partial** | Secret URL (default): a request without the secret is rejected, and every caller with it is the one owner principal. Built-in OAuth or an identity provider gives token-based principals (stage 7) |
 | Principal authorized for the event and arguments | MUST | **Gap** | Single-tenant: any principal the deployment accepts can subscribe to any configured event. No per-resource access model |
 | Re-check access during the subscription; stop on revocation | SHOULD (spec), required by OpenAI | **Gap** | Only "remove the principal's token". No revocation signal from providers |
 | `https` callback URLs; reject others with `-32602` | MUST | Designed | ChatGPT callbacks are `https`; local agents use Hookdeck source URLs, which are `https`. The demo's `allowLocal` (`http` on localhost) is dev-only and doesn't conform |
@@ -534,8 +584,8 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Feature | Level | Status | Notes |
 | --- | --- | --- | --- |
 | `gap` and `terminated` control envelopes | MUST when used; `terminated` SHOULD on revocation or removed events | Not planned | ChatGPT doesn't support them. `bridge setup --prune` should send `terminated` if a client ever does |
-| Poll mode (`events/poll`) | Optional mode | Planned (after stage 6) | Replaces the custom pull tools as the primary pull interface; backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
-| Push mode (`events/stream`) | Optional mode | Not planned | |
+| Poll mode (`events/poll`) | Optional mode | Planned (stage 6) | Fallback for agents that can't receive webhooks; backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
+| Push mode (`events/stream`) | Optional mode | Not planned | Would bypass Event Gateway; only if a client needs it |
 | Replay: non-null `cursor`, `maxAgeMs` | MAY | Not planned | Possible later: Event Gateway keeps every inbound request, so a cursor could be a position in that history |
 | Asymmetric `v1a,` signatures and JWKS | MAY | Not planned | |
 
@@ -543,7 +593,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 
 - **Known gaps:** re-signing on every retry, per-principal authorization, and access re-checks. The first is a known limit of the relay and closes with Event Gateway destination signing. The other two come from single-tenant hosting and matter more for anything multi-tenant.
 - **Delegated to Event Gateway:** the delivery-time SSRF and no-redirect rules apply to whoever makes the deliveries, which is Event Gateway.
-- **Unknown:** what principal ChatGPT presents through the tunnel (stage 5).
+- **Partial:** the authenticated principal. The secret URL authenticates one owner; OAuth tiers (stage 7) give token-based principals.
 - **Everything ChatGPT tests in its checklist** is designed, mostly ported from the demo that passed it. That's design, not a passing implementation.
 
 ## Verified facts
@@ -631,12 +681,15 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, poll mode.** The spec's `events/poll` replaces the custom pull tools as the pull interface; tools wrap it only for hosts without MCP Events support.
 - **5 Oct, Smithery.** List the bridge on Smithery as an ordinary MCP server first; triggers support only if there's interest.
 - **5 Oct, test email.** A verified sending domain in the dedicated Resend account; agents send test emails through Resend's API, so the end-to-end script runs unattended.
-- **5 Oct, hosting.** The deliverable is a Docker image (bridge plus `tunnel-client`). Fly.io is the reference host for stage 6 (a Machine with a volume for SQLite). Deploy docs and automation for Railway and Render follow.
+- **5 Oct, hosting.** The deliverable is a Docker image of the bridge. Fly.io is the reference host for stage 5 (a Machine with a volume for SQLite). Deploy docs and automation for Railway and Render follow.
 - **5 Oct, name.** GitHub `hookdeck/mcp-events-bridge`, npm `@hookdeck/mcp-events-bridge`, CLI `mcp-events-bridge`.
-- **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 6; transformation issues come with the direct path.
-- **5 Oct, secrets at rest.** File permissions and host volume encryption in stage 6; app-level AES-GCM encryption of subscription secrets before the bridge is promoted for others to deploy.
-- **5 Oct, ChatGPT plan.** Stage 6 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
+- **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 5; transformation issues come with the direct path.
+- **5 Oct, secrets at rest.** File permissions and host volume encryption in stage 5; app-level AES-GCM encryption of subscription secrets before the bridge is promoted for others to deploy.
+- **5 Oct, ChatGPT plan.** Stage 5 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
 - **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared only when a synchronous response is needed, or for the MCP Events challenge until the MCP Events source type ships.
+- **5 Oct, authentication.** Tiers by friction: a secret URL by default, then built-in single-user OAuth, then bring-your-own identity provider. The OpenAI Secure MCP Tunnel is optional, for private networks. No extra service is required.
+- **5 Oct, local delivery.** Local agents receive webhooks through Event Gateway's MCP Events source and the Hookdeck CLI, with recovery of events missed while offline. Poll from Event Gateway's history is the fallback; push is not planned.
+- **5 Oct, Outpost.** A future option for spec-conformant delivery, not the default: it adds a second service.
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 
 ## Open questions
@@ -644,12 +697,12 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [ ] Standard Webhooks destination auth in Event Gateway: not planned yet. Decides when the re-sign gap closes and publish-once can happen. Needs per-destination secret rotation as well as signing.
 - [ ] Delivering straight from the provider source: the research questions in "Evolution".
 - [ ] Adding a provider: gaps 2 and 4 in "Adding a provider", and the manual paste in gap 1. Pick a third provider that tests them.
-- [ ] Principal through Secure MCP Tunnel: what ChatGPT presents (stage 5). The Outpost demo's ChatGPT app used "No Authentication", which gives no principal; if the tunnel adds no identity, configure a bearer token on the ChatGPT app if Developer mode allows it.
+- [ ] Built-in OAuth: which maintained library supports CIMD and resource indicators (for example `oidc-provider`)?
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
 - [x] Delivery issue notifications carry the failing response status, so the bridge deletes a subscription on `410` (stage 4).
 - [x] Stage 3: bodies are byte-identical across attempts and match the publisher's, and the signature headers don't change between attempts (see `SPIKES.md`).
 - [ ] What ChatGPT does when a refresh fails while the bridge is offline. Lean: long default lifetime until tested.
-- [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 6.
+- [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 5.
 - [ ] One `listen` per connection, or one for all sources (local bridge only). Lean: one per connection until checked.
 
 ## Prior art

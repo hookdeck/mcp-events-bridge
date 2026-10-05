@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 6 in `docs/PLAN.md`. No local agents, Claude Code shim, OAuth or second provider yet.
+Stages 1 to 5 in `docs/PLAN.md` (1 to 4 are done). No local agents, Claude Code shim, OAuth tiers beyond the secret URL, or second provider yet.
 
 ## What the maintainer sets up first
 
@@ -13,10 +13,10 @@ You can't do these. Each is needed before the step that uses it.
 | Needed for | What | Env var |
 | --- | --- | --- |
 | Everything | A dedicated Hookdeck project for this work (not a production project) and its Project API key | `HOOKDECK_API_KEY` |
-| Stages 2 and 6 | A Resend account with a verified sending domain and a full-access API key. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address). The spikes create the `email.received` webhook through the API | `RESEND_API_KEY`, `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
-| Stages 5 and 6 | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed for stage 6); an OpenAI Platform tunnel and runtime API key per OpenAI's Secure MCP Tunnel guide; `tunnel-client` installed | `CONTROL_PLANE_API_KEY`, `OPENAI_TUNNEL_ID` |
+| Stages 2 and 5 | A Resend account with a verified sending domain and a full-access API key. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address). The spikes create the `email.received` webhook through the API | `RESEND_API_KEY`, `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
+| Stage 5 | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
 | Everything | Hookdeck CLI with `gateway connection upsert`, Node 22 or later | |
-| Stage 6 deploy | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
+| Stage 5 deploy | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
 
 Secrets go in `.env` (gitignored); `.env.example` lists every variable with a comment, grouped by the step that needs it. Never print keys or signing secrets in logs, test output, commit messages or chat.
 
@@ -42,7 +42,7 @@ Record each spike stage in `docs/SPIKES.md`, under a heading matching its name i
 - Anything that needs the ChatGPT or OpenAI Platform UI.
 - Sending email from a real mailbox (sending through Resend's API to the test address is fine).
 - Changing the public interface: MCP tools, manifest shape, event envelope.
-- Any spike result that changes stage 6's scope.
+- Any result that changes the scope of the current stage.
 
 ## What to hand back
 
