@@ -14,3 +14,6 @@ dist/
 
 # Hookdeck CLI private config (hookdeck ci --hookdeck-config)
 .hookdeck/
+
+# Raw spike captures (may hold personal data); redacted fixtures are committed
+spikes/raw/

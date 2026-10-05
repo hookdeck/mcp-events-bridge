@@ -1,0 +1,37 @@
+{
+  "_note": "Resend email.received as delivered by Hookdeck Event Gateway (RESEND source, CLI destination) on 5 Oct 2026. Email addresses replaced; signature redacted. Captured in spike 3.",
+  "headers": {
+    "content-type": "application/json",
+    "idempotency-key": "evt_6CeCplwLWcfDdecDmb",
+    "svix-id": "msg_3KHbIt3gcFjtCyW4hdA6Ug4T61H",
+    "svix-signature": "v1,REDACTED",
+    "svix-timestamp": "1791217363",
+    "user-agent": "Svix-Webhooks/rolling (sender-9YMgn; +https://www.svix.com/http-sender/)",
+    "x-hookdeck-attempt-count": "1",
+    "x-hookdeck-connection-name": "spike-resend",
+    "x-hookdeck-eventid": "evt_6CeCplwLWcfDdecDmb",
+    "x-hookdeck-requestid": "req_k9nb7BHzLdqWb62rYUpx",
+    "x-hookdeck-source-name": "spike-resend",
+    "x-hookdeck-verified": "true"
+  },
+  "body": {
+    "created_at": "2026-10-05T16:22:41.000Z",
+    "data": {
+      "attachments": [],
+      "bcc": [],
+      "cc": [],
+      "created_at": "2026-10-05T16:22:42.897Z",
+      "email_id": "8bb0cabf-ebb8-4f85-9a67-37c52a6646cc",
+      "from": "sender@example.com",
+      "message_id": "<message-id@mail.example.com>",
+      "received_for": [
+        "bridge-test@inbound.example.com"
+      ],
+      "subject": "Spike 3: inbound test",
+      "to": [
+        "bridge-test@inbound.example.com"
+      ]
+    },
+    "type": "email.received"
+  }
+}

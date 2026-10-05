@@ -347,12 +347,14 @@ interface ManifestEvent {
 
 `register()` matters beyond convenience: the signing secret the provider returns goes straight onto the Event Gateway source and never enters the model's context.
 
-Resend, first manifest (check every field against a real delivery in spike 3):
+Resend, first manifest (settled in spike 3; see `SPIKES.md` and `test/fixtures/resend/email-received.json`):
 
 - `sourceType`: `RESEND`. Event Gateway verifies Resend's Svix signature.
 - `register()`: Resend's create-webhook API with the source URL and `email.received`; it returns `signing_secret`.
+- `matches`: `body.type === "email.received"`.
 - `eventId`: the `svix-id` header.
-- `summarize`: email id, from, to, subject, received time, plus normalized `fromAddress` and `toAddresses` (bare, lowercased). The webhook carries metadata only; the body comes from Resend's own MCP server.
+- `occurredAt`: `body.data.created_at` (the received email's time, millisecond precision).
+- `summarize`: `emailId` (`data.email_id`), `from`, `to`, `cc`, `subject`, `messageId`, `attachmentCount`, plus normalized `fromAddress` and `toAddresses` (bare, lowercased). Resend sent a bare `from` in spike 3, but normalization stays. The webhook carries metadata only; the body comes from Resend's own MCP server.
 - `inputSchema`: `from` and `to` filters, matched on the normalized addresses. Recommend `from` in the event description, since it limits who can wake the agent.
 
 ## Adding a provider
@@ -600,7 +602,9 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 - Webhooks are Svix-signed, with `svix-id`, `svix-timestamp` and `svix-signature` headers.
 - The create-webhook API returns a `signing_secret`.
-- `email.received` carries metadata only.
+- `email.received` carries metadata only: `type`, `created_at`, and `data` with `email_id`, `from`, `to`, `received_for`, `cc`, `bcc`, `subject`, `message_id`, `attachments`, `created_at` (spike 3).
+- Every account gets a receiving domain, `<id>.resend.app`; mail to any address on it is received. No custom domain needed.
+- Event Gateway passes `svix-*` headers through and rejects unsigned requests to a `RESEND` source as `VERIFICATION_FAILED` without forwarding them; the sender still gets `200` (spike 3).
 - Event Gateway has a `RESEND` source type.
 - Test emails are sent through Resend's API from a verified sending domain in the dedicated account.
 
