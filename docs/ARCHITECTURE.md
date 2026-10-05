@@ -108,7 +108,7 @@ Why this shape:
 
 This needs a Standard Webhooks destination auth type in Event Gateway. Today's destination auth methods are Hookdeck Signature, Custom SHA-256, Basic, API key and Bearer; both signature methods sign the body only.
 
-Status: not on the roadmap yet, but looks feasible. Event Gateway already computes destination auth on every delivery attempt, so a Standard Webhooks method would re-sign each retry without changes to how retries work, and Event Gateway already verifies Standard Webhooks on inbound sources. The new parts are the signer itself, per-destination secret rotation, and choosing where `webhook-id` comes from.
+Status: not available today. Event Gateway already verifies Standard Webhooks on inbound sources; outbound signing would need the signer itself, per-destination secret rotation, and a choice of where `webhook-id` comes from.
 
 What the feature has to do, for this design:
 
@@ -497,7 +497,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | `truncated` | MAY | Designed (ported) | `true` when a client supplies a cursor, since there's no replay |
 | `deliveryStatus` | MAY | Designed | From Event Gateway delivery issues on the subscription's connection |
 | `-32013` on limits | MUST when limited | Designed (ported) | Event Gateway has no documented limits on the number of sources, connections or destinations, so limits are the bridge's own |
-| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. Event Gateway cancels pending events when a connection is deleted; an attempt already in flight can still arrive, so expect a delivery within seconds of unsubscribing |
+| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. Whether a retry already scheduled can still arrive after deletion is checked in stage 3 |
 
 ### Endpoint verification and SSRF
 
@@ -560,8 +560,6 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - A `PUBLISH_API` source accepts only Publish API requests. Published requests count as verified. No idempotency key is documented.
 
 **Resource limits:** the [limits page](https://hookdeck.com/docs/limits) covers payload size, delivery timeout, retry attempts and throughput, with no limit on the number of sources, connections or destinations; "Each source supports an unlimited number of unique connections."
-
-**Connection deletion:** deleting or disabling a connection cancels its pending events; an attempt already in flight can still complete.
 
 **Rules and ignored events:**
 
