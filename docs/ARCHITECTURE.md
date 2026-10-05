@@ -186,13 +186,15 @@ The Claude Code channel shim (from `hookdeck/claude-channel-plugin`) is one such
 
 ### Running the bridge itself locally
 
-The same code runs on a laptop if the inbound connection uses a CLI destination instead of the bridge's public URL. That brings back what the fleet demo solved:
+The same code runs on a laptop if the inbound connection uses a CLI destination instead of the bridge's public URL. Development uses this from stage 6: the config's inbound mode is `cli`, `bridge setup` upserts the inbound connection with a CLI destination at path `/inbound/<instance id>`, and `hookdeck listen` forwards to the bridge's inbound port. Requests forwarded by the CLI carry the same Hookdeck signature as HTTP deliveries (stage 2), so the inbound route doesn't change. No public URL or tunnel is needed for inbound.
+
+Running it unattended on a laptop (stage 7) brings back what the fleet demo solved:
 
 - the bridge upserts its own connection first and fails closed, because `listen` creates a shared `cli-<source>` connection if the named one doesn't exist;
 - a supervisor for `hookdeck listen`, with "Connected" on stdout as the recovery trigger;
 - missed-event recovery, ported from `recover.ts` (see "Verified facts").
 
-This is later work. Hosted comes first.
+A plain public tunnel (cloudflared) is still used where something needs a public HTTPS URL that answers synchronously: the spike receivers, and a development test subscriber's callback until the MCP Events source type can answer the challenge.
 
 ## Process model
 
@@ -247,7 +249,7 @@ From `hookdeck/mcp-events-outpost-demo` (passed OpenAI's checklist with ChatGPT 
 | `src/server/subscriptions.ts` | Subscribe, refresh, unsubscribe and sweep; replace the Outpost calls with Event Gateway connection and destination management |
 | `src/server/mcp.ts` | The pattern: the SDK has no MCP Events support, so `events/*` are registered by hand |
 | `src/client/subscriber.ts` | The test subscriber |
-| `scripts/tunnel.ts` | cloudflared quick tunnel, for a public test callback |
+| `scripts/tunnel.ts` | cloudflared quick tunnel, for a development test subscriber's callback |
 
 From `hookdeck/hookdeck-demos/hookdeck/cli-fleet-fanout`:
 
@@ -450,7 +452,8 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 
 - `HOOKDECK_API_KEY`: a Project API key, for the Event Gateway API and the Publish API.
 - `HOOKDECK_SIGNING_SECRET`: to verify Hookdeck signatures on the inbound route.
-- `BRIDGE_PUBLIC_URL`: optional override for the base URL Event Gateway delivers inbound requests to. Unset, the bridge resolves it: on Fly.io from `FLY_APP_NAME` (`https://<app>.fly.dev`), and in development from `.tunnel-url`, which `npm run tunnel` writes (the demo's pattern). `bridge setup` fails if none of these gives an `https` URL.
+- `BRIDGE_INBOUND`: `http` (deployed; the default when `FLY_APP_NAME` is set) or `cli` (development; inbound through `hookdeck listen`).
+- `BRIDGE_PUBLIC_URL`: for `http` inbound, an optional override for the base URL Event Gateway delivers to. Unset, it comes from `FLY_APP_NAME` (`https://<app>.fly.dev`). `bridge setup` fails if `http` inbound has no `https` URL.
 - `BRIDGE_INBOUND_PORT`, `BRIDGE_MCP_PORT`, `BRIDGE_DATA_DIR`.
 - Provider credentials, under whatever names the config references, for example `RESEND_API_KEY`.
 - `CONTROL_PLANE_API_KEY` and `OPENAI_TUNNEL_ID`: for `tunnel-client` (Secure MCP Tunnel).
@@ -630,6 +633,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 6; transformation issues come with the direct path.
 - **5 Oct, secrets at rest.** File permissions and host volume encryption in stage 6; app-level AES-GCM encryption of subscription secrets before the bridge is promoted for others to deploy.
 - **5 Oct, ChatGPT plan.** Stage 6 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
+- **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared stays for spike receivers and a development subscriber's callback.
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 
 ## Open questions

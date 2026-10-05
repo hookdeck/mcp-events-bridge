@@ -73,7 +73,7 @@ The bridge running on Fly.io: Resend events relayed to the test subscriber and t
 8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). The bridge records issues on the subscription or provider instance, reports them in `list_providers`, and returns `deliveryStatus` on refresh.
 9. **MCP server.** `events/*` handlers plus `get_event` and `list_recent_events`, on `127.0.0.1`.
 10. **CLI entry.** `serve` and `setup`. `doctor` and `--prune` can be stubs.
-11. **End-to-end script.** Start the bridge with a cloudflared inbound URL, run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
+11. **End-to-end script.** Start the bridge with CLI inbound (`hookdeck listen` to the inbound port), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
 12. **Deploy.** Dockerfile (bridge plus `tunnel-client`) and a Fly.io config with a volume for SQLite; deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
 13. **ChatGPT.** Through Secure MCP Tunnel to the deployed bridge, as in stage 5.
 
