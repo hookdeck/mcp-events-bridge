@@ -48,7 +48,7 @@ export function buildMcpServer(deps: {
 
   server.registerTool(
     'list_providers',
-    { description: 'List the configured providers, their events, and their health.', inputSchema: z.object({}) },
+    { description: 'List the configured providers, their events, and how many subscriptions each has.', inputSchema: z.object({}) },
     async () => json({ providers: deps.providers() }),
   );
 

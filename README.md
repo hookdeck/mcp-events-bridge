@@ -14,9 +14,9 @@ MCP Events is an experimental MCP extension that lets an agent subscribe to even
 
 The bridge closes that gap:
 
-- **Webhooks become MCP Events.** Built-in webhook providers: Resend inbound email and GitHub. Add others with `defineProvider`, for any service Event Gateway has a source type for, including ones you've built.
+- **Webhooks become MCP Events.** Built-in webhook providers: Resend inbound email and GitHub. Add others with `defineProvider`, for any service Event Gateway has a source type for. Generic HMAC-signed webhooks, such as ones from a service you've built, aren't supported yet.
 - **Subscribers choose what wakes them.** Events have filters, such as an email's sender, or a GitHub repository and action.
-- **Delivery you don't have to build.** Event Gateway verifies provider signatures, retries failed deliveries, removes duplicates, and keeps a record of every event and attempt.
+- **Delivery you don't have to build.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Nothing to store.** The bridge is stateless: each subscription is an Event Gateway connection, so there's no database.
 
 It's for developers who want agents (ChatGPT today, local agents next) to react to events from the tools they already use.
@@ -48,6 +48,7 @@ You need:
    mkdir my-bridge && cd my-bridge
    npm init -y && npm pkg set type=module
    npm install @hookdeck/mcp-events-bridge
+   printf 'node_modules/\n.env\n.hookdeck/\n' > .gitignore   # .env and .hookdeck/ hold credentials
    ```
 
 2. **Choose webhook providers** in `bridge.config.ts`:
@@ -61,7 +62,8 @@ You need:
      deployment: process.env.BRIDGE_DEPLOYMENT ?? 'dev',
      providers: [
        resend({ apiKey: env('RESEND_API_KEY') }),
-       github({ token: env('GITHUB_TOKEN'), scope: { repos: ['your-org/your-repo'] } }),
+       // Only `setup` uses the token, so it's optional here: a deployed bridge runs without it.
+       github({ token: env('GITHUB_TOKEN', { optional: true }), scope: { repos: ['your-org/your-repo'] } }),
      ],
    });
    ```
@@ -83,7 +85,7 @@ You need:
    npx mcp-events-bridge setup
    ```
 
-   The first run generates an MCP secret: add it to `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run, and updates webhooks when you change providers, events or repositories.
+   The first run generates an MCP secret: add it to `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run, and updates the webhooks when you add providers or change events or repositories. Removing a provider or a repository deletes nothing: delete its webhook (and its Event Gateway connection) yourself.
 
 5. **Run the bridge:**
 
@@ -93,7 +95,7 @@ You need:
 
    Locally, `serve` checks that setup has run and starts `hookdeck listen` for every provider, so events reach your laptop through the Hookdeck CLI. Send an email to your Resend address, or open an issue, and the bridge logs it.
 
-6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt). ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://localhost:8080`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
+6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt). ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://127.0.0.1:8080` and use `https://<tunnel host>/mcp/<BRIDGE_MCP_SECRET>`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
 
 ## Connect ChatGPT
 
@@ -127,7 +129,7 @@ Two ways to connect repositories:
 
 | Mode | Options | Who adds the webhooks |
 | --- | --- | --- |
-| **Automatic** | `github({ token, scope: { repos: ['owner/name', ...] } })`, or `scope: { org: 'name' }` for every repository in an organization | `setup`, with a fine-grained token that has the Webhooks (read and write) permission. For an organization's repositories, the token's resource owner must be the organization |
+| **Automatic** | `github({ token, scope: { repos: ['owner/name', ...] } })`, or `scope: { org: 'name' }` for every repository in an organization | `setup`, with a fine-grained token that has the Webhooks (read and write) permission. For an organization's repositories, the token's resource owner must be the organization. `scope: { org }` creates one organization webhook, which needs an organization owner and the organization Webhooks permission |
 | **Manual** | `github({ webhookSecret })`, no token | You: in each repository, Settings > Webhooks > Add webhook, with the Payload URL `setup` prints, content type `application/json`, and the same secret |
 
 ### Adding a webhook provider
@@ -154,13 +156,13 @@ CMD ["npx", "mcp-events-bridge", "serve"]
 Then:
 
 ```sh
-fly launch --no-deploy                     # creates fly.toml; set internal_port = 8080
+fly launch --no-deploy        # creates fly.toml: set internal_port = 8080, and BRIDGE_DEPLOYMENT = 'fly' under [env]
 fly secrets set HOOKDECK_API_KEY=... HOOKDECK_SIGNING_SECRET=... RESEND_API_KEY=... BRIDGE_MCP_SECRET=...
-fly deploy
 BRIDGE_DEPLOYMENT=fly BRIDGE_INBOUND=http BRIDGE_PUBLIC_URL=https://<app>.fly.dev npx mcp-events-bridge setup
+fly deploy
 ```
 
-On Fly.io, the bridge receives events over HTTP at its public URL instead of through the Hookdeck CLI. Set `BRIDGE_DEPLOYMENT = 'fly'` under `[env]` in `fly.toml` so it uses the resources the last command created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret.
+On Fly.io, the bridge receives events over HTTP at its public URL instead of through the Hookdeck CLI, using the `fly` resources that `setup` created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret; in GitHub's manual mode, set `GITHUB_WEBHOOK_SECRET` as a Fly secret too. The Dockerfile copies only `bridge.config.ts`: copy any other files your config imports, such as your own providers.
 
 Use a separate Hookdeck project for each environment you want isolated: deployments in one project share the provider sources and the subscriptions.
 
@@ -183,7 +185,8 @@ In the Event Gateway dashboard, a running bridge looks like this:
 | `BRIDGE_MCP_SECRET` | Secret path segment of the MCP URL; `setup` generates one |
 | `BRIDGE_INBOUND` | `cli` (through `hookdeck listen`) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
 | `BRIDGE_PUBLIC_URL` | For `http` inbound. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
-| `BRIDGE_PORT` | Listener port (default 8080) |
+| `BRIDGE_PORT` | Listener port (default: `PORT`, else 8080) |
+| `BRIDGE_DEPLOYMENT` | Not read by the bridge itself: the examples above pass it to `deployment` in `bridge.config.ts` |
 | `RESEND_API_KEY` | Resend provider: creates the webhook (read through `env()` in `bridge.config.ts`) |
 | `GITHUB_TOKEN` | GitHub provider, automatic mode: creates the webhooks. Only `setup` uses it |
 | `GITHUB_WEBHOOK_SECRET` | GitHub provider, manual mode: the secret on the webhooks you add (at least 16 characters) |
