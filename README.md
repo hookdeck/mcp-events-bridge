@@ -198,11 +198,18 @@ Every deployment needs these, whichever providers it uses.
 
 Set only what the providers in your `bridge.config.ts` need. The names are the ones the examples pass to `env()`; use your own if you prefer.
 
-| Provider | Variable | When | Purpose |
-| --- | --- | --- | --- |
-| Resend | `RESEND_API_KEY` | Always | API key that can create webhooks. `setup` registers the webhook with it, and the example config requires it wherever the bridge runs |
-| GitHub | `GITHUB_TOKEN` | Automatic mode | Fine-grained token with the Webhooks (read and write) permission. Only `setup` uses it |
-| GitHub | `GITHUB_WEBHOOK_SECRET` | Manual mode | The secret on the webhooks you add (at least 16 characters). Needed wherever the bridge runs |
+#### Resend
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `RESEND_API_KEY` | Yes | API key that can create webhooks. `setup` registers the webhook with it, and the example config requires it wherever the bridge runs |
+
+#### GitHub
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission. Only `setup` uses it |
+| `GITHUB_WEBHOOK_SECRET` | In manual mode | The secret on the webhooks you add (at least 16 characters). Needed wherever the bridge runs |
 
 ## MCP surface
 
