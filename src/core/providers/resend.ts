@@ -30,7 +30,7 @@ const emailReceivedBody = z.object({
 
 const emailReceivedArguments = z
   .object({
-    from: z.string().min(3).describe('Only emails from this sender address. Recommended: it limits who can wake the agent.').optional(),
+    from: z.string().min(3).describe('Only emails from this sender address. Recommended: it narrows what wakes the agent (sender addresses can be forged, so don\'t rely on it alone).').optional(),
     to: z.string().min(3).describe('Only emails sent to this address.').optional(),
   })
   .strict();

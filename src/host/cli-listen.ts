@@ -53,7 +53,8 @@ export async function startListen(
   let output = '';
   let stopping = false;
   const onData = (chunk: Buffer) => {
-    output += chunk.toString();
+    // Only the tail is kept: enough to spot "Connected" and report a failure, without growing for the life of `serve`.
+    output = (output + chunk.toString()).slice(-8192);
     for (const line of chunk.toString().split('\n')) {
       // Event lines in compact output, for visibility; the banner is skipped.
       if (/^\s*(\d{4}-|\[|→|←|✓|✗|✖|POST|GET)/.test(line)) log(line.trim());

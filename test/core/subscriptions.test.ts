@@ -4,7 +4,7 @@ import { Catalog } from '../../src/core/catalog.js';
 import { DEFAULT_SUBSCRIPTION_SETTINGS, defineConfig, resolveConfig } from '../../src/core/config.js';
 import { MemoryStore } from '../../src/core/memory-store.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
-import { SubscriptionService } from '../../src/core/subscriptions.js';
+import { SubscriptionService, describeParams } from '../../src/core/subscriptions.js';
 import { resend } from '../../src/providers.js';
 
 const catalog = new Catalog(
@@ -113,6 +113,19 @@ describe('SubscriptionService.unsubscribe and sweep', () => {
     await expect(service.unsubscribe('owner', request)).resolves.toEqual({});
     await expect(service.unsubscribe('owner', request)).resolves.toEqual({});
     expect(store.list()).toEqual([]);
+  });
+
+  it('unsubscribes from an event that is no longer configured', async () => {
+    const { service } = setup();
+    await expect(service.unsubscribe('owner', params({ name: 'email.removed' }))).resolves.toEqual({});
+  });
+
+  it('keeps the callback query string and the secret out of logs', () => {
+    const secret = generateWebhookSecret();
+    const logged = describeParams(params({ delivery: { url: 'https://receiver.example.com/hook?token=abc', secret } }));
+    expect(logged).toContain('https://receiver.example.com/hook?<redacted>');
+    expect(logged).not.toContain('token=abc');
+    expect(logged).not.toContain(secret);
   });
 
   it('sweeps subscriptions whose grant has lapsed', async () => {

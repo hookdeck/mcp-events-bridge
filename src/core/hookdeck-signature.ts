@@ -6,8 +6,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * with the project's signing secret, in x-hookdeck-signature, and in
  * x-hookdeck-signature-2 while the secret is being rotated.
  */
-export function verifyHookdeckSignature(rawBody: string, headers: Record<string, string | undefined>, signingSecret: string): boolean {
-  const expected = createHmac('sha256', signingSecret).update(rawBody, 'utf8').digest();
+export function verifyHookdeckSignature(rawBody: string | Buffer, headers: Record<string, string | undefined>, signingSecret: string): boolean {
+  if (!signingSecret) return false;
+  // Over the raw bytes as received, when given a Buffer.
+  const expected = createHmac('sha256', signingSecret).update(rawBody).digest();
   return ['x-hookdeck-signature', 'x-hookdeck-signature-2'].some((name) => {
     const value = headers[name];
     if (!value) return false;

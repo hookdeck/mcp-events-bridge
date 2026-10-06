@@ -64,7 +64,7 @@ Rules that make it correct:
 - **Partial failure produces duplicates.** If publishing to A succeeds and B fails, the inbound retry publishes to A again. Each subscription connection has a dedupe rule on `headers.webhook-id`, which is the provider's event id and stable across retries. Dedupe is best-effort with a window of at most 1 hour, so subscribers must still dedupe on `webhook-id`.
 - **The inbound retry rule finishes inside the dedupe window.** For example, linear retries that end within an hour.
 - **Publish to all matches in parallel,** so the inbound response stays well inside the destination timeout.
-- **Skip subscriptions created after the event's `occurredAt`,** so an inbound retry doesn't hand a new subscriber an old event.
+- **On an inbound retry, skip subscriptions created after the event's `occurredAt`,** so a retry doesn't hand a new subscriber an old event. A first attempt (`x-hookdeck-attempt-count` of 1) goes to every current subscription, because provider timestamps can predate the action: editing an old GitHub release keeps its `published_at`.
 - **Outbound retries carry the first signature.** Event Gateway passes the published headers through unchanged, so a retry has the original `webhook-timestamp`. The spec says each retry attempt MUST regenerate the timestamp and signature, so this doesn't conform (see "Spec conformance"). Keep each subscription connection's retries inside 5 minutes, the window inside which receivers SHOULD accept a timestamp, until Event Gateway can sign Standard Webhooks itself. Stage 3 confirms the pass-through behavior.
 - **The inbound connection also dedupes** on `headers.svix-id`, to drop fast provider retries before they reach the bridge. Best-effort, as above.
 
@@ -256,7 +256,7 @@ Single tenant: one deployment, one owner. Tiers, from least friction:
 
 One service per deployment:
 
-- **One HTTP listener** (`BRIDGE_PORT`): `POST /inbound/<instance id>` (Hookdeck-signed only; runs the relay; `200` or `5xx`) and the MCP endpoint at `/mcp/<secret>` (or `/mcp` with OAuth): Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. Deployed, it's public; on a laptop it binds to `127.0.0.1`.
+- **One HTTP listener** (`BRIDGE_PORT`): `POST /inbound/<instance id>` (Hookdeck-signed only, bodies up to 10 MiB, else `413`; runs the relay; `200` or `5xx`) and the MCP endpoint at `/mcp/<secret>` (or `/mcp` with OAuth): Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. Deployed, it's public; on a laptop it binds to `127.0.0.1`.
 - **The subscription index:** in memory, loaded from Event Gateway at startup (see "Data model").
 - **The sweeper:** expires subscriptions and deletes their connections and destinations.
 
@@ -350,7 +350,7 @@ export default defineConfig({
 ```
 
 - **Secrets are `env()` references only,** so the file can be committed and reviewed.
-- **Each provider entry is an instance** with an `id`, so one deployment can have several of the same provider (two Resend accounts, several GitHub orgs). Event Gateway resources are named after the instance id.
+- **Each provider entry is an instance** with an `id` (letters, digits, `-` and `_`, and not `hookdeck`, which is the notifications route), so one deployment can have several of the same provider (two Resend accounts, several GitHub orgs). Event Gateway resources are named after the instance id.
 - **Providers are code.** Built-in providers ship with the package; a deployment adds its own with `defineProvider` and redeploys, with no fork and no bridge release.
 - **The config is loaded at startup.** A TypeScript config is imported through `tsx`'s API (`tsImport`), so it works from source and from the published package, which ships compiled JavaScript in `dist/`. A serverless build would bundle the config as an ordinary module, so the `core/` boundary is unaffected.
 

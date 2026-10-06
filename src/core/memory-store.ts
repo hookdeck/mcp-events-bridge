@@ -35,7 +35,15 @@ export class MemoryStore implements SubscriptionStore {
     return record;
   }
 
-  async delete(id: string) {
-    this.records.delete(id);
+  async update(id: string, change: (current: SubscriptionRecord | undefined) => SubscriptionInput | null) {
+    const next = change(this.records.get(id));
+    return next ? this.put(next) : this.records.get(id);
+  }
+
+  async delete(id: string, options: { ifExpiredAt?: Date } = {}) {
+    const record = this.records.get(id);
+    if (!record) return false;
+    if (options.ifExpiredAt && Date.parse(record.expiresAt) > options.ifExpiredAt.getTime()) return false;
+    return this.records.delete(id);
   }
 }

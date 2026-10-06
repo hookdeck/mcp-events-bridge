@@ -60,7 +60,7 @@ export class Relay {
     this.log = deps.log ?? (() => {});
   }
 
-  async handle(path: string, headers: Record<string, string | undefined>, rawBody: string): Promise<InboundResponse> {
+  async handle(path: string, headers: Record<string, string | undefined>, rawBody: string | Buffer): Promise<InboundResponse> {
     try {
       return await this.route(path, headers, rawBody);
     } catch (error) {
@@ -69,7 +69,7 @@ export class Relay {
     }
   }
 
-  private async route(path: string, headers: Record<string, string | undefined>, rawBody: string): Promise<InboundResponse> {
+  private async route(path: string, headers: Record<string, string | undefined>, rawBody: string | Buffer): Promise<InboundResponse> {
     if (!verifyHookdeckSignature(rawBody, headers, this.deps.signingSecret)) return { status: 401, body: { error: 'invalid signature' } };
     // Event Gateway joins the destination path with the request's path, so `/inbound/hookdeck` can arrive as `/inbound/hookdeck/`.
     const match = /^\/inbound\/([A-Za-z0-9_-]+)\/?$/.exec(path);
@@ -77,7 +77,7 @@ export class Relay {
 
     let body: unknown;
     try {
-      body = JSON.parse(rawBody);
+      body = JSON.parse(rawBody.toString());
     } catch {
       return { status: 400, body: { error: 'body is not JSON' } };
     }
@@ -95,11 +95,14 @@ export class Relay {
     const occurredAt = event.occurredAt(req);
     const summary = event.summarize(req);
     const now = this.now();
+    const retry = Number(req.headers['x-hookdeck-attempt-count'] ?? '1') > 1;
     const subscribers = this.deps.store
       .list({ name: event.name })
       .filter((s) => Date.parse(s.expiresAt) > now.getTime())
-      // A subscription made after the event happened doesn't get it (an inbound retry would otherwise hand it an old event).
-      .filter((s) => Date.parse(s.createdAt) <= Date.parse(occurredAt))
+      // On an inbound retry, a subscription made after the event happened doesn't get it: the retry would otherwise
+      // hand it an old event. Not applied on a first attempt, since provider timestamps can predate the action (editing
+      // an old GitHub release keeps its published_at), which would drop the event for good.
+      .filter((s) => !retry || Date.parse(s.createdAt) <= Date.parse(occurredAt))
       .filter((s) => event.accepts(s.arguments, summary));
 
     const body = JSON.stringify({ eventId, name: event.name, timestamp: occurredAt, data: summary, cursor: null });
@@ -162,11 +165,16 @@ export class Relay {
       this.log(`${subscription.id}: callback returned 410, subscription deleted`);
     } else {
       const now = this.now().toISOString();
-      await this.deps.store.put({
-        ...subscription,
-        delivery: { active: false, lastError: failureReason(status, errorCode), failedSince: subscription.delivery.failedSince ?? now },
-        updatedAt: now,
-      });
+      // Read and written in the store's queue, so a refresh in flight (a rotated secret, a new expiry) isn't undone.
+      await this.deps.store.update(subscription.id, (current) =>
+        current
+          ? {
+              ...current,
+              delivery: { active: false, lastError: failureReason(status, errorCode), failedSince: current.delivery.failedSince ?? now },
+              updatedAt: now,
+            }
+          : null,
+      );
       this.log(`${subscription.id}: delivery failing (${status ?? errorCode ?? 'unknown'})`);
     }
     await this.deps.hookdeck.updateIssueStatus(issue.id, 'RESOLVED');

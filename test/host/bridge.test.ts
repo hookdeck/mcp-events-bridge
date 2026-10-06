@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
@@ -105,6 +106,18 @@ describe('bridge server', () => {
     await postInbound(port);
     await deliverPublished(gateway, subscriber);
     expect(subscriber.events).toHaveLength(0);
+  });
+
+  it('refuses an oversized inbound body before reading it all', async () => {
+    const { port } = await startBridge();
+    // Only the headers are sent: the bridge answers from the declared length and closes the connection.
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/inbound/resend', method: 'POST', headers: { 'Content-Length': String(11 * 1024 * 1024) } });
+      req.on('response', (res) => resolve(res.statusCode));
+      req.on('error', reject);
+      req.flushHeaders();
+    });
+    expect(status).toBe(413);
   });
 
   it('rejects inbound requests without a Hookdeck signature', async () => {

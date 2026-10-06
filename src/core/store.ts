@@ -51,8 +51,21 @@ export interface SubscriptionStore {
   listExpired(now: Date): SubscriptionRecord[];
   /** Creates or updates the subscription's Event Gateway resources and state. */
   put(input: SubscriptionInput): Promise<SubscriptionRecord>;
-  /** Deletes the subscription's resources, and its topic source when it was the last subscriber. */
-  delete(id: string): Promise<void>;
+  /**
+   * Read-modify-write in the store's write queue, so it can't interleave with
+   * another write (a refresh and a delivery-failure notification, say).
+   * `change` gets the current record and returns the new state, or null to
+   * leave it as it is.
+   */
+  update(id: string, change: (current: SubscriptionRecord | undefined) => SubscriptionInput | null): Promise<SubscriptionRecord | undefined>;
+  /**
+   * Deletes the subscription's resources, and its topic source when it was the
+   * last subscriber. Resources already gone count as deleted. With
+   * `ifExpiredAt`, deletes only if the subscription is still expired at that
+   * time, checked in the write queue (so a refresh during a sweep wins).
+   * Resolves true if it deleted something.
+   */
+  delete(id: string, options?: { ifExpiredAt?: Date }): Promise<boolean>;
 }
 
 export const healthyDelivery = (): SubscriptionDeliveryState => ({ active: true, lastError: null, failedSince: null });

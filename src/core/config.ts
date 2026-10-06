@@ -131,6 +131,9 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
 
   if (!/^[A-Za-z0-9_-]+$/.test(config.deployment)) throw new ConfigError('deployment may contain only letters, digits, - and _');
   const ids = config.providers.map((p) => p.id);
+  // Ids name Event Gateway resources and the inbound route, /inbound/<id>; `hookdeck` is the notifications route.
+  const badId = ids.find((id) => !/^[A-Za-z0-9_-]+$/.test(id) || id === 'hookdeck');
+  if (badId !== undefined) throw new ConfigError(`Provider id "${badId}" must be letters, digits, - and _, and not "hookdeck"`);
   const duplicate = ids.find((id, i) => ids.indexOf(id) !== i);
   if (duplicate) throw new ConfigError(`Two providers have the id "${duplicate}"; give one an explicit id`);
 
@@ -157,6 +160,7 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
   };
 
   if (missing.length) throw new ConfigError(`Missing environment variables: ${[...new Set(missing)].join(', ')}`);
+  if (!resolved.hookdeck.apiKey || !resolved.hookdeck.signingSecret) throw new ConfigError('The Hookdeck API key and signing secret must not be empty');
   if (inbound === 'http' && !publicUrl?.startsWith('https://')) {
     throw new ConfigError('http inbound needs an https public URL: set BRIDGE_PUBLIC_URL, or run on Fly.io');
   }

@@ -1,4 +1,4 @@
-import { SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient } from './hookdeck.js';
+import { HookdeckApiError, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient } from './hookdeck.js';
 import { SUBSCRIPTION_PREFIX, subscriptionResourceName, topicSourceName } from './names.js';
 import {
   SubscriptionTooLargeError,
@@ -106,8 +106,21 @@ export class EventGatewayStore implements SubscriptionStore {
     return this.serialize(() => this.write(input));
   }
 
-  delete(id: string): Promise<void> {
-    return this.serialize(() => this.remove(id));
+  update(id: string, change: (current: SubscriptionRecord | undefined) => SubscriptionInput | null): Promise<SubscriptionRecord | undefined> {
+    return this.serialize(async () => {
+      const next = change(this.withPrevious(this.records.get(id)));
+      return next ? this.write(next) : this.withPrevious(this.records.get(id));
+    });
+  }
+
+  delete(id: string, options: { ifExpiredAt?: Date } = {}): Promise<boolean> {
+    return this.serialize(async () => {
+      const record = this.records.get(id);
+      if (!record) return false;
+      if (options.ifExpiredAt && Date.parse(record.expiresAt) > options.ifExpiredAt.getTime()) return false;
+      await this.remove(record);
+      return true;
+    });
   }
 
   private async write(input: SubscriptionInput): Promise<SubscriptionRecord> {
@@ -123,7 +136,9 @@ export class EventGatewayStore implements SubscriptionStore {
       ...(!isHealthy(input.delivery) && { delivery: input.delivery }),
     };
     const description = JSON.stringify(metadata);
-    if (description.length > DESCRIPTION_LIMIT) throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
+    // Checked with the largest delivery block a failure notification can add later, so recording one can't overflow.
+    const worstCase = JSON.stringify({ ...metadata, delivery: { active: false, lastError: 'connection_refused', failedSince: input.updatedAt } });
+    if (worstCase.length > DESCRIPTION_LIMIT) throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
 
     const connection = await this.hookdeck.upsertConnection({
       name,
@@ -154,15 +169,15 @@ export class EventGatewayStore implements SubscriptionStore {
     return this.withPrevious(record)!;
   }
 
-  private async remove(id: string) {
-    const record = this.records.get(id);
-    if (!record) return;
-    await this.hookdeck.deleteConnection(record.connectionId);
-    await this.hookdeck.deleteDestination(record.destinationId);
-    this.records.delete(id);
-    this.previousSecrets.delete(id);
+  private async remove(record: SubscriptionRecord) {
+    // Already gone (deleted in the dashboard, or by an earlier attempt that failed part way) counts as deleted.
+    await this.hookdeck.deleteConnection(record.connectionId).catch(ignoreNotFound);
+    await this.hookdeck.deleteDestination(record.destinationId).catch(ignoreNotFound);
+    this.records.delete(record.id);
+    this.previousSecrets.delete(record.id);
     const topicStillUsed = [...this.records.values()].some((r) => r.topicSourceId === record.topicSourceId);
-    if (!topicStillUsed) await this.hookdeck.deleteSource(record.topicSourceId);
+    // A leftover topic source is harmless (the next subscription to the event reuses it), so this doesn't fail the delete.
+    if (!topicStillUsed) await this.hookdeck.deleteSource(record.topicSourceId).catch(() => {});
   }
 
   /** Adds the in-memory previous secret while its grace window is open. */
@@ -201,4 +216,9 @@ export class EventGatewayStore implements SubscriptionStore {
       topicSourceId: connection.source.id,
     };
   }
+}
+
+function ignoreNotFound(error: unknown): void {
+  if (error instanceof HookdeckApiError && error.status === 404) return;
+  throw error;
 }

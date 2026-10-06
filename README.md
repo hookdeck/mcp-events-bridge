@@ -203,7 +203,7 @@ In the Event Gateway dashboard, a running bridge looks like this:
 
 - **The MCP URL is a credential.** One secret URL authenticates one owner. It's redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned.
 - **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first.
-- **Event content is data, not instructions.** An email or issue can say anything; use filters such as `from` or `sender` to limit who can trigger an agent.
+- **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook delivery only.** Poll delivery is planned, so agents that can't receive webhooks can use the bridge. Push delivery and replay cursors aren't planned.
 - **Retries reuse the first signature.** The spec asks for a fresh signature on each attempt. Retries are kept inside the 5-minute window receivers check, until Event Gateway signs deliveries itself.
 

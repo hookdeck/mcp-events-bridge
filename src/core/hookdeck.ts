@@ -245,11 +245,11 @@ export class HookdeckClient {
   }
 
   getRequest(id: string) {
-    return this.api<HookdeckRequest>(`/requests/${id}`);
+    return this.api<HookdeckRequest>(`/requests/${encodeURIComponent(id)}`);
   }
 
   getEvent(id: string) {
-    return this.api<HookdeckEvent>(`/events/${id}`);
+    return this.api<HookdeckEvent>(`/events/${encodeURIComponent(id)}`);
   }
 
   /**
@@ -258,11 +258,11 @@ export class HookdeckClient {
    * unrelated events.
    */
   listEventsForRequest(requestId: string) {
-    return this.api<Page<HookdeckEvent>>(`/requests/${requestId}/events`, { query: { limit: 100 } });
+    return this.api<Page<HookdeckEvent>>(`/requests/${encodeURIComponent(requestId)}/events`, { query: { limit: 100 } });
   }
 
   listIgnoredEventsForRequest(requestId: string) {
-    return this.api<Page<IgnoredEvent>>(`/requests/${requestId}/ignored_events`, { query: { limit: 100 } });
+    return this.api<Page<IgnoredEvent>>(`/requests/${encodeURIComponent(requestId)}/ignored_events`, { query: { limit: 100 } });
   }
 
   /**
@@ -271,7 +271,7 @@ export class HookdeckClient {
    * the public API reference. A request retry creates new event ids.
    */
   retryRequest(requestId: string, connectionIds?: string[]) {
-    return this.api<{ request: HookdeckRequest; events: HookdeckEvent[] }>(`/requests/${requestId}/retry`, {
+    return this.api<{ request: HookdeckRequest; events: HookdeckEvent[] }>(`/requests/${encodeURIComponent(requestId)}/retry`, {
       method: 'POST',
       body: connectionIds?.length ? { webhook_ids: connectionIds } : {},
     });
@@ -279,7 +279,7 @@ export class HookdeckClient {
 
   /** Retry one event. Only for events settled as FAILED (see TERMINAL_EVENT_STATUSES). */
   retryEvent(eventId: string) {
-    return this.api<HookdeckEvent>(`/events/${eventId}/retry`, { method: 'POST' });
+    return this.api<HookdeckEvent>(`/events/${encodeURIComponent(eventId)}/retry`, { method: 'POST' });
   }
 
   // --- connections, sources, destinations ---
@@ -295,7 +295,7 @@ export class HookdeckClient {
   }
 
   deleteConnection(id: string) {
-    return this.api<unknown>(`/connections/${id}`, { method: 'DELETE' });
+    return this.api<unknown>(`/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   listConnections(query: { name?: string; limit?: number; next?: string } = {}) {
@@ -328,13 +328,13 @@ export class HookdeckClient {
 
   /** One source; with `includeAuth`, its auth config (a provider's signing secret) is returned. */
   getSource(id: string, { includeAuth = false }: { includeAuth?: boolean } = {}) {
-    return this.api<Source & { config?: { auth?: Record<string, unknown> | null } | null }>(`/sources/${id}`, {
+    return this.api<Source & { config?: { auth?: Record<string, unknown> | null } | null }>(`/sources/${encodeURIComponent(id)}`, {
       query: { include: includeAuth ? 'config.auth' : undefined },
     });
   }
 
   deleteSource(id: string) {
-    return this.api<unknown>(`/sources/${id}`, { method: 'DELETE' });
+    return this.api<unknown>(`/sources/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   /**
@@ -342,22 +342,22 @@ export class HookdeckClient {
    * returned; otherwise auth comes back masked. Listings never include it.
    */
   getDestination(id: string, { includeAuth = false }: { includeAuth?: boolean } = {}) {
-    return this.api<Destination>(`/destinations/${id}`, { query: { include: includeAuth ? 'config.auth' : undefined } });
+    return this.api<Destination>(`/destinations/${encodeURIComponent(id)}`, { query: { include: includeAuth ? 'config.auth' : undefined } });
   }
 
   deleteDestination(id: string) {
-    return this.api<unknown>(`/destinations/${id}`, { method: 'DELETE' });
+    return this.api<unknown>(`/destinations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   // --- issues and notifications ---
 
   getIssue(id: string) {
-    return this.api<Issue>(`/issues/${id}`);
+    return this.api<Issue>(`/issues/${encodeURIComponent(id)}`);
   }
 
   /** Resolve an issue after acting on it, so the next failure with the same key notifies again (stage 4). */
   updateIssueStatus(id: string, status: IssueStatus) {
-    return this.api<Issue>(`/issues/${id}`, { method: 'PUT', body: { status } });
+    return this.api<Issue>(`/issues/${encodeURIComponent(id)}`, { method: 'PUT', body: { status } });
   }
 
   /** Create or update an issue trigger by name. */
