@@ -39,7 +39,7 @@ You need:
 
 - Node 22 or later.
 - A [Hookdeck](https://hookdeck.com) account and a project for the bridge. From the project's settings (Secrets): the **API key** and the **signing secret**.
-- The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally.
+- The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally (and for `npm run e2e`).
 - An account with at least one [webhook provider](#webhook-providers): Resend or GitHub.
 
 1. **Create a project and install the bridge:**
