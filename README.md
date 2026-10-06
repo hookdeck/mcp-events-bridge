@@ -1,6 +1,6 @@
 # MCP Events bridge
 
-Turn any app's webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-events), so AI agents can act the moment something happens: an email arrives, an issue is opened, a workflow fails. [Hookdeck Event Gateway](https://hookdeck.com) receives, verifies and delivers every event.
+Turn webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-events), so AI agents can act the moment something happens: an email arrives, an issue is opened, a workflow fails. [Hookdeck Event Gateway](https://hookdeck.com) receives, verifies and delivers every event.
 
 <img src="docs/images/overview.svg" alt="Your apps (Resend, GitHub, any webhook) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to your agents, such as ChatGPT, which subscribed to the bridge over MCP." width="100%">
 
@@ -14,7 +14,7 @@ MCP Events is an experimental MCP extension that lets an agent subscribe to even
 
 The bridge closes that gap:
 
-- **Any webhook becomes an MCP Event.** Built-in providers for Resend inbound email and GitHub; add your own with `defineProvider`.
+- **Webhooks become MCP Events.** Built-in providers for Resend inbound email and GitHub; add your own with `defineProvider` for any app Event Gateway has a source type for.
 - **Subscribers choose what wakes them.** Events have filters, such as an email's sender, or a GitHub repository and action.
 - **Delivery you don't have to build.** Event Gateway verifies provider signatures, retries failed deliveries, removes duplicates, and keeps a record of every event and attempt.
 - **Nothing to store.** The bridge is stateless: each subscription is an Event Gateway connection, so there's no database.
