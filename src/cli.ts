@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { ConfigError } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';

@@ -1,28 +1,65 @@
 {
   "name": "@hookdeck/mcp-events-bridge",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Turn third-party webhooks into MCP Events, with Hookdeck Event Gateway receiving and delivering.",
+  "version": "0.1.0",
+  "description": "Turn third-party webhooks into MCP Events for AI agents, with Hookdeck Event Gateway receiving and delivering them.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-events",
+    "webhooks",
+    "hookdeck",
+    "event-gateway",
+    "ai-agents",
+    "chatgpt",
+    "github",
+    "resend"
+  ],
+  "homepage": "https://github.com/hookdeck/mcp-events-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/hookdeck/mcp-events-bridge/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hookdeck/mcp-events-bridge.git"
+  },
   "license": "MIT",
+  "author": "Hookdeck",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./providers": "./src/providers.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers.d.ts",
+      "default": "./dist/providers.js"
+    }
   },
   "bin": {
-    "mcp-events-bridge": "./src/cli.ts"
+    "mcp-events-bridge": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "bridge": "tsx src/cli.ts",
-    "e2e": "tsx scripts/e2e.ts"
+    "e2e": "tsx scripts/e2e.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.2.0",
     "@modelcontextprotocol/node": "^2.1.0",
     "@modelcontextprotocol/server": "^2.2.0",
     "standardwebhooks": "^1.1.1",
@@ -30,6 +67,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.2.0",
     "@types/node": "^26.6.3",
     "cloudflared": "^0.7.3",
     "typescript": "^7.0.2",
