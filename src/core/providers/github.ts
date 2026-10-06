@@ -146,6 +146,8 @@ function extras(type: string, body: Payload): Record<string, unknown> {
         ref: body.ref ?? null,
         commits: Array.isArray(body.commits) ? body.commits.length : 0,
         headCommit: clip(body.head_commit?.message),
+        created: Boolean(body.created),
+        deleted: Boolean(body.deleted),
         forced: Boolean(body.forced),
       };
     case 'release':
@@ -162,10 +164,15 @@ function extras(type: string, body: Payload): Record<string, unknown> {
   }
 }
 
-/** When it happened: the main object's latest timestamp, else the push's head commit, else now. */
+/**
+ * When it happened: for a push, when GitHub received it (`repository.pushed_at`,
+ * unix seconds; the head commit's timestamp is when the commit was made, which
+ * can be much earlier); otherwise the main object's latest timestamp; else now.
+ */
 function occurredAt(type: string, body: Payload): string {
   const object = body[OBJECT_KEY[type] ?? type] as Payload | undefined;
-  const candidates = [object?.submitted_at, object?.updated_at, object?.published_at, object?.created_at, body.head_commit?.timestamp];
+  const pushedAt = type === 'push' && typeof body.repository?.pushed_at === 'number' ? new Date(body.repository.pushed_at * 1000).toISOString() : undefined;
+  const candidates = [pushedAt, object?.submitted_at, object?.updated_at, object?.published_at, object?.created_at, body.head_commit?.timestamp];
   const found = candidates.find((value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
   return new Date(found ?? Date.now()).toISOString();
 }

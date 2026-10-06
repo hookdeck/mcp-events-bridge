@@ -26,7 +26,7 @@ interface SourceDescription {
 }
 
 export interface SetupReport {
-  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'updated' | 'existing' | 'none'; hint?: string }>;
+  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'updated' | 'configured' | 'existing' | 'none'; hint?: string }>;
   notifications: { source: string; connection: string };
   triggers: string[];
   mcp: { secret: string; generated: boolean; url: string };
@@ -140,6 +140,11 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
     await definition.unregister?.({ webhookId: oldId, sourceUrl: source.url, options: provider.options, fetch: deps.fetch }).catch((error: Error) =>
       log(`could not remove the old webhook ${oldId}: ${error.message}`),
     );
+  }
+  if (definition.configuredSecret?.(provider.options) !== undefined) {
+    // The config supplies the secret and webhooks are added by hand (for example GitHub's manual mode).
+    log(`set the configured ${definition.displayName} secret on ${sourceName}`);
+    return report('configured');
   }
   log(`${previousId !== null ? 'updated' : 'registered'} the ${definition.displayName} webhook and set its secret on ${sourceName}`);
   return report(previousId !== null ? 'updated' : 'registered');

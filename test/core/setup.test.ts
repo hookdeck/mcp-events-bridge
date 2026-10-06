@@ -98,10 +98,10 @@ describe('bridge setup', () => {
 
     const first = await run('first-secret-0123456789');
     const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
-    expect(first.providers[0]).toMatchObject({ webhook: 'registered', hint: expect.stringContaining(first.providers[0]!.sourceUrl) });
+    expect(first.providers[0]).toMatchObject({ webhook: 'configured', hint: expect.stringContaining(first.providers[0]!.sourceUrl) });
     expect(source).toMatchObject({ type: 'GITHUB', config: { auth: { webhook_secret_key: 'first-secret-0123456789' } } });
     expect((await run('first-secret-0123456789')).providers[0]!.webhook).toBe('existing');
-    expect((await run('second-secret-0123456789')).providers[0]!.webhook).toBe('updated');
+    expect((await run('second-secret-0123456789')).providers[0]!.webhook).toBe('configured');
     expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'second-secret-0123456789' } });
     expect(gh.calls).toEqual([]);
   });

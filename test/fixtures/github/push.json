@@ -34,7 +34,8 @@
       "name": "widgets",
       "full_name": "Example-Org/Widgets",
       "private": false,
-      "html_url": "https://github.com/Example-Org/Widgets"
+      "html_url": "https://github.com/Example-Org/Widgets",
+      "pushed_at": 1791284460
     },
     "sender": {
       "login": "Octo-Dev",

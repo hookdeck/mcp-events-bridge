@@ -61,6 +61,8 @@ describe('GitHub provider', () => {
       ref: 'refs/heads/main',
       commits: 2,
       headCommit: 'Fix widget loading',
+      created: false,
+      deleted: false,
       url: 'https://github.com/Example-Org/Widgets/compare/aaa...bbb',
     });
     expect(event('github.workflow_run').summarize(load('workflow-run-completed.json'))).toMatchObject({
@@ -71,10 +73,11 @@ describe('GitHub provider', () => {
     });
   });
 
-  it('takes occurred-at from the main object, or the head commit', () => {
+  it('takes occurred-at from the push time, or the main object', () => {
     expect(event('github.issues').occurredAt(load('issues-opened.json'))).toBe('2026-10-06T10:00:00.000Z');
     expect(event('github.issue_comment').occurredAt(load('issue-comment-on-pr.json'))).toBe('2026-10-06T11:05:00.000Z');
-    expect(event('github.push').occurredAt(load('push.json'))).toBe('2026-10-06T11:00:00.000Z');
+    // The push time, not the head commit's (11:00).
+    expect(event('github.push').occurredAt(load('push.json'))).toBe('2026-10-06T11:01:00.000Z');
   });
 
   it('filters by repository, actions and sender, case-insensitively for names', () => {

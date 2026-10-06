@@ -21,10 +21,12 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *
  *   npm run e2e                                         local bridge, CLI inbound
  *   E2E_BRIDGE_URL=https://<app>.fly.dev npm run e2e    a deployed bridge
- *   E2E_GITHUB=1 ...                                    also: GitHub's test push for the first repository in
- *                                                       GITHUB_REPOS (or E2E_GITHUB_REPO in manual mode),
- *                                                       delivered to a github.push subscriber. Uses
- *                                                       GITHUB_TOKEN to find the webhook and trigger it
+ *   E2E_GITHUB=1 ...                                    also: a push to the first repository in GITHUB_REPOS
+ *                                                       (or E2E_GITHUB_REPO in manual mode), delivered to a
+ *                                                       github.push subscriber. The push creates a temporary
+ *                                                       branch e2e/bridge-<run> at the default branch's head
+ *                                                       and deletes it after. Uses GITHUB_TOKEN (contents and
+ *                                                       webhooks access)
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
  *                                                       delivery, a 410 deleting a subscription, and
@@ -212,7 +214,7 @@ async function main() {
   await wait(45_000);
   record('from filter drops other senders', main.events.length === before, `${main.events.length - before} extra event(s) after 45s`);
 
-  if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: env('GITHUB_TOKEN'), sourceName: providerSourceName(github!.id) });
+  if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: env('GITHUB_TOKEN'), sourceName: providerSourceName(github!.id), run });
 
   if (EXTENDED) {
     await extended({
@@ -230,12 +232,16 @@ async function main() {
   record('unsubscribe deletes the subscription connection', left === 0);
 }
 
-/** GitHub's "test push" redelivers the repository's latest push to the webhook, without creating anything in the repository. */
-async function githubPush(ctx: { hookdeck: HookdeckClient; subscriber: Subscriber; repo: string; token: string; sourceName: string }) {
-  const api = (path: string, method = 'GET') =>
+/**
+ * A fresh push: creates a temporary branch at the default branch's head, then deletes it. (GitHub's "test push"
+ * redelivers the last real push, which predates the subscription, so the bridge rightly doesn't deliver it.)
+ */
+async function githubPush(ctx: { hookdeck: HookdeckClient; subscriber: Subscriber; repo: string; token: string; sourceName: string; run: string }) {
+  const api = (path: string, method = 'GET', body?: unknown) =>
     fetch(`https://api.github.com/repos/${ctx.repo}${path}`, {
       method,
       headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'mcp-events-bridge-e2e' },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
     });
   const source = (await ctx.hookdeck.listSources({ name: ctx.sourceName })).models[0];
   const hooks = (await (await api('/hooks')).json()) as Array<{ id: number; config?: { url?: string } }>;
@@ -243,11 +249,18 @@ async function githubPush(ctx: { hookdeck: HookdeckClient; subscriber: Subscribe
   record('GitHub webhook registered at the Event Gateway source', Boolean(source && hook), ctx.repo);
   if (!source || !hook) return;
 
-  const before = ctx.subscriber.events.length;
+  const repo = (await (await api('')).json()) as { default_branch: string };
+  const head = (await (await api(`/git/ref/heads/${repo.default_branch}`)).json()) as { object: { sha: string } };
+  const branch = `e2e/bridge-${ctx.run}`;
   const sentAt = Date.now();
-  const res = await api(`/hooks/${hook.id}/tests`, 'POST');
-  const event = await until(() => ctx.subscriber.events.slice(before).find((e) => e.data.event === 'push'), 180_000);
-  record('GitHub push delivered to the github.push subscriber', res.status === 204 && Boolean(event), event ? `${Math.round((Date.now() - sentAt) / 1000)}s` : `test push ${res.status}, timed out`);
+  const created = await api('/git/refs', 'POST', { ref: `refs/heads/${branch}`, sha: head.object.sha });
+  let event: McpEvent | undefined;
+  try {
+    event = await until(() => ctx.subscriber.events.find((e) => e.data.ref === `refs/heads/${branch}`), 180_000);
+  } finally {
+    if (created.ok) await api(`/git/refs/heads/${branch}`, 'DELETE');
+  }
+  record('GitHub push delivered to the github.push subscriber', created.ok && Boolean(event), event ? `${Math.round((Date.now() - sentAt) / 1000)}s` : `create branch ${created.status}, timed out`);
   if (!event) return;
   const data = event.data as Record<string, unknown>;
   record(
