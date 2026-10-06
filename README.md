@@ -16,7 +16,7 @@ The bridge closes that gap:
 
 - **Webhooks become MCP Events.** Built-in webhook providers: Resend inbound email and GitHub. Add others with `defineProvider`, for any service Event Gateway has a source type for. Generic HMAC-signed webhooks, such as ones from a service you've built, aren't supported yet.
 - **Subscribers choose what wakes them.** Events have filters, such as an email's sender, or a GitHub repository and action.
-- **Delivery you don't have to build.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
+- **Every event verified, delivered and recorded.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.
 
 It's for developers who want agents (ChatGPT today, local agents next) to react to events from the tools they already use.
