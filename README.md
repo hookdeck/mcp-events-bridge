@@ -10,7 +10,7 @@ For example, an email arrives at a Resend address, and ChatGPT, subscribed throu
 
 ## Why
 
-MCP Events is an experimental MCP extension that lets an agent subscribe to events instead of polling for them, and ChatGPT supports it. But an agent can only subscribe to apps that implement it, and almost none do yet. Nearly all of them already send webhooks.
+MCP Events is an experimental MCP extension that lets an agent subscribe to events instead of polling for them, and ChatGPT supports it. But an agent can only subscribe to MCP servers that implement it, and almost none do yet, while nearly every service already sends webhooks.
 
 The bridge closes that gap:
 
