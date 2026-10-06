@@ -4,7 +4,7 @@ import type { SubscriptionSettings } from './config.js';
 import { callbackEndpointError, forbidden, internalError, invalidParams, notFound, unsupported, type CallbackFailureReason } from './errors.js';
 import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
-import { SubscriptionTooLargeError, healthyDelivery, type SubscriptionStore } from './store.js';
+import { SubscriptionTooLargeError, healthyDelivery, type SubscriptionRecord, type SubscriptionStore } from './store.js';
 
 /*
  * MCP Events webhook subscriptions: subscribe (and refresh), unsubscribe,
@@ -47,10 +47,20 @@ export function grantTtlMs(requested: unknown, settings: Pick<SubscriptionSettin
 /** Request params for the log, with the signing secret replaced by its shape. */
 export function describeParams(params: Params): string {
   const delivery = params.delivery as Record<string, unknown> | undefined;
-  if (!delivery || typeof delivery !== 'object' || !('secret' in delivery)) return JSON.stringify(params);
-  const secret = delivery.secret;
-  const shape = isValidWebhookSecret(secret) ? `whsec_ (${Buffer.from(secret.slice(6), 'base64').length} bytes)` : `invalid (${typeof secret})`;
-  return JSON.stringify({ ...params, delivery: { ...delivery, secret: `<${shape}>` } });
+  if (!delivery || typeof delivery !== 'object') return JSON.stringify(params);
+  const redacted: Record<string, unknown> = { ...delivery };
+  if (typeof delivery.url === 'string') redacted.url = redactUrl(delivery.url);
+  if ('secret' in delivery) {
+    const secret = delivery.secret;
+    redacted.secret = `<${isValidWebhookSecret(secret) ? `whsec_ (${Buffer.from(secret.slice(6), 'base64').length} bytes)` : `invalid (${typeof secret})`}>`;
+  }
+  return JSON.stringify({ ...params, delivery: redacted });
+}
+
+/** A callback URL for logs: the query string can carry a token, so it's replaced. */
+export function redactUrl(url: string): string {
+  const query = url.indexOf('?');
+  return query === -1 ? url : `${url.slice(0, query)}?<redacted>`;
 }
 
 export class SubscriptionService {
@@ -65,10 +75,11 @@ export class SubscriptionService {
     this.log = deps.log ?? (() => {});
   }
 
-  private parseKey(params: Params) {
+  /** With `requireEvent: false` (unsubscribe), an event no longer in the config is accepted, so its subscriptions can still be removed. */
+  private parseKey(params: Params, { requireEvent = true } = {}) {
     if (typeof params.name !== 'string') throw invalidParams('name is required');
     const entry = this.deps.catalog.get(params.name);
-    if (!entry) throw notFound('event', `Unknown event: ${params.name}`);
+    if (!entry && requireEvent) throw notFound('event', `Unknown event: ${params.name}`);
 
     const delivery = params.delivery as Params | undefined;
     if (!delivery || typeof delivery !== 'object') throw invalidParams('delivery is required');
@@ -84,14 +95,16 @@ export class SubscriptionService {
 
     const rawArgs = params.arguments ?? {};
     if (typeof rawArgs !== 'object' || rawArgs === null || Array.isArray(rawArgs)) throw invalidParams('arguments must be an object');
-    return { event: entry.event, url, rawArgs: rawArgs as Record<string, unknown>, delivery };
+    return { name: params.name, event: entry?.event, url, rawArgs: rawArgs as Record<string, unknown>, delivery };
   }
 
   async subscribe(principal: string | undefined, params: Params): Promise<SubscribeResult> {
     this.log(`events/subscribe from ${principal ?? '(none)'}: ${describeParams(params)}`);
     if (!principal) throw forbidden();
     const { settings, store, transport } = this.deps;
-    const { event, url, rawArgs, delivery } = this.parseKey(params);
+    const key = this.parseKey(params);
+    const event = key.event!; // required above
+    const { url, rawArgs, delivery } = key;
 
     let args: Record<string, unknown>;
     try {
@@ -128,36 +141,41 @@ export class SubscriptionService {
         throw callbackEndpointError(result.reason);
       }
       this.verifiedUntil.set(vKey, now.getTime() + settings.verificationCacheTtlMs);
-      this.log(`verified callback for ${principal} -> ${href}`);
+      this.log(`verified callback for ${principal} -> ${redactUrl(href)}`);
     }
 
-    const existing = store.get(id);
-    const rotated = existing && existing.secret !== secret;
     const expiresAt = new Date(now.getTime() + grantTtlMs(params.ttlMs, settings));
+    // Read and written in the store's queue, so a concurrent write (a delivery-failure notification) can't be lost or undo this.
+    const prior: { record?: SubscriptionRecord } = {};
     try {
-      await store.put({
-        id,
-        principal,
-        name: event.name,
-        arguments: args,
-        url: href,
-        secret,
-        previousSecret: rotated ? existing.secret : (existing?.previousSecret ?? null),
-        previousSecretExpiresAt: rotated
-          ? new Date(now.getTime() + settings.secretRotationGraceMs).toISOString()
-          : (existing?.previousSecretExpiresAt ?? null),
-        // A refresh is the subscriber's liveness signal: delivery is active again.
-        delivery: healthyDelivery(),
-        expiresAt: expiresAt.toISOString(),
-        createdAt: existing?.createdAt ?? now.toISOString(),
-        updatedAt: now.toISOString(),
+      await store.update(id, (existing) => {
+        prior.record = existing;
+        const rotated = existing && existing.secret !== secret;
+        return {
+          id,
+          principal,
+          name: event.name,
+          arguments: args,
+          url: href,
+          secret,
+          previousSecret: rotated ? existing.secret : (existing?.previousSecret ?? null),
+          previousSecretExpiresAt: rotated
+            ? new Date(now.getTime() + settings.secretRotationGraceMs).toISOString()
+            : (existing?.previousSecretExpiresAt ?? null),
+          // A refresh is the subscriber's liveness signal: delivery is active again.
+          delivery: healthyDelivery(),
+          expiresAt: expiresAt.toISOString(),
+          createdAt: existing?.createdAt ?? now.toISOString(),
+          updatedAt: now.toISOString(),
+        };
       });
     } catch (error) {
       if (error instanceof SubscriptionTooLargeError) throw invalidParams('arguments are too large', { field: 'arguments' });
       this.log(`Event Gateway error for ${id}: ${(error as Error).message}`);
       throw internalError('Failed to configure delivery');
     }
-    if (rotated) this.log(`rotated secret for ${id}`);
+    const existing = prior.record;
+    if (existing && existing.secret !== secret) this.log(`rotated secret for ${id}`);
     this.log(`${existing ? 'refreshed' : 'subscribed'} ${id} until ${expiresAt.toISOString()}`);
 
     return {
@@ -179,8 +197,8 @@ export class SubscriptionService {
   async unsubscribe(principal: string | undefined, params: Params): Promise<Record<string, never>> {
     this.log(`events/unsubscribe from ${principal ?? '(none)'}: ${describeParams(params)}`);
     if (!principal) throw forbidden();
-    const { url, rawArgs, event } = this.parseKey(params);
-    const id = deriveSubscriptionId(principal, url.href, event.name, rawArgs);
+    const { url, rawArgs, name } = this.parseKey(params, { requireEvent: false });
+    const id = deriveSubscriptionId(principal, url.href, name, rawArgs);
     try {
       await this.deps.store.delete(id);
     } catch (error) {
@@ -194,9 +212,11 @@ export class SubscriptionService {
   /** Deletes subscriptions whose grant has lapsed. */
   async sweep(): Promise<string[]> {
     const removed: string[] = [];
-    for (const record of this.deps.store.listExpired(this.now())) {
+    const now = this.now();
+    for (const record of this.deps.store.listExpired(now)) {
       try {
-        await this.deps.store.delete(record.id);
+        // Re-checked in the store's queue: a refresh that lands during the sweep keeps the subscription.
+        if (!(await this.deps.store.delete(record.id, { ifExpiredAt: now }))) continue;
         removed.push(record.id);
         this.log(`expired ${record.id}`);
       } catch (error) {

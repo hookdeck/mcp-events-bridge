@@ -60,9 +60,9 @@ const subscription = (over: Partial<SubscriptionInput> = {}): SubscriptionInput 
   ...over,
 });
 
-const inbound = (relay: Relay, body: unknown = fixture.body) => {
+const inbound = (relay: Relay, body: unknown = fixture.body, headers: Record<string, string> = {}) => {
   const raw = JSON.stringify(body);
-  return relay.handle('/inbound/resend', signed(raw, fixture.headers), raw);
+  return relay.handle('/inbound/resend', signed(raw, { ...fixture.headers, ...headers }), raw);
 };
 
 describe('Relay: provider events', () => {
@@ -111,12 +111,15 @@ describe('Relay: provider events', () => {
     expect(() => new Webhook(previous).verify(published!.body, published!.headers)).not.toThrow();
   });
 
-  it('skips subscriptions created after the event happened, and expired ones', async () => {
+  it('skips expired subscriptions, and on an inbound retry ones created after the event happened', async () => {
     const { relay, store, gateway } = setup();
     await store.put(subscription({ id: 'sub_late', createdAt: '2026-10-05T16:25:00.000Z' }));
     await store.put(subscription({ id: 'sub_expired', expiresAt: '2026-10-05T16:29:00.000Z' }));
-    expect(await inbound(relay)).toEqual({ status: 200, body: { published: 0 } });
-    expect(gateway.published).toHaveLength(0);
+    // A first attempt reaches every current subscription: provider timestamps can predate the action.
+    expect(await inbound(relay)).toEqual({ status: 200, body: { published: 1 } });
+    expect(gateway.published.map((p) => p.headers['X-MCP-Subscription-Id'])).toEqual(['sub_late']);
+    // A retry doesn't hand the old event to a subscription made after it.
+    expect(await inbound(relay, fixture.body, { 'x-hookdeck-attempt-count': '2' })).toEqual({ status: 200, body: { published: 0 } });
   });
 
   it('returns 502 if any publish fails, so Event Gateway retries the inbound event', async () => {

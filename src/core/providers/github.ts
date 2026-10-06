@@ -172,7 +172,7 @@ function extras(type: string, body: Payload): Record<string, unknown> {
 function occurredAt(type: string, body: Payload): string {
   const object = body[OBJECT_KEY[type] ?? type] as Payload | undefined;
   const pushedAt = type === 'push' && typeof body.repository?.pushed_at === 'number' ? new Date(body.repository.pushed_at * 1000).toISOString() : undefined;
-  const candidates = [pushedAt, object?.submitted_at, object?.updated_at, object?.published_at, object?.created_at, body.head_commit?.timestamp];
+  const candidates = [pushedAt, object?.completed_at, object?.submitted_at, object?.updated_at, object?.published_at, object?.created_at, body.head_commit?.timestamp];
   const found = candidates.find((value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
   return new Date(found ?? Date.now()).toISOString();
 }

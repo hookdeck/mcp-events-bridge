@@ -13,6 +13,14 @@ import type { SubscriptionStore } from '../core/store.js';
 import { SubscriptionService, type SubscriptionServiceDeps } from '../core/subscriptions.js';
 import { createNodeCallbackTransport } from './callback-transport.js';
 
+/** The largest inbound request body read. Provider webhooks are far smaller; this bounds what an unsigned request can make the bridge buffer. */
+const MAX_INBOUND_BYTES = 10 * 1024 * 1024;
+
+function tooLarge(req: http.IncomingMessage, res: http.ServerResponse) {
+  res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({ error: 'body too large' }));
+  req.destroy();
+}
+
 /*
  * The bridge's single HTTP listener:
  *
@@ -98,10 +106,17 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
       }
 
       if (pathname.startsWith('/inbound/') && req.method === 'POST') {
+        // Bounded, since the body is read before its signature can be checked.
+        if (Number(req.headers['content-length'] ?? 0) > MAX_INBOUND_BYTES) return tooLarge(req, res);
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let size = 0;
+        for await (const chunk of req) {
+          size += (chunk as Buffer).length;
+          if (size > MAX_INBOUND_BYTES) return tooLarge(req, res);
+          chunks.push(chunk as Buffer);
+        }
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]));
-        const response = await relay.handle(pathname, headers, Buffer.concat(chunks).toString('utf8'));
+        const response = await relay.handle(pathname, headers, Buffer.concat(chunks));
         return json(res, response.status, response.body);
       }
 

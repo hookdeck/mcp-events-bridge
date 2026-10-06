@@ -41,6 +41,13 @@ describe('resolveConfig', () => {
     expect(() => resend({ apiKey: 'a', events: ['email.sent'] })).toThrow(/unknown event/);
   });
 
+  it('rejects provider ids the inbound route can\'t serve, and empty Hookdeck credentials', () => {
+    for (const id of ['resend.main', 'hookdeck', '']) {
+      expect(() => resolveConfig(config({ providers: [resend({ id, apiKey: 'a' })] }), base)).toThrow(/Provider id/);
+    }
+    expect(() => resolveConfig(config({ hookdeck: { signingSecret: '' } }), base)).toThrow(/must not be empty/);
+  });
+
   it('reads BRIDGE_MCP_SECRET when set', () => {
     expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 's3cret' }).auth.mcpSecret).toBe('s3cret');
   });
