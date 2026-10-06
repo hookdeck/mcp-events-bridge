@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">MCP Events bridge overview</title>
+  <desc id="desc">Webhook providers such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway, which receives and verifies them and passes them to the MCP Events bridge. The bridge turns them into MCP Events, and Event Gateway delivers them, with retries, to agents such as ChatGPT that subscribed over MCP.</desc>
+  <style>
+    .bg { fill: #ffffff; stroke: #d0d7de; }
+    .panel { fill: #f6f8fa; stroke: #d0d7de; }
+    .box { fill: #ffffff; stroke: #8c959f; }
+    .accent { fill: #eef1ff; stroke: #5b6bf0; }
+    .dashed { stroke-dasharray: 6 5; }
+    .text { fill: #1f2328; }
+    .muted { fill: #59636e; }
+    .label { fill: #59636e; font-size: 13px; }
+    .arrow { stroke: #59636e; fill: none; stroke-width: 1.6; }
+    .head { fill: #59636e; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; stroke: #30363d; }
+      .panel { fill: #161b22; stroke: #30363d; }
+      .box { fill: #0d1117; stroke: #6e7681; }
+      .accent { fill: #1c2140; stroke: #7c8cff; }
+      .text { fill: #e6edf3; }
+      .muted, .label { fill: #9198a1; }
+      .arrow { stroke: #9198a1; }
+      .head { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="1" y="1" width="1198" height="338" rx="14"/>
+
+  <!-- Apps -->
+  <text class="muted" x="40" y="168" font-size="13" font-weight="600" letter-spacing="0.5">WEBHOOK PROVIDERS</text>
+  <rect class="box" x="30" y="180" width="170" height="40" rx="8"/>
+  <text class="text" x="115" y="205" font-size="15" text-anchor="middle">Resend</text>
+  <rect class="box" x="30" y="230" width="170" height="40" rx="8"/>
+  <text class="text" x="115" y="255" font-size="15" text-anchor="middle">GitHub</text>
+  <rect class="box dashed" x="30" y="280" width="170" height="40" rx="8"/>
+  <text class="text" x="115" y="305" font-size="14" text-anchor="middle">other providers</text>
+
+  <!-- Event Gateway: one container, in and out -->
+  <rect class="panel" x="250" y="170" width="660" height="150" rx="12"/>
+  <text class="text" x="580" y="304" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
+  <rect class="box" x="280" y="200" width="200" height="60" rx="8"/>
+  <text class="text" x="380" y="226" font-size="15" text-anchor="middle">receive · verify</text>
+  <text class="muted" x="380" y="246" font-size="12" text-anchor="middle">every request kept</text>
+  <rect class="box" x="680" y="200" width="200" height="60" rx="8"/>
+  <text class="text" x="780" y="226" font-size="15" text-anchor="middle">deliver · retry</text>
+  <text class="muted" x="780" y="246" font-size="12" text-anchor="middle">per subscriber</text>
+
+  <path class="arrow" d="M200,200 C240,200 245,228 278,228" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M200,250 C240,250 245,232 278,232" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M200,300 C245,300 245,238 278,238" marker-end="url(#arrowhead)"/>
+
+  <!-- Bridge -->
+  <rect class="accent" x="470" y="40" width="220" height="80" rx="10" stroke-width="1.6"/>
+  <text class="text" x="580" y="74" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
+  <text class="muted" x="580" y="98" font-size="14" text-anchor="middle">webhooks → MCP Events</text>
+  <path class="arrow" d="M380,198 C380,150 470,150 520,122" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M640,122 C690,150 780,150 780,198" marker-end="url(#arrowhead)"/>
+
+  <!-- Agents -->
+  <text class="muted" x="955" y="168" font-size="13" font-weight="600" letter-spacing="0.5">AGENTS</text>
+  <rect class="box" x="950" y="180" width="220" height="50" rx="8"/>
+  <text class="text" x="1060" y="210" font-size="15" text-anchor="middle">ChatGPT</text>
+  <rect class="box dashed" x="950" y="250" width="220" height="50" rx="8"/>
+  <text class="text" x="1060" y="280" font-size="15" text-anchor="middle">local agents (coming)</text>
+  <path class="arrow" d="M880,226 C915,226 920,205 948,205" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M880,234 C915,234 920,275 948,275" marker-end="url(#arrowhead)"/>
+
+  <!-- Subscribe over MCP -->
+  <path class="arrow" d="M1120,178 V88 Q1120,80 1112,80 H692" marker-end="url(#arrowhead)"/>
+  <text class="label" x="900" y="72" text-anchor="middle">subscribe over MCP</text>
+</svg>

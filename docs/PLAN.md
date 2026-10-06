@@ -17,7 +17,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
 | 6 | Local agents | Build | Not started |
-| 7 | Production readiness and reach | Build | Not started |
+| 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
 ## Stage 1: Repo setup
@@ -59,7 +59,7 @@ The bridge running on Fly.io: Resend events relayed to the test subscriber and t
 5. **Config and setup.** `defineConfig`, `env()`, loading `bridge.config.ts`, and `bridge setup` for the Resend instance: inbound connection (`cli` in development, `http` when deployed), Resend webhook, and the MCP secret (generated and printed if unset). `list_providers`.
 6. **Subscriptions.** Port `subscriptions.ts` from the demo, creating and deleting the per-subscription Event Gateway resources with the retry rule `[">=300", "!410", "!413"]` and dedupe on `headers.webhook-id`. Long default lifetime; sweeper for expiry.
 7. **Inbound route and relay.** Verify the Hookdeck signature, map, match, sign, publish in parallel, `200` only if all succeed.
-8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`, `final_attempt`), request (`bridge-*` sources) and backpressure (`bridge-*-inbound`). On a delivery issue with `410`, delete the subscription; otherwise record it, report it in `list_providers`, and return `deliveryStatus` on refresh. Resolve the issue after acting on it.
+8. **Issue feedback.** `bridge setup` enables webhook notifications to `bridge-hookdeck-notifications`, a connection to `/inbound/hookdeck`, and issue triggers for delivery (`mcp-sub-*`, `final_attempt`), request (`bridge-*` sources) and backpressure (`bridge-*` destinations). On a delivery issue with `410`, delete the subscription; otherwise record it and return `deliveryStatus` on refresh. Resolve the issue after acting on it.
 9. **MCP server and auth.** `events/*` handlers plus `get_event` and `list_recent_events`, served at `/mcp/<secret>` with the secret checked in constant time and redacted from logs.
 10. **CLI entry.** `serve` and `setup`. `doctor`, `--prune` and `--rotate-mcp-secret` can be stubs.
 11. **End-to-end script.** Start the bridge with CLI inbound (`hookdeck listen` to the bridge's port), run `bridge setup` with a Resend instance in the config, run the demo's test subscriber with a cloudflared callback, subscribe to `email.received`, and send an email.
@@ -73,7 +73,7 @@ Done when (all verified live: `E2E_EXTENDED=1 npm run e2e`, and ChatGPT on 6 Oct
 - A forced publish failure for one of two subscribers makes the inbound event retry, and each subscriber receives the email once.
 - A duplicate provider delivery doesn't reach a subscriber twice.
 - `get_event` returns the summary.
-- A subscription whose callback returns `410` is deleted from an Event Gateway delivery issue; one that keeps failing otherwise shows up in `list_providers` and in `deliveryStatus` on its next refresh.
+- A subscription whose callback returns `410` is deleted from an Event Gateway delivery issue; one that keeps failing otherwise is recorded and returned in `deliveryStatus` on its next refresh.
 - A request to the MCP endpoint without the secret is rejected.
 - The bridge runs on Fly.io, and ChatGPT subscribes through the secret URL and receives an email event.
 - `npm test` passes, and the end-to-end steps are in the README.
@@ -95,10 +95,10 @@ Done when a local agent subscribed through the subscriber command receives an em
 - Bring your own identity provider (auth tier 3).
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
-- The GitHub provider (see "Second provider: GitHub" in `ARCHITECTURE.md`).
+- Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` 0.1.0, compiled to `dist/`; and the README, restructured around it.
+- A release workflow: publish from GitHub Actions with npm trusted publishing (provenance), instead of by hand.
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.
-- The README.
 
 ## Later
 

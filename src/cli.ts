@@ -1,4 +1,5 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
+import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { ConfigError } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
@@ -96,11 +97,23 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
   console.log(`[bridge] MCP endpoint: ${mcpUrl(config, '<BRIDGE_MCP_SECRET>')}`);
 }
 
+/** This package's version; package.json is one level up from both src/cli.ts and dist/cli.js. */
+function packageVersion(): string {
+  return (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+}
+
 async function main() {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
-    options: { config: { type: 'string' }, 'no-listen': { type: 'boolean', default: false } },
+    options: {
+      config: { type: 'string' },
+      'no-listen': { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+      version: { type: 'boolean', short: 'v', default: false },
+    },
   });
+  if (values.help) return console.log(USAGE);
+  if (values.version) return console.log(packageVersion());
   try {
     process.loadEnvFile();
   } catch {

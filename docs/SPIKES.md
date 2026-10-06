@@ -68,7 +68,7 @@ Run on 5 Oct 2026. **Passed, with one correction to the design's retry rule.**
 - **CLI.** `--rule-retry-response-status-codes '!410,!413'` is rejected ("must be an integer"). The API accepts negated codes, ranges and comparisons.
 - **`["!410", "!413"]` retries successes.** With only negations, an event whose second attempt returned `200` got a third attempt 30 seconds later, also `200`. Event Gateway's docs say entries are evaluated last match wins, so a lone negation matches every other status, `2xx` included.
 - **`[">=300", "!410", "!413"]` behaves as intended.** `fail-once`: 500, then 200, then no more attempts. `gone`: one attempt, 410, event `FAILED`, no retry.
-- **Deleting a connection** after its first failed attempt cancelled the scheduled retries: nothing arrived at +30 or +60 seconds.
+- **Deleting a connection** after its first failed attempt canceled the scheduled retries: nothing arrived at +30 or +60 seconds.
 
 ### What it means for the design
 

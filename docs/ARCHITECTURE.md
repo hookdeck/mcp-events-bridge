@@ -79,7 +79,7 @@ source:      bridge-<instance id>                 (RESEND)
 connection:  bridge-<instance id>-<deployment>
   dedupe:    include_fields [headers.svix-id], window <= 1h
   retry:     linear, finishing within the dedupe window
-destination: bridge-<deployment>-inbound -> https://<bridge>/inbound/<instance id>
+destination: bridge-<instance id>-<deployment> -> https://<bridge>/inbound/<instance id>
              (auth: Hookdeck Signature, verified by the bridge)
 ```
 
@@ -181,7 +181,7 @@ Issue triggers, scoped by name pattern:
 | --- | --- | --- | --- |
 | Delivery, `final_attempt` | connections `mcp-sub-*` | A subscriber's callback is failing, with the response status (in practice from the project's default `first_attempt` trigger; see "Verified facts") | `410`: delete the subscription. Otherwise record it on the subscription, surface it in `list_providers` and `bridge doctor`, and return it in `deliveryStatus`. Then resolve the issue so the next failure notifies again |
 | Request, rejection causes | sources `bridge-*` | The provider's requests fail verification, e.g. a rotated Resend secret | Mark the provider unhealthy; `bridge doctor` suggests re-running `bridge setup` |
-| Backpressure | destinations `bridge-*-inbound` | The bridge is slow or down | Operator alert only |
+| Backpressure | destinations `bridge-*` | The bridge is slow or down | Operator alert only |
 | Transformation, `log_level` `fatal` | transformations `mcp-sub-*` (direct path, later) | Mapping is broken for a subscription | Mark the subscription unhealthy |
 
 Notes:
@@ -241,7 +241,7 @@ Single tenant: one deployment, one owner. Tiers, from least friction:
 | **3. Bring your own identity provider** | `https://<bridge>/mcp`; tokens from the provider, verified against its published keys | Yes, optional | 7 |
 | Optional: OpenAI Secure MCP Tunnel | For private-network deployments; `tunnel-client` beside the bridge | Yes, optional | 7 |
 
-**Secret URL.** `BRIDGE_MCP_SECRET` holds at least 32 random bytes, base64url. If it's unset, `bridge setup` generates one and says where to set it (for example `fly secrets set`), then prints the full MCP URL to paste into ChatGPT. The URL is a credential: the bridge redacts the secret segment in its own logs, compares it in constant time, and `bridge setup --rotate-mcp-secret` replaces it (ChatGPT then needs the new URL). Every caller with the URL is the deployment's owner, so there is one principal, `owner`.
+**Secret URL.** `BRIDGE_MCP_SECRET` should hold at least 32 random bytes, base64url (the generated one does; the bridge doesn't enforce it). If it's unset, `bridge setup` generates one and says where to set it (for example `fly secrets set`), then prints the full MCP URL to paste into ChatGPT. The URL is a credential: the bridge redacts the secret segment in its own logs and compares it in constant time. To rotate it, change `BRIDGE_MCP_SECRET` and redeploy (ChatGPT then needs the new URL); a `setup --rotate-mcp-secret` helper is planned. Every caller with the URL is the deployment's owner, so there is one principal, `owner`.
 
 **Built-in OAuth.** For real tokens without a third party: authorization code with PKCE `S256`, the `resource` parameter copied into the token audience, ChatGPT's redirect URIs allowlisted, and client registration by CIMD (Client ID Metadata Documents) or dynamic registration. Built on a maintained library rather than hand-written; which one supports CIMD and resource indicators is still to check. The token subject becomes the principal.
 
@@ -262,12 +262,11 @@ Pull-only hosts use poll mode (see "Local agents and the bridge on a laptop").
 ```text
 src/
   core/                 runtime-agnostic: fetch, and no node: imports except node:crypto
-    providers/          defineProvider + one file per built-in provider (resend.ts first)
-    events.ts           inbound request -> BridgeEvent (via the manifest)
-    relay.ts            map, match, sign, publish; throws on any failure
+    providers/          provider types + one file per built-in provider (resend.ts, github.ts)
+    config.ts           defineConfig, defineProvider, env(), config validation
+    relay.ts            inbound routes: map, match (each event's accepts()), sign, publish; issue notifications
     catalog.ts          events/list from enabled providers
     subscriptions.ts    subscribe, refresh, unsubscribe, sweep; challenge; TTL; per-subscription EG resources
-    match.ts            subscribe arguments -> filter
     sign.ts             Standard Webhooks signing
     callback.ts         parse and check callback URLs, build the challenge; CallbackTransport interface
     store.ts            SubscriptionStore interface
@@ -276,12 +275,15 @@ src/
     names.ts            Event Gateway resource names
     hookdeck.ts         Event Gateway API and Publish API client
     mcp.ts              MCP server: tools + hand-registered events/* handlers
-    auth.ts             secret-URL check; OAuth token verification later
+    setup.ts            `setup`: Event Gateway resources, provider webhooks, issue feedback
+    inbound-plan.ts     the inbound connections a config implies; `hookdeck listen` arguments
+    event-history.ts    get_event and list_recent_events, from Event Gateway's requests
   host/
     callback-transport.ts  CallbackTransport over node:http(s) with a pinned, public-only DNS lookup
-    server.ts           HTTP listener: inbound routes and the MCP endpoint
-  config.ts             defineConfig, env(), config loading and validation
-  cli.ts                serve | setup [--prune] | doctor
+    server.ts           HTTP listener: inbound routes and the MCP endpoint (secret-URL check)
+    cli-listen.ts       runs and watches `hookdeck listen` for `serve`
+    load-config.ts      finds and loads bridge.config.ts (TypeScript through tsx)
+  cli.ts                serve | setup (planned: setup --prune, doctor)
 test/
 ```
 
@@ -333,7 +335,7 @@ export default defineConfig({
       id: 'github-hookdeck',                      // instance id; defaults to the provider type
       token: env('GITHUB_TOKEN'),
       scope: { org: 'hookdeck' },
-      events: ['issues.opened', 'pull_request.opened'],
+      events: ['github.issues', 'github.pull_request'],   // subscribers filter by action, e.g. ['opened']
     }),
     acmeCrm({ webhookSecret: env('ACME_WEBHOOK_SECRET'), events: ['contact.created'] }),
   ],
@@ -345,14 +347,14 @@ export default defineConfig({
 - **Secrets are `env()` references only,** so the file can be committed and reviewed.
 - **Each provider entry is an instance** with an `id`, so one deployment can have several of the same provider (two Resend accounts, several GitHub orgs). Event Gateway resources are named after the instance id.
 - **Providers are code.** Built-in providers ship with the package; a deployment adds its own with `defineProvider` and redeploys, with no fork and no bridge release.
-- **The config is loaded at startup** with a TypeScript-aware loader (for example `c12` or `jiti`). A serverless build would bundle it as an ordinary module, so the `core/` boundary is unaffected.
+- **The config is loaded at startup.** A TypeScript config is imported through `tsx`'s API (`tsImport`), so it works from source and from the published package, which ships compiled JavaScript in `dist/`. A serverless build would bundle the config as an ordinary module, so the `core/` boundary is unaffected.
 
 Applying it:
 
 - **`bridge setup`** upserts each instance's source and inbound connection and registers its provider webhook. Idempotent.
-- **`bridge serve`** compares the config with the store and Event Gateway at startup and fails closed if a declared instance isn't set up.
-- **`bridge doctor`** reports drift and unhealthy instances (see "Problem feedback from Event Gateway").
-- **Removing an instance from the file deletes nothing** until `bridge setup --prune`, so a bad deploy can't unregister webhooks by accident.
+- **`bridge serve`** checks the config against Event Gateway at startup. With CLI inbound it fails closed if a declared instance isn't set up; with HTTP inbound it warns.
+- **Planned (stage 7): `bridge doctor`** to report drift and unhealthy instances (see "Problem feedback from Event Gateway").
+- **Removing an instance from the file deletes nothing.** Planned (stage 7): `bridge setup --prune` to clean up, so a bad deploy can't unregister webhooks by accident.
 
 The bridge ships as the npm package `@hookdeck/mcp-events-bridge` with a CLI binary, `mcp-events-bridge`; the repo `hookdeck/mcp-events-bridge` holds the package and examples.
 
@@ -426,7 +428,7 @@ Resend, first manifest (settled in stage 2; see `SPIKES.md` and `test/fixtures/r
 
 ## Adding a provider
 
-Only Resend exists so far, so this is untested until the second manifest.
+Two built-in providers exist (Resend and GitHub), both with an Event Gateway source type; a custom provider without one is still untested.
 
 | Step | What it is | Deploy needed? |
 | --- | --- | --- |
@@ -474,7 +476,7 @@ Handlers registered by hand:
 
 Tools, all read-only apart from subscriptions:
 
-- `list_providers()`: configured instances, their events and health.
+- `list_providers()`: configured instances, their events, and how many subscriptions each has.
 - `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`, read from Event Gateway. These also work around openai/codex#50714, where dot runs don't receive event data.
 - Poll mode: `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. Advertise `"poll"` in each event's `delivery` once built. If a host supports neither MCP Events nor `events/poll`, expose the same implementation as `poll_events` and `wait_for_event` tools.
 
@@ -490,12 +492,12 @@ There are no setup tools: providers change through the config file.
 
 `bridge setup` also ensures the deployment-wide pieces: webhook notifications to `bridge-hookdeck-notifications`, its connection to the bridge, and the issue triggers in "Problem feedback from Event Gateway".
 
-`bridge setup --prune` handles instances that are in the store but not in the config: it unregisters the provider webhook, deletes the inbound connection, and deletes the instance's subscriptions and their resources.
+Planned (stage 7): `bridge setup --prune` handles instances that are in the store but not in the config: it unregisters the provider webhook, deletes the inbound connection, and deletes the instance's subscriptions and their resources.
 
 ### Subscribe
 
 1. Validate the event name, arguments and `whsec_` secret.
-2. Check the callback against the allowlist (ChatGPT's receiver host; Hookdeck source URLs for local agents later). No redirects.
+2. Check the callback: `https`, and resolving only to public addresses. The challenge goes over a pinned connection that never follows redirects. (A host allowlist, such as ChatGPT's receiver host, is planned.)
 3. Send the signed challenge directly and check the echo. On failure return `-32015`.
 4. Derive the subscription id. Upsert the topic source if it's the first subscription to this event, then the subscription's destination and connection.
 5. Store and return `id` and `refreshBefore`. Use a long default lifetime: ChatGPT sent no `ttlMs` in the 1 Oct test.
@@ -527,13 +529,13 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 - The inbound route accepts only Hookdeck-signed requests.
 - The MCP endpoint is protected by the secret URL by default (see "Authentication"). The URL is a credential: it's redacted from the bridge's logs and can be rotated. OAuth tiers give per-request tokens instead. On a laptop the listener binds to `127.0.0.1`.
 - Topic sources are `PUBLISH_API`, so only holders of the project API key can publish to them.
-- The callback allowlist and no-redirect rule apply at subscribe, since Event Gateway makes the deliveries.
+- Callbacks must be `https` and resolve only to public addresses, checked at subscribe, with the challenge sent over a pinned connection that never follows redirects. Event Gateway makes the deliveries. A host allowlist is planned.
 - Provider keys and signing secrets never pass through tool arguments or results.
 - Event content is data, never instructions. Subscribe filters such as `from` limit who can trigger an agent.
 
 ## Spec conformance
 
-Checked on 5 Oct 2026 against the MCP Events design sketch (`experimental-ext-triggers-events`, webhook delivery) and OpenAI's MCP Events requirements for ChatGPT. Nothing in this repo is built yet, so every "Designed" below means "the design covers it", not "it works". The rows marked "ported" reuse code from `mcp-events-outpost-demo`, which passed OpenAI's checklist with ChatGPT on 1 Oct.
+Checked on 5 Oct 2026 against the MCP Events design sketch (`experimental-ext-triggers-events`, webhook delivery) and OpenAI's MCP Events requirements for ChatGPT. Rows marked "Designed" are implemented and covered by the e2e run unless noted. The rows marked "ported" reuse code from `mcp-events-outpost-demo`, which passed OpenAI's checklist with ChatGPT on 1 Oct.
 
 Status: **Designed** (covered by the design), **Gap** (known not to conform), **Unknown** (depends on something not yet checked), **Event Gateway** (the requirement applies to delivery, which Event Gateway performs), **Not planned** (optional, or not used by ChatGPT, and out of scope for now).
 
@@ -564,7 +566,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | `truncated` | MAY | Designed (ported) | `true` when a client supplies a cursor, since there's no replay |
 | `deliveryStatus` | MAY | Designed | From Event Gateway delivery issues on the subscription's connection |
 | `-32013` on limits | MUST when limited | Designed (ported) | Event Gateway has no documented limits on the number of sources, connections or destinations, so limits are the bridge's own |
-| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. In stage 3, deleting a connection cancelled its scheduled retries |
+| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. In stage 3, deleting a connection canceled its scheduled retries |
 
 ### Endpoint verification and SSRF
 
@@ -573,7 +575,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Verify intent before delivering (challenge, allowlist, out-of-band or well-known) | MUST | Designed (ported) | Signed challenge sent by the bridge; `-32015` with `data.reason` on failure |
 | Cache verification per (principal, URL) | MUST | Designed (ported) | |
 | Validate callback URLs; reject non-global addresses | MUST; SHOULD | Designed | At subscribe, and for the challenge through `CallbackTransport` |
-| Validate at **delivery** time with a pinned IP (DNS rebinding) | MUST | Event Gateway | Deliveries are made by Event Gateway, which is responsible for delivery-time validation. The bridge adds a subscribe-time callback allowlist (ChatGPT's receiver host, Hookdeck source URLs) |
+| Validate at **delivery** time with a pinned IP (DNS rebinding) | MUST | Event Gateway | Deliveries are made by Event Gateway, which is responsible for delivery-time validation. The bridge checks callbacks at subscribe (`https`, public addresses only); a host allowlist is planned |
 | Don't follow redirects on delivery | MUST | Event Gateway | Redirect handling is performed by Event Gateway, which makes the deliveries |
 
 ### Delivery
@@ -605,7 +607,7 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 - **Known gaps:** re-signing on every retry, per-principal authorization, and access re-checks. The first is a known limit of the relay and closes with Event Gateway destination signing. The other two come from single-tenant hosting and matter more for anything multi-tenant.
 - **Delegated to Event Gateway:** the delivery-time SSRF and no-redirect rules apply to whoever makes the deliveries, which is Event Gateway.
 - **Partial:** the authenticated principal. The secret URL authenticates one owner; OAuth tiers (stage 7) give token-based principals.
-- **Everything ChatGPT tests in its checklist** is designed, mostly ported from the demo that passed it. That's design, not a passing implementation.
+- **ChatGPT:** stage 5 was verified with ChatGPT on 6 Oct: it subscribed, answered the challenge and received an email event (see "Verified facts").
 
 ## Verified facts
 
@@ -648,7 +650,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **Publish API pass-through** (stage 3): published headers and body reach the destination unchanged on every attempt, including `webhook-id`, `webhook-timestamp` and `webhook-signature`. Between attempts only `x-hookdeck-attempt-count` and `x-hookdeck-attempt-trigger` change. Event Gateway adds `idempotency-key`, the `x-hookdeck-*` headers, and `sentry-trace` and `baggage` tracing headers.
 
-**Connection deletion** (stage 3): deleting a connection after a failed attempt cancelled its scheduled retries.
+**Connection deletion** (stage 3): deleting a connection after a failed attempt canceled its scheduled retries.
 
 **Resource limits:** the [limits page](https://hookdeck.com/docs/limits) covers payload size, delivery timeout, retry attempts and throughput, with no limit on the number of sources, connections or destinations; "Each source supports an unlimited number of unique connections."
 

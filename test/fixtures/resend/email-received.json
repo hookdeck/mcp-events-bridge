@@ -1,5 +1,5 @@
 {
-  "_note": "Resend email.received as delivered by Hookdeck Event Gateway (RESEND source, CLI destination) on 5 Oct 2026. Email addresses replaced; signature redacted. Captured in spike 3.",
+  "_note": "Resend email.received as delivered by Hookdeck Event Gateway (RESEND source, CLI destination) on 5 Oct 2026. Email addresses replaced; signature redacted. Captured in stage 2.",
   "headers": {
     "content-type": "application/json",
     "idempotency-key": "evt_6CeCplwLWcfDdecDmb",

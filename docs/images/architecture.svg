@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 530" width="1200" height="530" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="title">MCP Events bridge architecture</title>
-  <desc id="desc">Webhook providers such as Resend, GitHub and any other provider send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts such as ChatGPT and local agents subscribe to the bridge over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it back to each agent host's callback through one connection per subscription, with filter, dedupe and retry.</desc>
+  <desc id="desc">Webhook providers such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts such as ChatGPT and local agents subscribe to the bridge over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it back to each agent host's callback through one connection per subscription, with filter, dedupe and retry.</desc>
   <style>
     .bg { fill: #ffffff; stroke: #d0d7de; }
     .panel { fill: #f6f8fa; stroke: #d0d7de; }
@@ -40,7 +40,7 @@
     <text class="text" x="115" y="220" font-size="16" text-anchor="middle">GitHub</text>
     <rect class="box dashed" x="30" y="280" width="170" height="62" rx="8"/>
     <text class="text" x="115" y="306" font-size="14" text-anchor="middle">Stripe, Shopify, Linear…</text>
-    <text class="muted" x="115" y="326" font-size="13" text-anchor="middle">any webhook provider</text>
+    <text class="muted" x="115" y="326" font-size="13" text-anchor="middle">other providers</text>
 
     <!-- Event Gateway: inbound -->
     <rect class="panel" x="240" y="40" width="230" height="340" rx="12"/>
@@ -102,6 +102,6 @@
 
     <!-- Footer -->
     <text class="muted" x="600" y="420" font-size="13" text-anchor="middle">Agent hosts subscribe over MCP; Event Gateway delivers each event to their callback. The bridge is stateless:</text>
-    <text class="muted" x="600" y="440" font-size="13" text-anchor="middle">subscriptions are Event Gateway connections. Dashed: any provider, and local agents (coming).</text>
+    <text class="muted" x="600" y="440" font-size="13" text-anchor="middle">subscriptions are Event Gateway connections. Dashed: other providers, and local agents (coming).</text>
   </g>
 </svg>
