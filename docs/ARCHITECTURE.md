@@ -141,7 +141,7 @@ Matching moves into Hookdeck filter syntax, which has no regex and no documented
 | Capability | What it would replace or enable |
 | --- | --- |
 | Standard Webhooks destination auth in Event Gateway | Spec-conformant re-signing on every retry; publish once per topic (above) |
-| An MCP Events source type, answering the challenge at the source | Local agents receiving through the Hookdeck CLI (in progress; see "Local agents and the bridge on a laptop") |
+| An MCP Events source type, answering the challenge at the source | Local agents receiving through the Hookdeck CLI (shipping shortly; see "Local agents and the bridge on a laptop") |
 | CLI redelivery of events missed while a session was disconnected | The app-side recovery code ported from the fleet demo |
 | A request/response mode for the Hookdeck CLI | The cloudflared tunnel for a local MCP endpoint, which needs synchronous responses |
 
@@ -203,7 +203,7 @@ Local delivery goes through Event Gateway and the Hookdeck CLI, so a laptop gets
 
 A local agent subscribes like any other subscriber, with webhook delivery. Its callback URL is a Hookdeck source in its own Hookdeck project, and `hookdeck listen` delivers to localhost. To the bridge it looks like any other subscriber, so nothing in the bridge assumes a local callback.
 
-The catch is the challenge. Subscribe sends a signed challenge and needs the value echoed back in the same HTTP response. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore use Event Gateway's MCP Events source type, which is in progress: the source answers the signed challenge itself (after checking the signature) and verifies the Standard Webhooks signature on deliveries. A source holds one `whsec_` secret, so a local agent runtime uses one secret for all its subscriptions, points them at one source, and routes on `X-MCP-Subscription-Id` with connection filters. A dedupe rule on `headers.webhook-id` is recommended. Dual-signed deliveries during a rotation still verify while the old secret is one of the signatures.
+The catch is the challenge. Subscribe sends a signed challenge and needs the value echoed back in the same HTTP response. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore use Event Gateway's MCP Events source type, which answers the challenge at the source and verifies deliveries. It's due to ship shortly; this section gets the details when it does.
 
 Agent-side tooling packages this: a `mcp-events-bridge subscriber` command creates the MCP Events source and its CLI connection, supervises `hookdeck listen`, recovers events missed while the laptop was offline, and forwards them to the local agent. The Claude Code channel shim (from `hookdeck/claude-channel-plugin`) builds on it, turning each delivery into a `notifications/claude/channel` notification.
 
@@ -713,7 +713,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, poll mode.** The spec's `events/poll` replaces the custom pull tools as the pull interface; tools wrap it only for hosts without MCP Events support.
 - **5 Oct, Smithery.** List the bridge on Smithery as an ordinary MCP server first; triggers support only if there's interest.
 - **5 Oct, test email.** A verified sending domain in the dedicated Resend account; agents send test emails through Resend's API, so the end-to-end script runs unattended.
-- **5 Oct, hosting.** The deliverable is a Docker image of the bridge. Fly.io is the reference host for stage 5 (a Machine; no volume, since Event Gateway is the store). Deploy docs and automation for Railway and Render follow.
+- **5 Oct, hosting.** The deliverable is a Docker image of the bridge. Fly.io is the reference host for stage 5 (a Machine; no volume, since Event Gateway is the store). The demo deployment, `mcp-events-bridge-dev` in `ams`, stays in Hookdeck's Fly organization. Deploy docs and automation for Railway and Render follow.
 - **5 Oct, name.** GitHub `hookdeck/mcp-events-bridge`, npm `@hookdeck/mcp-events-bridge`, CLI `mcp-events-bridge`.
 - **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 5; transformation issues come with the direct path.
 - **5 Oct, secrets at rest.** Subscription secrets live in Event Gateway destination auth (masked credential storage); no bridge encryption key. Metadata is readable in connection descriptions, since the operator owns it.
