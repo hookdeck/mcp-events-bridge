@@ -17,7 +17,21 @@ export async function loadConfig(
   const found = file ? path.resolve(cwd, file) : CONFIG_FILES.map((name) => path.join(cwd, name)).find((candidate) => fs.existsSync(candidate));
   if (!found || !fs.existsSync(found)) throw new ConfigError(`No config file found (looked for ${CONFIG_FILES.join(', ')} in ${cwd})`);
   const url = pathToFileURL(found).href;
-  const module = (/\.m?ts$/.test(found) ? await tsImport(url, import.meta.url) : await import(url)) as { default?: BridgeConfig };
-  if (!module.default) throw new ConfigError(`${path.basename(found)} has no default export; export default defineConfig({ ... })`);
-  return resolveConfig(module.default, environment);
+  const module = (/\.m?ts$/.test(found) ? await tsImport(url, import.meta.url) : await import(url)) as { default?: unknown };
+  const config = unwrapDefault(module.default);
+  if (!config) throw new ConfigError(`${path.basename(found)} has no default export; export default defineConfig({ ... })`);
+  if (!Array.isArray((config as BridgeConfig).providers)) {
+    throw new ConfigError(`${path.basename(found)}: the default export isn't a bridge config; export default defineConfig({ deployment, providers: [...] })`);
+  }
+  return resolveConfig(config as BridgeConfig, environment);
+}
+
+/**
+ * In a CommonJS project (no `"type": "module"`), tsx compiles a .ts config as
+ * CommonJS, and importing it gives `{ default: module.exports }`, so the config
+ * is one level deeper: `module.exports.default`.
+ */
+function unwrapDefault(value: unknown): unknown {
+  if (value && typeof value === 'object' && !('providers' in value) && 'default' in value) return (value as { default: unknown }).default;
+  return value;
 }

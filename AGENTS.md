@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` (1 to 4 are done). No local agents, Claude Code shim, OAuth tiers beyond the secret URL, or second provider yet.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Not yet: local agents (stage 6), the Claude Code shim, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`.
 
 ## What the maintainer sets up first
 
