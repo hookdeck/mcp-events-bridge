@@ -80,7 +80,7 @@ Done when (all verified live: `E2E_EXTENDED=1 npm run e2e`, and ChatGPT on 6 Oct
 
 ## Stage 6: Local agents (build)
 
-Local delivery through Event Gateway and the Hookdeck CLI. Needs Event Gateway's MCP Events source type for the challenge (shipping shortly); until then, a cloudflared callback stands in during development.
+Local delivery through Event Gateway and the Hookdeck CLI, using Event Gateway's MCP Events source type for the challenge. It shipped on 6 Oct 2026; the e2e test subscribers already use it in place of a cloudflared tunnel.
 
 - **Subscriber command.** `mcp-events-bridge subscriber`: creates the agent's MCP Events source and CLI connection, supervises `hookdeck listen`, recovers events missed while offline (ported from the fleet demo's `recover.ts`), and forwards deliveries to the local agent.
 - **Claude Code channel shim.** Built on the subscriber command; emits `notifications/claude/channel`.
