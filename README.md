@@ -19,7 +19,7 @@ The bridge closes that gap:
 - **Every event verified, delivered and recorded.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.
 
-It's for developers who want agents (ChatGPT today, local agents next) to react to events from the tools they already use.
+It's for developers who want agents (ChatGPT today, local agents next) to react to events from the services they already use.
 
 **Status:** 0.1, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next.
 
