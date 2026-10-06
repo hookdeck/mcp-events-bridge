@@ -69,13 +69,13 @@ In the Event Gateway dashboard, a running bridge looks like this:
 
    The first run generates an MCP secret; put it in `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run.
 
-4. Run the bridge, and forward events to it with the Hookdeck CLI (the exact commands are printed by `setup` and `serve`):
+4. Run the bridge:
 
    ```sh
    npm run bridge -- serve
-   hookdeck listen 8080 bridge-resend bridge-resend-dev
-   hookdeck listen 8080 bridge-hookdeck-notifications bridge-notifications-dev
    ```
+
+   With CLI inbound (the default locally), `serve` first checks that Event Gateway has every connection the config needs, and stops with what's missing if `setup` hasn't been run (or was run for a different deployment). It then runs one `hookdeck listen` for every source in the config, here `bridge-resend,bridge-hookdeck-notifications`, and stops it when the bridge stops. Adding a provider to the config adds its source to that command. Pass `--no-listen` to run the CLI yourself.
 
 5. Check the whole path with real email:
 

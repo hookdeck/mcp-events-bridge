@@ -27,3 +27,5 @@ export const providerSourceName = (instanceId: string) => assertResourceName(`br
 
 export const providerConnectionName = (instanceId: string, deployment: string) =>
   assertResourceName(`bridge-${slug(instanceId)}-${slug(deployment)}`);
+
+export const notificationsConnectionName = (deployment: string) => assertResourceName(`bridge-notifications-${slug(deployment)}`);

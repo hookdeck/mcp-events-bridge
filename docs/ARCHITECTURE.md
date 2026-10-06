@@ -216,7 +216,7 @@ Fallbacks:
 
 ### Running the bridge itself locally
 
-The same code runs on a laptop if the inbound connection uses a CLI destination instead of the bridge's public URL. Development uses this from stage 5: the config's inbound mode is `cli`, `bridge setup` upserts the inbound connection with a CLI destination at path `/inbound/<instance id>`, and `hookdeck listen` forwards to the bridge's port. Requests forwarded by the CLI carry the same Hookdeck signature as HTTP deliveries (stage 2), so the inbound route doesn't change. No public URL or tunnel is needed for inbound.
+The same code runs on a laptop if the inbound connection uses a CLI destination instead of the bridge's public URL. Development uses this from stage 5: the config's inbound mode is `cli`, `bridge setup` upserts the inbound connection with a CLI destination at path `/inbound/<instance id>`, and `bridge serve` runs `hookdeck listen` to the bridge's port. Before starting it, `serve` checks that every connection the config implies exists, on the right source, with a CLI destination at the right path, and fails closed otherwise: `listen` would create default `<source>-cli` connections for a source without one. It then runs a single `hookdeck listen <port> <source>,<source>,...` covering every provider source plus the notifications source; given no connection name, `listen` uses each source's existing CLI connection (verified live). Requests forwarded by the CLI carry the same Hookdeck signature as HTTP deliveries (stage 2), so the inbound route doesn't change. No public URL or tunnel is needed for inbound.
 
 Running it unattended on a laptop (stage 6) brings back what the fleet demo solved:
 
@@ -738,7 +738,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [x] Stage 3: bodies are byte-identical across attempts and match the publisher's, and the signature headers don't change between attempts (see `SPIKES.md`).
 - [ ] What ChatGPT does when a refresh fails while the bridge is offline. Lean: long default lifetime until tested.
 - [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 5.
-- [ ] One `listen` per connection, or one for all sources (local bridge only). Lean: one per connection until checked.
+- [x] One `listen` for all sources: a comma-separated source list attaches to each source's existing CLI connection (verified live, stage 5). Restart and recovery with several sources come in stage 6.
 
 ## Prior art
 

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ResolvedConfig, ResolvedProvider } from './config.js';
 import type { HookdeckClient, Rule, UpsertConnectionInput } from './hookdeck.js';
-import { providerConnectionName, providerSourceName } from './names.js';
+import { notificationsConnectionName, providerConnectionName, providerSourceName } from './names.js';
 
 /*
  * `bridge setup`: creates or updates everything the config describes in Event
@@ -109,7 +109,7 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
 
 async function setupNotifications(deps: SetupDeps) {
   const { config, hookdeck } = deps;
-  const connectionName = `bridge-notifications-${config.deployment}`;
+  const connectionName = notificationsConnectionName(config.deployment);
   const connection = await hookdeck.upsertConnection({
     name: connectionName,
     source: { name: NOTIFICATIONS_SOURCE, type: 'WEBHOOK' },

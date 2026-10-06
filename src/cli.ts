@@ -2,9 +2,9 @@
 import { parseArgs } from 'node:util';
 import { ConfigError } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
-import type { ResolvedConfig } from './core/config.js';
-import { providerConnectionName, providerSourceName } from './core/names.js';
-import { NOTIFICATIONS_SOURCE, mcpUrl, runSetup } from './core/setup.js';
+import { checkInbound, listenArgs } from './core/inbound-plan.js';
+import { mcpUrl, runSetup } from './core/setup.js';
+import { CliListenError, DEFAULT_CLI_CONFIG, startListen } from './host/cli-listen.js';
 import { loadConfig } from './host/load-config.js';
 import { createBridgeServer } from './host/server.js';
 
@@ -14,20 +14,14 @@ import { createBridgeServer } from './host/server.js';
  * `doctor` comes in stage 7.
  */
 
-const USAGE = `Usage: mcp-events-bridge <command> [--config <file>]
+const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen]
 
 Commands:
   setup   Create or update the Event Gateway resources and provider webhooks in bridge.config.ts
-  serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper
+  serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper. With CLI inbound it checks
+          the Event Gateway setup and runs \`hookdeck listen\` for every configured source
+          (--no-listen to run it yourself)
   doctor  Check the deployment (not built yet)`;
-
-/** For CLI inbound: the `hookdeck listen` commands that forward provider events and issue notifications to the bridge. */
-function listenCommands(config: ResolvedConfig): string[] {
-  return [
-    ...config.providers.map((p) => `hookdeck listen ${config.port} ${providerSourceName(p.id)} ${providerConnectionName(p.id, config.deployment)}`),
-    `hookdeck listen ${config.port} ${NOTIFICATIONS_SOURCE} bridge-notifications-${config.deployment}`,
-  ];
-}
 
 async function setup(configFile: string | undefined) {
   const config = await loadConfig({ file: configFile });
@@ -41,7 +35,7 @@ async function setup(configFile: string | undefined) {
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
-    console.log(`\nWith \`serve\` running, forward events to the bridge (one terminal each):\n${listenCommands(config).map((c) => `  ${c}`).join('\n')}`);
+    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(config, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
   }
   if (report.mcp.generated) {
     console.log(`\nGenerated an MCP secret. Set it before running serve, and keep it private (the URL is a credential):`);
@@ -50,25 +44,62 @@ async function setup(configFile: string | undefined) {
   console.log(`\nMCP URL for ChatGPT (Developer mode, "No Authentication"):\n  ${report.mcp.url}`);
 }
 
-async function serve(configFile: string | undefined) {
+async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {
   const config = await loadConfig({ file: configFile });
+
+  // Check Event Gateway first: a CLI-inbound deployment must not start `hookdeck listen` against missing
+  // connections, or the CLI creates default ones and events go astray.
+  const problems = await checkInbound(config, new HookdeckClient({ apiKey: config.hookdeck.apiKey }));
+  if (problems.length) {
+    const message = `Event Gateway isn't set up for deployment "${config.deployment}" (${config.inbound} inbound):\n${problems.map((p) => `  - ${p}`).join('\n')}\nRun \`mcp-events-bridge setup\` (with the same BRIDGE_DEPLOYMENT and BRIDGE_INBOUND).`;
+    if (config.inbound === 'cli') {
+      console.error(message);
+      process.exitCode = 1;
+      return;
+    }
+    console.warn(`[bridge] warning: ${message}`);
+  }
+
   const bridge = await createBridgeServer(config);
   const { host, port } = await bridge.listen();
   console.log(`[bridge] listening on ${host}:${port} (${config.inbound} inbound, deployment "${config.deployment}")`);
+
+  let listen: Awaited<ReturnType<typeof startListen>> | undefined;
+  const stop = async (code = 0) => {
+    listen?.stop();
+    await bridge.close();
+    process.exit(code);
+  };
+  process.on('SIGINT', () => void stop());
+  process.on('SIGTERM', () => void stop());
+
   if (config.inbound === 'cli') {
-    for (const command of listenCommands({ ...config, port })) console.log(`[bridge] forward events with: ${command}`);
+    if (manageListen) {
+      try {
+        listen = await startListen(config, {
+          port,
+          onExit: (code) => {
+            console.error(`[bridge] hookdeck listen exited (${code}); stopping`);
+            void stop(1);
+          },
+        });
+        console.log('[bridge] hookdeck listen connected: forwarding provider events and issue notifications');
+      } catch (error) {
+        console.error(`[bridge] ${error instanceof CliListenError ? error.message : error}`);
+        return stop(1);
+      }
+    } else {
+      console.log(`[bridge] --no-listen: forward events yourself with: hookdeck ${listenArgs(config, port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
+    }
   }
   console.log(`[bridge] MCP endpoint: ${mcpUrl(config, '<BRIDGE_MCP_SECRET>')}`);
-  const stop = async () => {
-    await bridge.close();
-    process.exit(0);
-  };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
 }
 
 async function main() {
-  const { positionals, values } = parseArgs({ allowPositionals: true, options: { config: { type: 'string' } } });
+  const { positionals, values } = parseArgs({
+    allowPositionals: true,
+    options: { config: { type: 'string' }, 'no-listen': { type: 'boolean', default: false } },
+  });
   try {
     process.loadEnvFile();
   } catch {
@@ -78,7 +109,7 @@ async function main() {
     case 'setup':
       return setup(values.config);
     case 'serve':
-      return serve(values.config);
+      return serve(values.config, { manageListen: !values['no-listen'] });
     default:
       console.error(USAGE);
       process.exitCode = 1;
