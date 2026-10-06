@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" width="1200" height="470" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">MCP Events bridge architecture</title>
+  <desc id="desc">Webhook providers such as Resend, GitHub and any other provider send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts such as ChatGPT subscribe to the bridge over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each subscriber's callback through one connection per subscription, with filter, dedupe and retry.</desc>
+  <style>
+    .bg { fill: #ffffff; stroke: #d0d7de; }
+    .panel { fill: #f6f8fa; stroke: #d0d7de; }
+    .box { fill: #ffffff; stroke: #8c959f; }
+    .accent { fill: #eef1ff; stroke: #5b6bf0; }
+    .dashed { stroke-dasharray: 6 5; }
+    .text { fill: #1f2328; }
+    .muted { fill: #59636e; }
+    .label { fill: #59636e; font-size: 13px; }
+    .arrow { stroke: #59636e; fill: none; stroke-width: 1.6; }
+    .head { fill: #59636e; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; stroke: #30363d; }
+      .panel { fill: #161b22; stroke: #30363d; }
+      .box { fill: #0d1117; stroke: #6e7681; }
+      .accent { fill: #1c2140; stroke: #7c8cff; }
+      .text { fill: #e6edf3; }
+      .muted, .label { fill: #9198a1; }
+      .arrow { stroke: #9198a1; }
+      .head { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="1" y="1" width="1198" height="468" rx="14"/>
+
+  <!-- Providers -->
+  <text class="muted" x="40" y="62" font-size="13" font-weight="600" letter-spacing="0.5">WEBHOOK PROVIDERS</text>
+  <rect class="box" x="30" y="100" width="170" height="50" rx="8"/>
+  <text class="text" x="115" y="130" font-size="16" text-anchor="middle">Resend</text>
+  <rect class="box" x="30" y="190" width="170" height="50" rx="8"/>
+  <text class="text" x="115" y="220" font-size="16" text-anchor="middle">GitHub</text>
+  <rect class="box dashed" x="30" y="280" width="170" height="62" rx="8"/>
+  <text class="text" x="115" y="306" font-size="14" text-anchor="middle">Stripe, Shopify, Linear…</text>
+  <text class="muted" x="115" y="326" font-size="13" text-anchor="middle">any webhook provider</text>
+
+  <!-- Event Gateway: inbound -->
+  <rect class="panel" x="240" y="40" width="230" height="340" rx="12"/>
+  <text class="text" x="355" y="66" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
+  <text class="muted" x="355" y="86" font-size="13" text-anchor="middle">verify · store · retry</text>
+  <rect class="box" x="260" y="100" width="190" height="50" rx="8"/>
+  <text class="text" x="355" y="130" font-size="15" text-anchor="middle">Resend source</text>
+  <rect class="box" x="260" y="190" width="190" height="50" rx="8"/>
+  <text class="text" x="355" y="220" font-size="15" text-anchor="middle">GitHub source</text>
+  <rect class="box dashed" x="260" y="285" width="190" height="52" rx="8"/>
+  <text class="text" x="355" y="316" font-size="15" text-anchor="middle">a source per provider</text>
+
+  <path class="arrow" d="M200,125 H258" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M200,215 H258" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M200,311 H258" marker-end="url(#arrowhead)"/>
+
+  <!-- Agent host -->
+  <rect class="box" x="535" y="40" width="190" height="62" rx="8"/>
+  <text class="text" x="630" y="67" font-size="16" text-anchor="middle">Agent host</text>
+  <text class="muted" x="630" y="88" font-size="13" text-anchor="middle">ChatGPT, local agents…</text>
+  <path class="arrow" d="M630,102 V183" marker-end="url(#arrowhead)"/>
+  <text class="label" x="640" y="138">MCP: events/subscribe,</text>
+  <text class="label" x="640" y="155">get_event, …</text>
+
+  <!-- Bridge -->
+  <rect class="accent" x="535" y="185" width="190" height="80" rx="10" stroke-width="1.6"/>
+  <text class="text" x="630" y="217" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
+  <text class="muted" x="630" y="241" font-size="14" text-anchor="middle">map · match · sign</text>
+
+  <path class="arrow" d="M450,125 C495,125 495,212 533,212" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M450,215 C490,215 495,225 533,225" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M450,311 C495,311 495,238 533,238" marker-end="url(#arrowhead)"/>
+
+  <!-- Event Gateway: outbound -->
+  <rect class="panel" x="805" y="40" width="220" height="340" rx="12"/>
+  <text class="text" x="915" y="66" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
+  <text class="muted" x="915" y="86" font-size="13" text-anchor="middle">deliver · retry · record</text>
+  <rect class="box" x="825" y="150" width="180" height="56" rx="8"/>
+  <text class="text" x="915" y="174" font-size="15" text-anchor="middle">topic source</text>
+  <text class="muted" x="915" y="194" font-size="13" text-anchor="middle">per MCP event</text>
+  <rect class="box" x="825" y="250" width="180" height="70" rx="8"/>
+  <text class="text" x="915" y="275" font-size="15" text-anchor="middle">connection per</text>
+  <text class="text" x="915" y="294" font-size="15" text-anchor="middle">subscription</text>
+  <text class="muted" x="915" y="312" font-size="12" text-anchor="middle">filter · dedupe · retry</text>
+  <path class="arrow" d="M915,206 V248" marker-end="url(#arrowhead)"/>
+
+  <path class="arrow" d="M725,225 C765,225 785,178 823,178" marker-end="url(#arrowhead)"/>
+  <text class="label" x="737" y="252" font-size="12">Publish API,</text>
+  <text class="label" x="737" y="267" font-size="12">signed per</text>
+  <text class="label" x="737" y="282" font-size="12">subscriber</text>
+
+  <!-- Subscribers -->
+  <text class="muted" x="1040" y="62" font-size="13" font-weight="600" letter-spacing="0.5">SUBSCRIBERS</text>
+  <rect class="box" x="1040" y="200" width="135" height="50" rx="8"/>
+  <text class="text" x="1107" y="230" font-size="15" text-anchor="middle">ChatGPT</text>
+  <rect class="box dashed" x="1040" y="290" width="135" height="62" rx="8"/>
+  <text class="text" x="1107" y="316" font-size="15" text-anchor="middle">Local agents</text>
+  <text class="muted" x="1107" y="336" font-size="12" text-anchor="middle">via Hookdeck CLI</text>
+  <path class="arrow" d="M1005,280 C1022,280 1022,225 1038,225" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M1005,292 C1022,292 1022,321 1038,321" marker-end="url(#arrowhead)"/>
+
+  <!-- Footer -->
+  <text class="muted" x="600" y="430" font-size="13" text-anchor="middle">The bridge is stateless: subscriptions are Event Gateway connections. Dashed: any provider, and local agents (coming).</text>
+</svg>

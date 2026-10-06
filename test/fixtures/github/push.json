@@ -1,0 +1,45 @@
+{
+  "_note": "Synthetic: follows the shape of GitHub webhook payloads (docs.github.com/webhooks/webhook-events-and-payloads), trimmed. Replace with a captured delivery when available.",
+  "headers": {
+    "content-type": "application/json",
+    "x-github-event": "push",
+    "x-github-delivery": "33333333-3333-3333-3333-333333333333",
+    "x-github-hook-id": "123",
+    "x-hub-signature-256": "sha256=REDACTED",
+    "user-agent": "GitHub-Hookshot/abc"
+  },
+  "body": {
+    "ref": "refs/heads/main",
+    "before": "aaa",
+    "after": "bbb",
+    "forced": false,
+    "compare": "https://github.com/Example-Org/Widgets/compare/aaa...bbb",
+    "commits": [
+      {
+        "id": "bbb",
+        "message": "Fix widget loading"
+      },
+      {
+        "id": "ccc",
+        "message": "Add test"
+      }
+    ],
+    "head_commit": {
+      "id": "bbb",
+      "message": "Fix widget loading",
+      "timestamp": "2026-10-06T12:00:00+01:00"
+    },
+    "repository": {
+      "id": 1,
+      "name": "widgets",
+      "full_name": "Example-Org/Widgets",
+      "private": false,
+      "html_url": "https://github.com/Example-Org/Widgets"
+    },
+    "sender": {
+      "login": "Octo-Dev",
+      "id": 2,
+      "type": "User"
+    }
+  }
+}

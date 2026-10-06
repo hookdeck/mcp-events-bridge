@@ -56,6 +56,8 @@ export interface ProviderDefinition<Options = Record<string, unknown>> {
   eventIdHeader?: string;
   // Each event has its own argument and summary types.
   events: ProviderEvent<any, any>[];
+  /** MCP event names enabled when the config doesn't list any. Default: all of them. */
+  defaultEvents?: string[];
   /** Creates the provider-side webhook at the source URL. The returned secret goes straight onto the source. */
   register?(ctx: RegisterContext<Options>): Promise<{ webhookId: string; signingSecret: string }>;
   unregister?(ctx: { webhookId: string; options: Options; fetch: typeof fetch }): Promise<void>;

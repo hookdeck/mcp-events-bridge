@@ -46,13 +46,15 @@ export function defineProvider<Options extends Record<string, unknown>>(definiti
   return (options: WithEnv<Options> & { id?: string; events?: string[] }): ProviderInstance => {
     const { id, events, ...rest } = options as WithEnv<Options> & { id?: string; events?: string[] };
     const known = definition.events.map((e) => e.name);
-    for (const name of events ?? []) {
+    // `['*']` enables every event the provider offers.
+    const selected = events?.includes('*') ? known : (events ?? definition.defaultEvents ?? known);
+    for (const name of selected) {
       if (!known.includes(name)) throw new Error(`${definition.type}: unknown event "${name}" (known: ${known.join(', ')})`);
     }
     return {
       id: id ?? definition.type,
       definition: definition as unknown as ProviderDefinition<Record<string, unknown>>,
-      events: events ?? known,
+      events: selected,
       options: rest,
     };
   };

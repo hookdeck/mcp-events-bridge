@@ -2,20 +2,13 @@
 
 Subscribe an agent to things that happen in apps whose vendors haven't shipped [MCP Events](https://developers.openai.com/plugins/build/mcp-events). The bridge turns a provider's ordinary webhooks into MCP Events, with [Hookdeck Event Gateway](https://hookdeck.com) receiving, verifying and delivering them.
 
-The first provider is Resend inbound email: someone emails an address on Resend, and an agent subscribed to `email.received` (for example in ChatGPT) wakes up and acts.
+Built-in providers: **Resend** inbound email (`email.received`) and **GitHub** (one event per GitHub webhook type, such as `github.issues` or `github.pull_request`, filtered by repository, action and sender). Someone emails an address on Resend, or opens an issue, and an agent subscribed to that event (for example in ChatGPT) wakes up and acts. Other providers are a `defineProvider` away.
 
 Status: a working demo, built in stages. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design.
 
 ## How it works
 
-```mermaid
-flowchart TB
-    P["Resend"] -- "webhook" --> SRC["Event Gateway<br>RESEND source"]
-    SRC -- "inbound connection" --> B["Bridge<br>map, match, sign"]
-    B -- "Publish API<br>one request per subscriber" --> T["Event Gateway<br>topic source"]
-    T -- "connection per subscription<br>filter, dedupe, retry" --> CB["Subscriber's callback<br>(for example ChatGPT)"]
-    AG["Agent host"] -- "MCP: events/*, tools" --> B
-```
+<img src="docs/images/architecture.svg" alt="Webhook providers (Resend, GitHub, any other) send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts like ChatGPT subscribe over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each subscriber's callback through one connection per subscription." width="100%">
 
 - **Event Gateway** verifies the provider's signature, keeps every request, and delivers each MCP Event to each subscriber with retries.
 - **The bridge** is the MCP server: the event catalog, subscribe (with the endpoint challenge), and turning each provider webhook into a signed MCP Event per subscriber. It's stateless: subscriptions are Event Gateway connections, so there's no database.
@@ -51,11 +44,16 @@ In the Event Gateway dashboard, a running bridge looks like this:
 
    ```ts
    import { defineConfig, env } from '@hookdeck/mcp-events-bridge';
-   import { resend } from '@hookdeck/mcp-events-bridge/providers';
+   import { github, resend } from '@hookdeck/mcp-events-bridge/providers';
 
    export default defineConfig({
      deployment: 'dev',
-     providers: [resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] })],
+     providers: [
+       resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] }),
+       // Optional: GitHub events for a repository (or { org: 'name' }). Default events: issues, issue_comment,
+       // pull_request, pull_request_review, push, release, workflow_run; `events: ['*']` enables all.
+       github({ id: 'github-widgets', token: env('GITHUB_TOKEN'), scope: { repo: 'example-org/widgets' } }),
+     ],
    });
    ```
 
@@ -118,6 +116,7 @@ The URL is a credential: anyone with it can use the bridge's MCP endpoint. Keep 
 | `HOOKDECK_API_KEY` | Project API key, for the Event Gateway API and the Publish API |
 | `HOOKDECK_SIGNING_SECRET` | Verifies Event Gateway's signature on requests to the bridge |
 | `RESEND_API_KEY` | Creates the Resend webhook (referenced from `bridge.config.ts`) |
+| `GITHUB_TOKEN` | Creates the GitHub webhook: a token with the Webhooks (write) permission on the repository or organization |
 | `BRIDGE_MCP_SECRET` | Secret path segment of the MCP URL; `setup` generates one |
 | `BRIDGE_DEPLOYMENT` | Names this deployment's Event Gateway resources (read by this repo's `bridge.config.ts`) |
 | `BRIDGE_INBOUND` | `cli` (development, through `hookdeck listen`) or `http` (deployed); defaults to `http` on Fly.io |
