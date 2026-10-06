@@ -178,20 +178,39 @@ In the Event Gateway dashboard, a running bridge looks like this:
 
 ## Configuration
 
-| Variable | Purpose |
-| --- | --- |
-| `HOOKDECK_API_KEY` | Project API key, for the Event Gateway API and the Publish API |
-| `HOOKDECK_SIGNING_SECRET` | Verifies Event Gateway's signature on requests to the bridge |
-| `BRIDGE_MCP_SECRET` | Secret path segment of the MCP URL; `setup` generates one |
-| `BRIDGE_INBOUND` | `cli` (through `hookdeck listen`) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
-| `BRIDGE_PUBLIC_URL` | For `http` inbound. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
-| `BRIDGE_PORT` | Listener port (default: `PORT`, else 8080) |
-| `BRIDGE_DEPLOYMENT` | Not read by the bridge itself: the examples above pass it to `deployment` in `bridge.config.ts` |
-| `RESEND_API_KEY` | Resend provider: creates the webhook (read through `env()` in `bridge.config.ts`) |
-| `GITHUB_TOKEN` | GitHub provider, automatic mode: creates the webhooks. Only `setup` uses it |
-| `GITHUB_WEBHOOK_SECRET` | GitHub provider, manual mode: the secret on the webhooks you add (at least 16 characters) |
+### The bridge
+
+Every deployment needs these, whichever providers it uses.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `HOOKDECK_API_KEY` | Yes | Project API key, for the Event Gateway API and the Publish API |
+| `HOOKDECK_SIGNING_SECRET` | Yes | Verifies Event Gateway's signature on requests to the bridge |
+| `BRIDGE_MCP_SECRET` | To run `serve` | Secret path segment of the MCP URL; `setup` generates one |
+| `BRIDGE_INBOUND` | No | `cli` (through `hookdeck listen`) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
+| `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
+| `BRIDGE_PORT` | No | Listener port (default: `PORT`, else 8080) |
+| `BRIDGE_DEPLOYMENT` | No | Not read by the bridge itself: the examples above pass it to `deployment` in `bridge.config.ts` |
+| `BRIDGE_HOOKDECK_CLI_CONFIG` | No | Where `serve` writes the Hookdeck CLI's config for `hookdeck listen` (default `.hookdeck/config.toml`) |
 
 `defineConfig` also takes `inbound`, `publicUrl`, `port` and `hookdeck` directly, and `subscriptions` for subscription lifetimes. Run `npx mcp-events-bridge` for the commands and flags.
+
+### Webhook providers
+
+Set only what the providers in your `bridge.config.ts` need. The names are the ones the examples pass to `env()`; use your own if you prefer.
+
+#### Resend
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `RESEND_API_KEY` | Yes | API key that can create webhooks. `setup` registers the webhook with it, and the example config requires it wherever the bridge runs |
+
+#### GitHub
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission. Only `setup` uses it |
+| `GITHUB_WEBHOOK_SECRET` | In manual mode | The secret on the webhooks you add (at least 16 characters). Needed wherever the bridge runs |
 
 ## MCP surface
 
