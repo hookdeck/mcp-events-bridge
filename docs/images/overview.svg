@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="title">MCP Events bridge overview</title>
-  <desc id="desc">Apps such as Resend, GitHub or any webhook provider send webhooks to Hookdeck Event Gateway, which receives and verifies them and passes them to the MCP Events bridge. The bridge turns them into MCP Events, and Event Gateway delivers them, with retries, to agents such as ChatGPT that subscribed over MCP.</desc>
+  <desc id="desc">Webhook providers such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway, which receives and verifies them and passes them to the MCP Events bridge. The bridge turns them into MCP Events, and Event Gateway delivers them, with retries, to agents such as ChatGPT that subscribed over MCP.</desc>
   <style>
     .bg { fill: #ffffff; stroke: #d0d7de; }
     .panel { fill: #f6f8fa; stroke: #d0d7de; }
@@ -32,13 +32,13 @@
   <rect class="bg" x="1" y="1" width="1198" height="338" rx="14"/>
 
   <!-- Apps -->
-  <text class="muted" x="40" y="168" font-size="13" font-weight="600" letter-spacing="0.5">YOUR APPS</text>
+  <text class="muted" x="40" y="168" font-size="13" font-weight="600" letter-spacing="0.5">WEBHOOK PROVIDERS</text>
   <rect class="box" x="30" y="180" width="170" height="40" rx="8"/>
   <text class="text" x="115" y="205" font-size="15" text-anchor="middle">Resend</text>
   <rect class="box" x="30" y="230" width="170" height="40" rx="8"/>
   <text class="text" x="115" y="255" font-size="15" text-anchor="middle">GitHub</text>
   <rect class="box dashed" x="30" y="280" width="170" height="40" rx="8"/>
-  <text class="text" x="115" y="305" font-size="14" text-anchor="middle">any webhook</text>
+  <text class="text" x="115" y="305" font-size="14" text-anchor="middle">other providers</text>
 
   <!-- Event Gateway: one container, in and out -->
   <rect class="panel" x="250" y="170" width="660" height="150" rx="12"/>
@@ -62,7 +62,7 @@
   <path class="arrow" d="M640,122 C690,150 780,150 780,198" marker-end="url(#arrowhead)"/>
 
   <!-- Agents -->
-  <text class="muted" x="955" y="168" font-size="13" font-weight="600" letter-spacing="0.5">YOUR AGENTS</text>
+  <text class="muted" x="955" y="168" font-size="13" font-weight="600" letter-spacing="0.5">AGENTS</text>
   <rect class="box" x="950" y="180" width="220" height="50" rx="8"/>
   <text class="text" x="1060" y="210" font-size="15" text-anchor="middle">ChatGPT</text>
   <rect class="box dashed" x="950" y="250" width="220" height="50" rx="8"/>

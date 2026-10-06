@@ -2,7 +2,7 @@
 
 Turn webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-events), so AI agents can act the moment something happens: an email arrives, an issue is opened, a workflow fails. [Hookdeck Event Gateway](https://hookdeck.com) receives, verifies and delivers every event.
 
-<img src="docs/images/overview.svg" alt="Your apps (Resend, GitHub, any webhook) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to your agents, such as ChatGPT, which subscribed to the bridge over MCP." width="100%">
+<img src="docs/images/overview.svg" alt="Webhook providers (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to agents, such as ChatGPT, which subscribed to the bridge over MCP." width="100%">
 
 For example, an email arrives at a Resend address, and ChatGPT, subscribed through the bridge, acts on it:
 
@@ -14,7 +14,7 @@ MCP Events is an experimental MCP extension that lets an agent subscribe to even
 
 The bridge closes that gap:
 
-- **Webhooks become MCP Events.** Built-in providers for Resend inbound email and GitHub; add your own with `defineProvider` for any app Event Gateway has a source type for.
+- **Webhooks become MCP Events.** Built-in webhook providers: Resend inbound email and GitHub. Add others with `defineProvider`, for any service Event Gateway has a source type for, including ones you've built.
 - **Subscribers choose what wakes them.** Events have filters, such as an email's sender, or a GitHub repository and action.
 - **Delivery you don't have to build.** Event Gateway verifies provider signatures, retries failed deliveries, removes duplicates, and keeps a record of every event and attempt.
 - **Nothing to store.** The bridge is stateless: each subscription is an Event Gateway connection, so there's no database.
@@ -25,7 +25,7 @@ It's for developers who want agents (ChatGPT today, local agents next) to react 
 
 ## How it works
 
-<img src="docs/images/architecture.svg" alt="Webhook providers (Resend, GitHub, any other) send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts like ChatGPT subscribe over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent host's callback through one connection per subscription." width="100%">
+<img src="docs/images/architecture.svg" alt="Webhook providers (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts like ChatGPT subscribe over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent host's callback through one connection per subscription." width="100%">
 
 - **Event Gateway** verifies each provider's webhook signature, keeps every request, and delivers each MCP Event to each subscriber with retries.
 - **The bridge** is the MCP server: it lists the events on offer, handles subscribe (including the spec's endpoint challenge), and turns each provider webhook into an MCP Event signed for each subscriber.
@@ -40,7 +40,7 @@ You need:
 - Node 22 or later.
 - A [Hookdeck](https://hookdeck.com) account and a project for the bridge. From the project's settings (Secrets): the **API key** and the **signing secret**.
 - The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally.
-- An account with at least one [provider](#providers): Resend or GitHub.
+- An account with at least one [webhook provider](#webhook-providers): Resend or GitHub.
 
 1. **Create a project and install the bridge:**
 
@@ -50,7 +50,7 @@ You need:
    npm install @hookdeck/mcp-events-bridge
    ```
 
-2. **Choose providers** in `bridge.config.ts`:
+2. **Choose webhook providers** in `bridge.config.ts`:
 
    ```ts
    import { defineConfig, env } from '@hookdeck/mcp-events-bridge';
@@ -66,7 +66,7 @@ You need:
    });
    ```
 
-   Keep only the providers you use. Each one's options are under [Providers](#providers).
+   Keep only the providers you use. Each one's options are under [Webhook providers](#webhook-providers).
 
 3. **Add credentials** to `.env`:
 
@@ -105,7 +105,7 @@ When an event arrives, the task runs with it, as in the screenshot at the top.
 
 The MCP URL is a credential: anyone with it can use the bridge. Keep it private (see [Security and limitations](#security-and-limitations)).
 
-## Providers
+## Webhook providers
 
 ### Resend
 
@@ -130,7 +130,7 @@ Two ways to connect repositories:
 | **Automatic** | `github({ token, scope: { repos: ['owner/name', ...] } })`, or `scope: { org: 'name' }` for every repository in an organization | `setup`, with a fine-grained token that has the Webhooks (read and write) permission. For an organization's repositories, the token's resource owner must be the organization |
 | **Manual** | `github({ webhookSecret })`, no token | You: in each repository, Settings > Webhooks > Add webhook, with the Payload URL `setup` prints, content type `application/json`, and the same secret |
 
-### Your own
+### Adding a webhook provider
 
 A provider is a `defineProvider({...})` object: the Event Gateway source type, how to recognize and summarize each event, the subscribe filters, and optionally how to register the webhook. See ["Adding a provider"](docs/ARCHITECTURE.md#adding-a-provider) and the built-in [Resend](src/core/providers/resend.ts) and [GitHub](src/core/providers/github.ts) providers.
 
