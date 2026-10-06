@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
 import { runSetup } from '../../src/core/setup.js';
-import { resend } from '../../src/providers.js';
+import { github, resend } from '../../src/providers.js';
+import { FakeGithub } from '../support/fake-github.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
 const environment = { HOOKDECK_API_KEY: 'hk', HOOKDECK_SIGNING_SECRET: 'hs', RESEND_API_KEY: 're_1' };
@@ -62,6 +63,30 @@ describe('bridge setup', () => {
     expect(resendFake.calls.map((c) => c.url)).toEqual(['https://api.resend.com/webhooks', 'https://api.resend.com/webhooks/wh_1', 'https://api.resend.com/webhooks']);
     expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
     expect(source.type).toBe('RESEND');
+  });
+
+  it('updates GitHub webhooks in place when the repository list changes, keeping the source secret', async () => {
+    const gateway = new FakeEventGateway();
+    const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
+    const gh = new FakeGithub();
+    const run = (repos: string[]) =>
+      runSetup({
+        config: resolveConfig(defineConfig({ deployment: 'dev', providers: [github({ token: 't', scope: { repos } })] }), environment),
+        hookdeck,
+        fetch: gh.fetch,
+      });
+
+    expect((await run(['o/one'])).providers[0]!.webhook).toBe('registered');
+    const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
+    const secret = (source.config as { auth: { webhook_secret_key: string } }).auth.webhook_secret_key;
+    expect((await run(['O/One'])).providers[0]!.webhook).toBe('existing');
+
+    expect((await run(['o/one', 'o/two'])).providers[0]!.webhook).toBe('updated');
+    for (const path of ['/repos/o/one/hooks', '/repos/o/two/hooks']) {
+      expect(gh.hooks.get(path)).toEqual([expect.objectContaining({ config: expect.objectContaining({ url: source.url, secret }) })]);
+    }
+    expect(source.config).toMatchObject({ auth: { webhook_secret_key: secret } });
+    expect(gh.calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
   });
 
   it('uses an HTTP destination with Hookdeck signatures for http inbound', async () => {

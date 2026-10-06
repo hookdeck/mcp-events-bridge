@@ -50,9 +50,9 @@ In the Event Gateway dashboard, a running bridge looks like this:
      deployment: 'dev',
      providers: [
        resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] }),
-       // Optional: GitHub events for a repository (or { org: 'name' }). Default events: issues, issue_comment,
-       // pull_request, pull_request_review, push, release, workflow_run; `events: ['*']` enables all.
-       github({ id: 'github-widgets', token: env('GITHUB_TOKEN'), scope: { repo: 'example-org/widgets' } }),
+       // Optional: GitHub events for a list of repositories (or { org: 'name' }). Default events: issues,
+       // issue_comment, pull_request, pull_request_review, push, release, workflow_run; `events: ['*']` enables all.
+       github({ token: env('GITHUB_TOKEN'), scope: { repos: ['example-org/widgets', 'example-org/gadgets'] } }),
      ],
    });
    ```
@@ -116,7 +116,7 @@ The URL is a credential: anyone with it can use the bridge's MCP endpoint. Keep 
 | `HOOKDECK_API_KEY` | Project API key, for the Event Gateway API and the Publish API |
 | `HOOKDECK_SIGNING_SECRET` | Verifies Event Gateway's signature on requests to the bridge |
 | `RESEND_API_KEY` | Creates the Resend webhook (referenced from `bridge.config.ts`) |
-| `GITHUB_TOKEN` | Creates the GitHub webhook: a token with the Webhooks (write) permission on the repository or organization |
+| `GITHUB_TOKEN` | Creates the GitHub webhooks: a token with the Webhooks (read and write) permission on the repositories or organization. Only `setup` uses it |
 | `BRIDGE_MCP_SECRET` | Secret path segment of the MCP URL; `setup` generates one |
 | `BRIDGE_DEPLOYMENT` | Names this deployment's Event Gateway resources (read by this repo's `bridge.config.ts`) |
 | `BRIDGE_INBOUND` | `cli` (development, through `hookdeck listen`) or `http` (deployed); defaults to `http` on Fly.io |

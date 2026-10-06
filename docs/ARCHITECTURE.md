@@ -455,10 +455,13 @@ GitHub has about 70 webhook event types, most with several actions, and payloads
 - **A generic summary for every type,** from the fields all GitHub payloads share: `event`, `action`, `repository` and `sender` (lower-cased), and the main object's `title`, `number` and `url`. The most-used types add a few fields: labels and state for issues, merged and branches for pull requests, ref, commit count and head commit for pushes, conclusion for workflow runs. Text is capped at 500 characters.
 - **Arguments on every type:** `repository`, `actions` and `sender`.
 - **The config chooses the types:** `github({ events: [...] })`; the default is issues, issue comments, pull requests, reviews, pushes, releases and workflow runs, and `['*']` enables all. The webhook is registered for exactly those types.
-- **Scope:** a repository (`{ repo: 'owner/name' }`) or an organization (`{ org: 'name' }`). GitHub lets the caller choose the webhook secret, so `register()` generates one and sets it on Event Gateway's `GITHUB` source, which verifies `X-Hub-Signature-256`.
+- **Scope:** a list of repositories (`{ repos: ['owner/name', ...] }`) or an organization (`{ org: 'name' }`). Personal accounts have no account-wide webhooks, and organization webhooks need an org admin, so the list is the common case. Every repository's webhook points at the same `GITHUB` source with the same secret; the payload names the repository, and subscribers filter on it.
+- **Secret:** GitHub lets the caller choose it, so `register()` generates one and sets it on the source, which verifies `X-Hub-Signature-256`.
+- **No ids stored:** the bridge finds its webhooks by URL (the source URL), so it doesn't keep an id per repository in the 500-character source description. Registering updates a webhook in place if one already delivers to the source, so re-running after a partial failure doesn't duplicate webhooks.
+- **Changing the list:** setup keeps a fingerprint of the repositories and the enabled events in the source description. When either changes, it updates the webhooks and reuses the source's secret, so deliveries in flight still verify. Removing a repository from the list leaves its webhook in place; delete it in the repository's settings, or its events keep arriving (subscribers filtering by repository won't see them).
 - **Event id:** `X-GitHub-Delivery`, also the inbound dedupe field. **Occurred-at:** the main object's latest timestamp, else the push's head commit, else the time received. The `ping` sent when a webhook is created matches no event and is ignored.
 
-Still open from "Adding a provider": several instances of the same provider share event names, so two GitHub instances in one deployment would clash in the catalog (gap 5). One instance with an organization scope, filtered by `repository`, covers the common case.
+Still open from "Adding a provider": several instances of the same provider share event names, so two GitHub instances in one deployment would clash in the catalog (gap 5). One instance with a repository list or an organization, filtered by `repository`, covers the common case.
 
 ## MCP surface
 

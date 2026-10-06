@@ -42,6 +42,12 @@ export interface RegisterContext<Options> {
   providerEvents: string[];
   options: Options;
   fetch: typeof fetch;
+  /**
+   * The secret already on the source, when an existing registration is being
+   * updated. Providers that let the caller choose the secret reuse it, so
+   * deliveries in flight still verify.
+   */
+  signingSecret?: string;
 }
 
 export interface ProviderDefinition<Options = Record<string, unknown>> {
@@ -58,9 +64,18 @@ export interface ProviderDefinition<Options = Record<string, unknown>> {
   events: ProviderEvent<any, any>[];
   /** MCP event names enabled when the config doesn't list any. Default: all of them. */
   defaultEvents?: string[];
-  /** Creates the provider-side webhook at the source URL. The returned secret goes straight onto the source. */
+  /**
+   * What the webhook is registered on, from the options (for example GitHub
+   * repositories). Setup registers again when this or the event list changes.
+   */
+  registrationTarget?(options: Options): unknown;
+  /**
+   * Creates the provider-side webhook at the source URL, or updates it. The
+   * returned secret goes straight onto the source. When updating, setup
+   * unregisters the previous webhook id if the returned one differs.
+   */
   register?(ctx: RegisterContext<Options>): Promise<{ webhookId: string; signingSecret: string }>;
-  unregister?(ctx: { webhookId: string; options: Options; fetch: typeof fetch }): Promise<void>;
+  unregister?(ctx: { webhookId: string; sourceUrl: string; options: Options; fetch: typeof fetch }): Promise<void>;
 }
 
 /** `Name <addr@example.com>` or `addr@example.com` to `addr@example.com`, lower-cased. */

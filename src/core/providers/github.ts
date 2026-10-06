@@ -16,11 +16,21 @@ import type { InboundRequest, ProviderDefinition, ProviderEvent } from './types.
 
 export type GithubOptions = {
   token: string;
-  /** Where the webhook is registered: one repository (`owner/name`) or a whole organization. */
-  scope: { repo: string } | { org: string };
+  /**
+   * Where webhooks are registered: a list of repositories (`owner/name`), one
+   * webhook each, or a whole organization (needs an org admin token). All of
+   * them deliver to the same Event Gateway source with the same secret.
+   */
+  scope: { repos: string[] } | { org: string };
 };
 
 const GITHUB_API = 'https://api.github.com';
+/**
+ * The bridge finds its GitHub webhooks by their URL (the source URL) rather
+ * than storing an id per repository, so the stored webhook id is a marker.
+ */
+const HOOKS_BY_URL = 'matched-by-source-url';
+const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TEXT_LIMIT = 500;
 
 /** GitHub event types offered, with what they cover. */
@@ -199,8 +209,14 @@ function githubEvent(type: string, description: string): ProviderEvent<GithubArg
   };
 }
 
-const hooksPath = (scope: GithubOptions['scope']) =>
-  'repo' in scope ? `/repos/${scope.repo.split('/').map(encodeURIComponent).join('/')}/hooks` : `/orgs/${encodeURIComponent(scope.org)}/hooks`;
+/** The hooks API path for each repository, or the organization. */
+function hookPaths(scope: GithubOptions['scope']): string[] {
+  if ('org' in scope) return [`/orgs/${encodeURIComponent(scope.org)}/hooks`];
+  if (!Array.isArray(scope.repos) || scope.repos.length === 0) throw new Error('github: scope.repos needs at least one repository');
+  const bad = scope.repos.filter((repo) => !REPO_PATTERN.test(repo));
+  if (bad.length) throw new Error(`github: repositories must be owner/name: ${bad.join(', ')}`);
+  return scope.repos.map((repo) => `/repos/${repo.split('/').map(encodeURIComponent).join('/')}/hooks`);
+}
 
 async function githubApi(fetchFn: typeof fetch, token: string, path: string, init: { method: string; body?: unknown }) {
   const res = await fetchFn(`${GITHUB_API}${path}`, {
@@ -216,7 +232,13 @@ async function githubApi(fetchFn: typeof fetch, token: string, path: string, ini
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`GitHub ${init.method} ${path} -> ${res.status} ${text.slice(0, 300)}`);
-  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  return text ? (JSON.parse(text) as unknown) : {};
+}
+
+/** Ids of the webhooks at a hooks path that deliver to the source URL. */
+async function hooksForUrl(fetchFn: typeof fetch, token: string, path: string, sourceUrl: string): Promise<number[]> {
+  const hooks = (await githubApi(fetchFn, token, `${path}?per_page=100`, { method: 'GET' })) as Array<{ id: number; config?: { url?: string } }>;
+  return hooks.filter((hook) => hook.config?.url === sourceUrl).map((hook) => hook.id);
 }
 
 export const githubProvider: ProviderDefinition<GithubOptions> = {
@@ -228,18 +250,36 @@ export const githubProvider: ProviderDefinition<GithubOptions> = {
   events: Object.entries(EVENT_TYPES).map(([type, description]) => githubEvent(type, description)),
   defaultEvents: DEFAULT_GITHUB_EVENTS,
 
-  /** GitHub lets the caller choose the secret, so the bridge generates one. */
-  async register({ sourceUrl, providerEvents, options, fetch: fetchFn }) {
-    const signingSecret = randomBytes(32).toString('hex');
-    const hook = await githubApi(fetchFn, options.token, hooksPath(options.scope), {
-      method: 'POST',
-      body: { name: 'web', active: true, events: providerEvents, config: { url: sourceUrl, content_type: 'json', secret: signingSecret, insecure_ssl: '0' } },
-    });
-    if (hook.id === undefined) throw new Error('GitHub did not return a webhook id');
-    return { webhookId: String(hook.id), signingSecret };
+  registrationTarget: ({ scope }) =>
+    'org' in scope ? { org: scope.org.toLowerCase() } : { repos: scope.repos.map((repo) => repo.toLowerCase()).sort() },
+
+  /**
+   * GitHub lets the caller choose the secret, so the bridge generates one (or
+   * reuses the source's when updating). Each repository's webhook is updated
+   * in place if one already delivers to the source URL, else created, so a
+   * re-run after a partial failure doesn't duplicate webhooks.
+   */
+  async register({ sourceUrl, providerEvents, options, fetch: fetchFn, signingSecret: current }) {
+    if (!options.token) throw new Error('github: a token is needed to register webhooks (GITHUB_TOKEN)');
+    const signingSecret = current ?? randomBytes(32).toString('hex');
+    const config = { url: sourceUrl, content_type: 'json', secret: signingSecret, insecure_ssl: '0' };
+    for (const path of hookPaths(options.scope)) {
+      const [existing] = await hooksForUrl(fetchFn, options.token, path, sourceUrl);
+      if (existing !== undefined) {
+        await githubApi(fetchFn, options.token, `${path}/${existing}`, { method: 'PATCH', body: { active: true, events: providerEvents, config } });
+      } else {
+        await githubApi(fetchFn, options.token, path, { method: 'POST', body: { name: 'web', active: true, events: providerEvents, config } });
+      }
+    }
+    return { webhookId: HOOKS_BY_URL, signingSecret };
   },
 
-  async unregister({ webhookId, options, fetch: fetchFn }) {
-    await githubApi(fetchFn, options.token, `${hooksPath(options.scope)}/${encodeURIComponent(webhookId)}`, { method: 'DELETE' });
+  /** Deletes every webhook in scope that delivers to the source URL. */
+  async unregister({ sourceUrl, options, fetch: fetchFn }) {
+    for (const path of hookPaths(options.scope)) {
+      for (const id of await hooksForUrl(fetchFn, options.token, path, sourceUrl)) {
+        await githubApi(fetchFn, options.token, `${path}/${id}`, { method: 'DELETE' });
+      }
+    }
   },
 };

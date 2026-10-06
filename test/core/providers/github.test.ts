@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_GITHUB_EVENTS, githubProvider } from '../../../src/core/providers/github.js';
 import type { InboundRequest } from '../../../src/core/providers/types.js';
 import { github } from '../../../src/providers.js';
+import { FakeGithub } from '../../support/fake-github.js';
 
 const load = (name: string): InboundRequest => {
   const f = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'fixtures', 'github', name), 'utf8')) as InboundRequest;
@@ -15,9 +16,9 @@ const matching = (req: InboundRequest) => githubProvider.events.filter((e) => e.
 describe('GitHub provider', () => {
   it('offers one MCP event per GitHub event type, and a default set', () => {
     expect(githubProvider.events.length).toBeGreaterThan(20);
-    expect(github({ token: 't', scope: { repo: 'o/r' } }).events).toEqual(DEFAULT_GITHUB_EVENTS);
-    expect(github({ token: 't', scope: { repo: 'o/r' }, events: ['*'] }).events).toHaveLength(githubProvider.events.length);
-    expect(() => github({ token: 't', scope: { repo: 'o/r' }, events: ['github.nope'] })).toThrow(/unknown event/);
+    expect(github({ token: 't', scope: { repos: ['o/r'] } }).events).toEqual(DEFAULT_GITHUB_EVENTS);
+    expect(github({ token: 't', scope: { repos: ['o/r'] }, events: ['*'] }).events).toHaveLength(githubProvider.events.length);
+    expect(() => github({ token: 't', scope: { repos: ['o/r'] }, events: ['github.nope'] })).toThrow(/unknown event/);
   });
 
   it('matches on X-GitHub-Event and ignores ping', () => {
@@ -89,23 +90,47 @@ describe('GitHub provider', () => {
     expect(() => issues.parseArguments({ label: 'bug' })).toThrow();
   });
 
-  it('registers a repository webhook with a generated secret, and deletes it', async () => {
-    const calls: Array<{ url: string; method: string; body?: Record<string, any>; headers: Record<string, string> }> = [];
-    const fetchFn = (async (url: string, init: RequestInit) => {
-      calls.push({ url, method: init.method!, body: init.body ? JSON.parse(String(init.body)) : undefined, headers: init.headers as Record<string, string> });
-      return init.method === 'POST' ? new Response(JSON.stringify({ id: 987 }), { status: 201 }) : new Response(null, { status: 204 });
-    }) as unknown as typeof fetch;
-    const options = { token: 'ghp_test', scope: { repo: 'example-org/widgets' } };
-    const result = await githubProvider.register!({ sourceUrl: 'https://hkdk.events/abc', providerEvents: ['issues', 'push'], options, fetch: fetchFn });
-    expect(result.webhookId).toBe('987');
+  it('registers one webhook per repository with one generated secret, and deletes them by source URL', async () => {
+    const gh = new FakeGithub();
+    const sourceUrl = 'https://hkdk.events/abc';
+    const options = { token: 'ghp_test', scope: { repos: ['example-org/widgets', 'example-org/gadgets'] } };
+    const result = await githubProvider.register!({ sourceUrl, providerEvents: ['issues', 'push'], options, fetch: gh.fetch });
     expect(result.signingSecret).toMatch(/^[0-9a-f]{64}$/);
-    expect(calls[0]).toMatchObject({
-      url: 'https://api.github.com/repos/example-org/widgets/hooks',
-      method: 'POST',
-      body: { name: 'web', active: true, events: ['issues', 'push'], config: { url: 'https://hkdk.events/abc', content_type: 'json', secret: result.signingSecret } },
-      headers: { Authorization: 'Bearer ghp_test', 'X-GitHub-Api-Version': '2022-11-28' },
-    });
-    await githubProvider.unregister!({ webhookId: '987', options: { token: 'ghp_test', scope: { org: 'example-org' } }, fetch: fetchFn });
-    expect(calls[1]).toMatchObject({ url: 'https://api.github.com/orgs/example-org/hooks/987', method: 'DELETE' });
+    for (const path of ['/repos/example-org/widgets/hooks', '/repos/example-org/gadgets/hooks']) {
+      expect(gh.hooks.get(path)).toEqual([
+        { id: expect.any(Number), events: ['issues', 'push'], config: { url: sourceUrl, content_type: 'json', secret: result.signingSecret, insecure_ssl: '0' } },
+      ]);
+    }
+    gh.hooks.get('/repos/example-org/widgets/hooks')!.push({ id: 99, events: ['push'], config: { url: 'https://other.example.com', secret: 'x' } });
+
+    await githubProvider.unregister!({ webhookId: result.webhookId, sourceUrl, options, fetch: gh.fetch });
+    expect(gh.hooks.get('/repos/example-org/widgets/hooks')!.map((h) => h.id)).toEqual([99]);
+    expect(gh.hooks.get('/repos/example-org/gadgets/hooks')).toEqual([]);
+  });
+
+  it('updates an existing webhook in place, reusing a given secret', async () => {
+    const gh = new FakeGithub();
+    const sourceUrl = 'https://hkdk.events/abc';
+    const options = { token: 'ghp_test', scope: { org: 'example-org' } };
+    const first = await githubProvider.register!({ sourceUrl, providerEvents: ['issues'], options, fetch: gh.fetch });
+    const second = await githubProvider.register!({ sourceUrl, providerEvents: ['issues', 'push'], options, fetch: gh.fetch, signingSecret: first.signingSecret });
+    expect(second).toEqual(first);
+    expect(gh.hooks.get('/orgs/example-org/hooks')).toEqual([expect.objectContaining({ events: ['issues', 'push'], config: expect.objectContaining({ secret: first.signingSecret }) })]);
+    expect(gh.calls.filter((c) => c.startsWith('PATCH'))).toHaveLength(1);
+  });
+
+  it('sends the API version and token, and rejects badly formed repositories', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      seen.push(init.headers as Record<string, string>);
+      return init.method === 'GET' ? Response.json([]) : Response.json({ id: 1 }, { status: 201 });
+    }) as unknown as typeof fetch;
+    await githubProvider.register!({ sourceUrl: 'https://hkdk.events/abc', providerEvents: ['issues'], options: { token: 'ghp_test', scope: { repos: ['o/r'] } }, fetch: fetchFn });
+    expect(seen[0]).toMatchObject({ Authorization: 'Bearer ghp_test', 'X-GitHub-Api-Version': '2022-11-28' });
+    for (const repos of [[], ['widgets'], ['o/r/extra']]) {
+      await expect(
+        githubProvider.register!({ sourceUrl: 'https://hkdk.events/abc', providerEvents: ['issues'], options: { token: 't', scope: { repos } }, fetch: fetchFn }),
+      ).rejects.toThrow(/github: /);
+    }
   });
 });
