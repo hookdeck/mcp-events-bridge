@@ -12,13 +12,15 @@ You can't do these. Each is needed before the step that uses it.
 
 | Needed for | What | Env var |
 | --- | --- | --- |
-| Everything | A dedicated Hookdeck project for this work (not a production project) and its Project API key | `HOOKDECK_API_KEY` |
-| Stages 2 and 5 | A Resend account with a verified sending domain and a full-access API key. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address). The spikes create the `email.received` webhook through the API | `RESEND_API_KEY`, `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
-| Stage 5 | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
-| Everything | Hookdeck CLI with `gateway connection upsert`, Node 22 or later | |
-| Stage 5 deploy | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
+| The bridge | A dedicated Hookdeck project for this work (not a production project), its Project API key and signing secret | `HOOKDECK_API_KEY`, `HOOKDECK_SIGNING_SECRET` |
+| Resend provider | A Resend account and an API key that can create webhooks. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address) | `RESEND_API_KEY` |
+| GitHub provider (optional) | A fine-grained token with the Webhooks permission on the repositories, or a webhook secret for manual mode | `GITHUB_REPOS`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` |
+| The e2e tests | A verified Resend sending domain, and a key that can send email | `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
+| ChatGPT | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
+| Everything | Hookdeck CLI with `gateway connection upsert`, Node 22.12 or later | |
+| The reference deployment | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
 
-Secrets go in `.env` (gitignored); `.env.example` lists every variable with a comment, grouped by the step that needs it. Never print keys or signing secrets in logs, test output, commit messages or chat.
+Secrets go in `.env` (gitignored); `.env.example` lists every variable with a comment, grouped as in the README's Configuration section (the bridge, then each webhook provider), then the e2e tests and the reference deployment. Never print keys or signing secrets in logs, test output, commit messages or chat.
 
 ## Ground rules
 

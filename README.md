@@ -191,6 +191,7 @@ Every deployment needs these, whichever providers it uses.
 | `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
 | `BRIDGE_PORT` | No | Listener port (default: `PORT`, else 8080) |
 | `BRIDGE_DEPLOYMENT` | No | Not read by the bridge itself: the examples above pass it to `deployment` in `bridge.config.ts` |
+| `BRIDGE_HOOKDECK_CLI_CONFIG` | No | Where `serve` writes the Hookdeck CLI's config for `hookdeck listen` (default `.hookdeck/config.toml`) |
 
 `defineConfig` also takes `inbound`, `publicUrl`, `port` and `hookdeck` directly, and `subscriptions` for subscription lifetimes. Run `npx mcp-events-bridge` for the commands and flags.
 
