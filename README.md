@@ -21,6 +21,14 @@ flowchart TB
 - **The bridge** is the MCP server: the event catalog, subscribe (with the endpoint challenge), and turning each provider webhook into a signed MCP Event per subscriber. It's stateless: subscriptions are Event Gateway connections, so there's no database.
 - **The Hookdeck CLI** forwards provider events to a bridge on your laptop during development, so you don't need a public URL.
 
+In the Event Gateway dashboard, a running bridge looks like this:
+
+![Event Gateway connections, grouped by source: bridge-out-email_received to one mcp-sub connection with filter, dedupe and retry rules; bridge-hookdeck-notifications to bridge-notifications-fly and bridge-notifications-dev; bridge-resend to bridge-resend-fly and bridge-resend-dev](docs/images/event-gateway-connections.png)
+
+- **`bridge-resend`** (the Resend source) feeds one inbound connection per deployment: `bridge-resend-fly` (HTTP, to the bridge on Fly.io) and `bridge-resend-dev` (CLI, to a bridge on a laptop).
+- **`bridge-out-email_received`** is the topic source the bridge publishes to. Each subscription is one connection from it, `mcp-sub-<id>`, with filter, dedupe and retry rules, to a destination at the subscriber's callback (here, ChatGPT's).
+- **`bridge-hookdeck-notifications`** receives Event Gateway's issue notifications and forwards them to each deployment, so a bridge hears about failing callbacks.
+
 ## Requirements
 
 - Node 22 or later.
