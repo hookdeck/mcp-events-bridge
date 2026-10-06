@@ -39,7 +39,7 @@ You need:
 
 - Node 22.12 or later.
 - A [Hookdeck](https://hookdeck.com) account and a project for the bridge. From the project's settings (Secrets): the **API key** and the **signing secret**.
-- The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally.
+- The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally (and for `npm run e2e`).
 - An account with at least one [webhook provider](#webhook-providers): Resend or GitHub.
 
 1. **Create a project and install the bridge:**
@@ -219,7 +219,7 @@ npm run build             # compiles to dist/, as published
 npm run bridge -- setup   # the CLI from source; this repo's bridge.config.ts imports from ./src
 ```
 
-`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes a test subscriber behind a cloudflared tunnel (the spec's challenge needs a synchronous answer), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_GITHUB=1` adds a real GitHub push; `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
+`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_GITHUB=1` adds a real GitHub push; `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
 
 Issues and pull requests are welcome. [`AGENTS.md`](AGENTS.md) has the project's conventions, for people and coding agents alike.
 

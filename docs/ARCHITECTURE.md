@@ -141,7 +141,7 @@ Matching moves into Hookdeck filter syntax, which has no regex and no documented
 | Capability | What it would replace or enable |
 | --- | --- |
 | Standard Webhooks destination auth in Event Gateway | Spec-conformant re-signing on every retry; publish once per topic (above) |
-| An MCP Events source type, answering the challenge at the source | Local agents receiving through the Hookdeck CLI (shipping shortly; see "Local agents and the bridge on a laptop") |
+| An MCP Events source type, answering the challenge at the source | Shipped 6 Oct 2026. Local agents receiving through the Hookdeck CLI, and the e2e test subscribers without a tunnel (see "Local agents and the bridge on a laptop") |
 | CLI redelivery of events missed while a session was disconnected | The app-side recovery code ported from the fleet demo |
 | A request/response mode for the Hookdeck CLI | The cloudflared tunnel for a local MCP endpoint, which needs synchronous responses |
 
@@ -203,7 +203,12 @@ Local delivery goes through Event Gateway and the Hookdeck CLI, so a laptop gets
 
 A local agent subscribes like any other subscriber, with webhook delivery. Its callback URL is a Hookdeck source in its own Hookdeck project, and `hookdeck listen` delivers to localhost. To the bridge it looks like any other subscriber, so nothing in the bridge assumes a local callback.
 
-The catch is the challenge. Subscribe sends a signed challenge and needs the value echoed back in the same HTTP response. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore use Event Gateway's MCP Events source type, which answers the challenge at the source and verifies deliveries. It's due to ship shortly; this section gets the details when it does.
+The catch is the challenge. Subscribe sends a signed challenge and needs the value echoed back in the same HTTP response. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore use Event Gateway's MCP Events source type (`MCP_EVENTS`, shipped 6 Oct 2026), configured with the subscriber's `whsec_` secret as `webhook_secret_key`:
+
+- **The challenge** is answered at Event Gateway's edge: it checks the signature and echoes the challenge, without creating a request. A wrongly signed challenge gets a 4xx, so subscribe fails with `-32015`.
+- **Deliveries** are verified with the same secret (Standard Webhooks) and then flow like any request: to a CLI connection and `hookdeck listen`, with Event Gateway's retries and history on the agent's side.
+- **Status codes stop at the source.** The source acknowledges each delivery itself, so the agent's own response (a `410` to stop, a `5xx` to retry) never reaches the bridge's delivery. Retries between the source and the agent are the agent-side connection's job.
+- **One secret per source**, so a subscriber that rotates its secret on refresh updates the source first. A mismatch is invisible to the bridge: the source answers 200 and rejects the delivery itself, so `deliveryStatus` doesn't show it. Retries of deliveries signed before a rotation carry only the old signature, and fail the same way.
 
 Agent-side tooling packages this: a `mcp-events-bridge subscriber` command creates the MCP Events source and its CLI connection, supervises `hookdeck listen`, recovers events missed while the laptop was offline, and forwards them to the local agent. The Claude Code channel shim (from `hookdeck/claude-channel-plugin`) builds on it, turning each delivery into a `notifications/claude/channel` notification.
 
@@ -228,7 +233,7 @@ Local agents on the same machine connect to the bridge's MCP endpoint on `127.0.
 
 ### When a public tunnel is used
 
-Anything local is reached through the Hookdeck CLI by default. A plain public tunnel (cloudflared) is used only when the caller needs the local response synchronously, or for the MCP Events challenge until Event Gateway's MCP Events source type ships. Today that means the spike receivers, whose status codes Event Gateway acts on; a development test subscriber's callback; and a local bridge's MCP endpoint for ChatGPT.
+Anything local is reached through the Hookdeck CLI by default, and a subscriber's callback through an MCP Events source. A plain public tunnel (cloudflared) is used only when the caller needs the local response synchronously. Today that means the spike receivers and the e2e subscribers that test status codes (`410`, `5xx`), whose responses Event Gateway acts on, and a local bridge's MCP endpoint for ChatGPT.
 
 ## Authentication
 
@@ -632,6 +637,8 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **ChatGPT** (stage 5, 6 Oct): with the app created as "No Authentication" and the secret MCP URL, a Work chat request ("I'd like to know about all inbound emails") subscribed to `email.received` with `arguments: {}`, no `ttlMs`, and `cursor: null`. The callback was `https://connectors.api.openai.com/webhook/mcp-events/<id>`, and it answered the challenge. A Resend email was delivered with `200` on the first attempt, and the task showed the sender, recipient and subject.
 
+**MCP Events source type** (6 Oct, probed in production): a `MCP_EVENTS` source takes `config.auth.webhook_secret_key` (a `whsec_` secret). The bridge's challenge, signed with that secret, was answered on the first try straight after the source was created, so no wait for the secret to reach the edge; a challenge signed with another secret got a 4xx, and (from the request counts) was recorded as a request rejected as `VERIFICATION_FAILED`. A passing challenge creates no request. Deliveries get HTTP 200 whether or not the signature matches; matching ones are `verified: true`, others are rejected as `VERIFICATION_FAILED`.
+
 **Request search** (stage 5, measured live): `GET /requests` filters on request headers (`headers` as a JSON filter) and returns headers and body with `include=data`, so `get_event` finds an event by its provider id. A new request took about 6 seconds to become findable by header.
 
 **Destination paths** (stage 5, found live): Event Gateway joins the destination path with the request's path, so a request to the source root arrives at `/inbound/hookdeck/` (trailing slash) for issue notifications. The bridge accepts both forms.
@@ -717,7 +724,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, issue feedback.** Delivery, request and backpressure issue triggers are in stage 5; transformation issues come with the direct path.
 - **5 Oct, secrets at rest.** Subscription secrets live in Event Gateway destination auth (masked credential storage); no bridge encryption key. Metadata is readable in connection descriptions, since the operator owns it.
 - **5 Oct, ChatGPT plan.** Stage 5 is proven with ChatGPT Plus in Developer mode from a Work chat, as the Outpost demo was on 1 Oct. Dot testing waits for an upgraded plan.
-- **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared only when a synchronous response is needed, or for the MCP Events challenge until the MCP Events source type ships.
+- **5 Oct, development inbound.** The Hookdeck CLI (CLI destination plus `hookdeck listen`), not a public tunnel. cloudflared only when a synchronous response is needed (on 6 Oct, the MCP Events source type replaced it for the challenge).
 - **5 Oct, authentication.** Tiers by friction: a secret URL by default, then built-in single-user OAuth, then bring-your-own identity provider. The OpenAI Secure MCP Tunnel is optional, for private networks. No extra service is required.
 - **5 Oct, local delivery.** Local agents receive webhooks through Event Gateway's MCP Events source and the Hookdeck CLI, with recovery of events missed while offline. Poll from Event Gateway's history is the fallback; push is not planned.
 - **5 Oct, Outpost.** A future option for spec-conformant delivery, not the default: it adds a second service.

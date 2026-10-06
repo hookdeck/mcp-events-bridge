@@ -4,6 +4,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { Tunnel, bin, install } from 'cloudflared';
 import { HookdeckClient } from '../src/core/hookdeck.js';
 import { providerConnectionName, providerSourceName, subscriptionResourceName } from '../src/core/names.js';
+import { generateWebhookSecret } from '../src/core/secret.js';
 import { NOTIFICATIONS_SOURCE } from '../src/core/setup.js';
 import { loadConfig } from '../src/host/load-config.js';
 import { createBridgeServer } from '../src/host/server.js';
@@ -16,8 +17,12 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *   -> Publish API -> Event Gateway (subscription connection) -> test subscriber
  *
  * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_*,
- * and BRIDGE_MCP_SECRET. Test subscribers' callbacks go through cloudflared
- * quick tunnels, because the MCP Events challenge needs a synchronous answer.
+ * and BRIDGE_MCP_SECRET. Each test subscriber's callback is its own Event
+ * Gateway MCP Events source, which answers the subscribe challenge and verifies
+ * deliveries, and `hookdeck listen` forwards them to the subscriber. Subscribers
+ * that test status codes (410, 500) use a cloudflared quick tunnel instead: an
+ * MCP Events source acknowledges deliveries itself, so the agent's status code
+ * never reaches the bridge's delivery. E2E_CALLBACK=tunnel uses tunnels for all.
  *
  *   npm run e2e                                         local bridge, CLI inbound
  *   E2E_BRIDGE_URL=https://<app>.fly.dev npm run e2e    a deployed bridge
@@ -44,6 +49,7 @@ const CLI_CONFIG = '.hookdeck/config.toml';
 const REMOTE = process.env.E2E_BRIDGE_URL?.replace(/\/$/, '');
 const EXTENDED = process.env.E2E_EXTENDED === '1';
 const GITHUB = process.env.E2E_GITHUB === '1';
+const CALLBACK: 'hookdeck' | 'tunnel' = process.env.E2E_CALLBACK === 'tunnel' ? 'tunnel' : 'hookdeck';
 
 const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
 const record = (check: string, ok: boolean, detail = '') => {
@@ -64,6 +70,9 @@ async function until<T>(fn: () => T | Promise<T>, timeoutMs: number, everyMs = 1
 const children: ChildProcess[] = [];
 const tunnels: Array<ReturnType<typeof Tunnel.quick>> = [];
 const subscribers: Subscriber[] = [];
+/** Event Gateway resources the run creates for subscriber callbacks, deleted at the end. */
+const callbackResources: Array<{ sourceId: string; connectionId?: string; destinationId?: string }> = [];
+let cleanupHookdeck: HookdeckClient | undefined;
 let stopBridge: (() => Promise<void>) | undefined;
 
 async function sendEmail(from: string, subject: string) {
@@ -73,6 +82,42 @@ async function sendEmail(from: string, subject: string) {
     body: JSON.stringify({ from, to: [env('RESEND_INBOUND_ADDRESS')], subject, text: `${subject} (MCP Events bridge e2e)` }),
   });
   if (!res.ok) throw new Error(`Resend send failed: ${res.status} ${await res.text()}`);
+}
+
+/**
+ * A subscriber callback through Event Gateway: an MCP Events source with the subscriber's secret (it answers
+ * the challenge and verifies deliveries), a CLI connection, and `hookdeck listen` to the subscriber's port.
+ */
+async function mcpEventsCallback(hookdeck: HookdeckClient, run: string, name: string, port: number) {
+  const secret = generateWebhookSecret();
+  const resourceName = `e2e-sub-${run}-${name}`;
+  const source = await hookdeck.upsertSource({ name: resourceName, type: 'MCP_EVENTS', config: { auth: { webhook_secret_key: secret } } });
+  // Recorded as each resource exists, so a failure part way still cleans up what was created.
+  const resources: (typeof callbackResources)[number] = { sourceId: source.id };
+  callbackResources.push(resources);
+  const connection = await hookdeck.upsertConnection({
+    name: resourceName,
+    source_id: source.id,
+    destination: { name: resourceName, type: 'CLI', config: { path: `/mcp-events/${name}` } },
+  });
+  Object.assign(resources, { connectionId: connection.id, destinationId: connection.destination.id });
+  const connected = await spawnListen(['listen', String(port), resourceName, resourceName, '--output', 'compact', '--device-name', `e2e-${name}`, '--hookdeck-config', CLI_CONFIG]);
+  return connected ? { url: source.url, secret } : undefined;
+}
+
+/** Runs `hookdeck listen` and resolves true once it prints "Connected", false on a timeout or if it can't start. */
+async function spawnListen(args: string[]): Promise<boolean> {
+  const listen = spawn('hookdeck', args);
+  children.push(listen);
+  let output = '';
+  let failed = false;
+  // Without an 'error' listener, a missing CLI crashes the process before cleanup runs.
+  listen.on('error', (error) => {
+    failed = true;
+    console.log(`[e2e] hookdeck listen failed to start: ${error.message}`);
+  });
+  listen.stdout?.on('data', (chunk) => (output += chunk));
+  return Boolean(await until(() => failed || output.includes('Connected'), 30_000)) && !failed;
 }
 
 /** A quick tunnel to a local port, once its DNS answers. */
@@ -97,6 +142,9 @@ async function main() {
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const from = env('RESEND_TEST_FROM');
   const run = Date.now().toString(36);
+  cleanupHookdeck = hookdeck;
+  const ci = spawnSync('hookdeck', ['ci', '--api-key', config.hookdeck.apiKey, '--hookdeck-config', CLI_CONFIG], { stdio: 'ignore' });
+  if (ci.error || ci.status !== 0) throw new Error(`hookdeck ci failed (${ci.error?.message ?? `exit ${ci.status}`}); the e2e needs the Hookdeck CLI`);
 
   // 1. The bridge: a deployed one, or a local one with CLI inbound (and notifications through the CLI too).
   let bridgeUrl: string;
@@ -124,23 +172,18 @@ async function main() {
     stopBridge = () => bridge.close();
     bridgeUrl = `http://127.0.0.1:${port}`;
 
-    spawnSync('hookdeck', ['ci', '--api-key', config.hookdeck.apiKey, '--hookdeck-config', CLI_CONFIG], { stdio: 'ignore' });
     const listens = [
       [providerSourceName(provider.id), providerConnectionName(provider.id, config.deployment)],
       [NOTIFICATIONS_SOURCE, `bridge-notifications-${config.deployment}`],
       ...(GITHUB ? [[providerSourceName(github!.id), providerConnectionName(github!.id, config.deployment)]] : []),
-    ].map(([source, connection]) => {
-      const listen = spawn('hookdeck', ['listen', String(port), source!, connection!, '--output', 'compact', '--device-name', 'e2e', '--hookdeck-config', CLI_CONFIG]);
-      children.push(listen);
-      let output = '';
-      listen.stdout?.on('data', (chunk) => (output += chunk));
-      return () => output.includes('Connected');
-    });
-    record('hookdeck listen connected (provider events and notifications)', Boolean(await until(() => listens.every((connected) => connected()), 30_000)));
+    ].map(([source, connection]) =>
+      spawnListen(['listen', String(port), source!, connection!, '--output', 'compact', '--device-name', 'e2e', '--hookdeck-config', CLI_CONFIG]),
+    );
+    record('hookdeck listen connected (provider events and notifications)', (await Promise.all(listens)).every(Boolean));
   }
   const mcpUrl = `${bridgeUrl}/mcp/${config.auth.mcpSecret}`;
 
-  // 2. Test subscribers, each with its own receiver and tunnel.
+  // 2. Test subscribers, each with its own receiver and callback (an MCP Events source, or a tunnel).
   const githubRepo = GITHUB ? (process.env.E2E_GITHUB_REPO ?? (github!.options.scope as { repos?: string[] } | undefined)?.repos?.[0] ?? '') : '';
   if (GITHUB && !githubRepo) throw new Error('E2E_GITHUB=1 in manual mode needs E2E_GITHUB_REPO=owner/name');
   const plan: Array<{ name: string; eventName?: string; arguments?: Record<string, unknown>; respondWith?: (e: McpEvent) => number }> = [
@@ -150,33 +193,50 @@ async function main() {
     ...(EXTENDED ? [{ name: 'gone', respondWith: () => 410 }, { name: 'failing', respondWith: () => 500 }] : []),
   ];
   const attempts = new Map<string, number[]>();
+  // Each setup catches its own errors, so one failing doesn't abandon the others mid-way (and leak what they create).
   const started = await Promise.all(
     plan.map(async ({ name, eventName, arguments: args, respondWith }, i) => {
-      const port = 4300 + i;
-      const tunnelUrl = await openTunnel(port);
-      if (!tunnelUrl) return undefined;
-      const subscriber = new Subscriber({
-        serverUrl: mcpUrl,
-        token: '',
-        eventName: eventName ?? 'email.received',
-        arguments: args ?? { from },
-        receiverPort: port,
-        publicCallbackUrl: tunnelUrl,
-        respondWith,
-        onAttempt: () => attempts.set(name, [...(attempts.get(name) ?? []), Date.now()]),
-        log: (m) => console.log(`[subscriber:${name}] ${m}`),
-      });
-      const ok = await subscriber.start().then(
-        () => true,
-        (error: Error) => (console.log(`[subscriber:${name}] ${error.message}`), false),
-      );
-      if (!ok) return undefined;
-      subscribers.push(subscriber);
-      return [name, subscriber] as const;
+      try {
+        const port = 4300 + i;
+        // Status-code tests need the subscriber's own response, so they always use a tunnel.
+        const via = respondWith || CALLBACK === 'tunnel' ? 'tunnel' : 'hookdeck';
+        const callback =
+          via === 'hookdeck'
+            ? await mcpEventsCallback(hookdeck, run, name, port)
+            : await openTunnel(port).then((url) => (url ? { publicCallbackUrl: url } : undefined));
+        if (!callback) return undefined;
+        console.log(`[subscriber:${name}] callback via ${via === 'hookdeck' ? 'an Event Gateway MCP Events source' : 'a cloudflared tunnel'}`);
+        const subscriber = new Subscriber({
+          serverUrl: mcpUrl,
+          token: '',
+          eventName: eventName ?? 'email.received',
+          arguments: args ?? { from },
+          receiverPort: port,
+          ...('url' in callback ? { callbackUrl: callback.url, secret: callback.secret } : callback),
+          respondWith,
+          onAttempt: () => attempts.set(name, [...(attempts.get(name) ?? []), Date.now()]),
+          log: (m) => console.log(`[subscriber:${name}] ${m}`),
+        });
+        const ok = await subscriber.start().then(
+          () => true,
+          (error: Error) => (console.log(`[subscriber:${name}] ${error.message}`), false),
+        );
+        if (!ok) return undefined;
+        subscribers.push(subscriber);
+        return [name, subscriber] as const;
+      } catch (error) {
+        console.log(`[subscriber:${name}] setup failed: ${(error as Error).message}`);
+        return undefined;
+      }
     }),
   );
   const subs = new Map(started.filter((s): s is readonly [string, Subscriber] => Boolean(s)));
-  record('subscribe, with the challenge answered through the tunnel', subs.size === plan.length, `${subs.size}/${plan.length} subscribers`);
+  const viaTunnel = plan.filter((p) => p.respondWith || CALLBACK === 'tunnel').length;
+  record(
+    'subscribe, with the challenge answered',
+    subs.size === plan.length,
+    `${subs.size}/${plan.length} subscribers (${plan.length - viaTunnel} by Event Gateway MCP Events sources, ${viaTunnel} through tunnels)`,
+  );
   const main = subs.get('main');
   if (!main) return;
 
@@ -362,6 +422,11 @@ main()
     for (const subscriber of subscribers) await subscriber.stop({ unsubscribe: true }).catch(() => {});
     for (const child of children) child.kill('SIGINT');
     for (const tunnel of tunnels) tunnel.stop();
+    for (const r of callbackResources) {
+      if (r.connectionId) await cleanupHookdeck?.deleteConnection(r.connectionId).catch(() => {});
+      if (r.destinationId) await cleanupHookdeck?.deleteDestination(r.destinationId).catch(() => {});
+      await cleanupHookdeck?.deleteSource(r.sourceId).catch(() => {});
+    }
     await stopBridge?.();
     const failed = checks.filter((c) => !c.ok).length;
     console.log(`\n${checks.length - failed}/${checks.length} checks passed`);
