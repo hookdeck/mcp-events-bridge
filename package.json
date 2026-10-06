@@ -40,7 +40,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "mcp-events-bridge": "./dist/cli.js"
+    "mcp-events-bridge": "dist/cli.js"
   },
   "files": [
     "dist",
