@@ -2,6 +2,10 @@
 
 Turn any app's webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-events), so AI agents can act the moment something happens: an email arrives, an issue is opened, a workflow fails. [Hookdeck Event Gateway](https://hookdeck.com) receives, verifies and delivers every event.
 
+<img src="docs/images/overview.svg" alt="Your apps (Resend, GitHub, any webhook) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to your agents, such as ChatGPT, which subscribed to the bridge over MCP." width="100%">
+
+For example, an email arrives at a Resend address, and ChatGPT, subscribed through the bridge, acts on it:
+
 ![ChatGPT, subscribed through the bridge, reporting "New email received" with the sender, the recipient and the subject "Hello ChatGPT from the MCP Events bridge"](docs/images/chatgpt-email-event.png)
 
 ## Why
