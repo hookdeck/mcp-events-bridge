@@ -115,7 +115,7 @@ describe('Resend register and unregister', () => {
       calls.push(`${init.method} ${url}`);
       return new Response('{"deleted":true}', { status: 200 });
     }) as unknown as typeof fetch;
-    await resend.unregister!({ webhookId: 'wh_1', options: { apiKey: 're_test' }, fetch: fetchFn });
+    await resend.unregister!({ webhookId: 'wh_1', sourceUrl: 'https://hkdk.events/abc', options: { apiKey: 're_test' }, fetch: fetchFn });
     expect(calls).toEqual(['DELETE https://api.resend.com/webhooks/wh_1']);
   });
 });

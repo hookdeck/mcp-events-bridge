@@ -37,6 +37,7 @@ async function setup(configFile: string | undefined) {
   console.log(`\nDeployment "${config.deployment}", ${config.inbound} inbound`);
   for (const p of report.providers) {
     console.log(`  provider ${p.id}: source ${p.sourceUrl}, connection ${p.connection}, webhook ${p.webhook}`);
+    if (p.hint) console.log(p.hint.split('\n').map((line) => `    ${line}`).join('\n'));
   }
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);

@@ -449,23 +449,20 @@ Gaps, and where the config file leaves them:
 
 ### Second provider: GitHub
 
-GitHub is the stage 7 manifest. It differs from Resend in ways that test the provider interface, though not every gap above.
+GitHub has about 70 webhook event types, most with several actions, and payloads of up to hundreds of KB, so it isn't mapped event by event:
 
-| | Resend | GitHub (check each against the GitHub docs and a real delivery) |
-| --- | --- | --- |
-| Webhook creation | API; Resend generates and returns the secret | API (`POST /repos/{owner}/{repo}/hooks`, `POST /orgs/{org}/hooks`); the caller chooses the secret, so `register()` generates one |
-| Scope | One per account | Per repository or organization: a `scope` option, and often several instances |
-| Signature | Svix | `X-Hub-Signature-256`, HMAC-SHA256 of the raw body |
-| Event Gateway source type | `RESEND` | `GITHUB` (to confirm) |
-| Event id | `svix-id` header | `X-GitHub-Delivery` header; confirm it's stable across manual redeliveries |
-| Event type | Body `type` | `X-GitHub-Event` header plus body `action`, e.g. `issues` + `opened` -> `issues.opened` |
-| Occurred-at | Body field | No timestamp header; varies by event (`issue.updated_at`, `head_commit.timestamp`), else received time |
-| Payload | Metadata only, small | Full objects, can be large: `summarize` must trim well under 256 KiB |
-| Provider retries | Yes, via Svix | None automatic; failed deliveries are only redelivered by hand. Event Gateway accepting first makes this a non-issue |
+- **One MCP event per GitHub event type:** `github.issues`, `github.pull_request`, `github.push`, `github.workflow_run`, and so on (26 types). The action is a subscribe filter, not part of the name.
+- **A generic summary for every type,** from the fields all GitHub payloads share: `event`, `action`, `repository` and `sender` (lower-cased), and the main object's `title`, `number` and `url`. The most-used types add a few fields: labels and state for issues, merged and branches for pull requests, ref, commit count and head commit for pushes, conclusion for workflow runs. Text is capped at 500 characters.
+- **Arguments on every type:** `repository`, `actions` and `sender`.
+- **The config chooses the types:** `github({ events: [...] })`; the default is issues, issue comments, pull requests, reviews, pushes, releases and workflow runs, and `['*']` enables all. The webhook is registered for exactly those types.
+- **Scope:** a list of repositories (`{ repos: ['owner/name', ...] }`) or an organization (`{ org: 'name' }`). Personal accounts have no account-wide webhooks, and organization webhooks need an org admin, so the list is the common case. Every repository's webhook points at the same `GITHUB` source with the same secret; the payload names the repository, and subscribers filter on it.
+- **Secret:** GitHub lets the caller choose it, so `register()` generates one and sets it on the source, which verifies `X-Hub-Signature-256`.
+- **Manual mode:** `github({ webhookSecret })`, with no token or scope. Setup creates the source with that secret and prints the source URL; you add webhooks to any repositories yourself. Only deliveries signed with the secret get past Event Gateway, so "any repository" means any repository you configured. A GitHub App would make this automatic across installations; that's later.
+- **No ids stored:** the bridge finds its webhooks by URL (the source URL), so it doesn't keep an id per repository in the 500-character source description. Registering updates a webhook in place if one already delivers to the source, so re-running after a partial failure doesn't duplicate webhooks.
+- **Changing the list:** setup keeps a fingerprint of the repositories and the enabled events in the source description. When either changes, it updates the webhooks and reuses the source's secret, so deliveries in flight still verify. Removing a repository from the list leaves its webhook in place; delete it in the repository's settings, or its events keep arriving (subscribers filtering by repository won't see them).
+- **Event id:** `X-GitHub-Delivery`, also the inbound dedupe field. **Occurred-at:** the main object's latest timestamp, else the push's head commit, else the time received. The `ping` sent when a webhook is created matches no event and is ignored.
 
-Suggested events to start: `issues.opened`, `issue_comment.created`, `pull_request.opened`, `workflow_run.completed`. Filters: repository and, for comments, author.
-
-GitHub tests instance ids, setup options, a caller-chosen secret, event types from headers, per-event occurred-at, and trimming. It doesn't test gaps 1, 2 or 4: GitHub has a webhook API and (probably) a source type, and its payloads are complete. A third provider should be picked to cover those, using `hookdeck/webhook-skills` and Event Gateway's source type list.
+Still open from "Adding a provider": several instances of the same provider share event names, so two GitHub instances in one deployment would clash in the catalog (gap 5). One instance with a repository list or an organization, filtered by `repository`, covers the common case.
 
 ## MCP surface
 

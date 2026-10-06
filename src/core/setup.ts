@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { ResolvedConfig, ResolvedProvider } from './config.js';
 import type { HookdeckClient, Rule, UpsertConnectionInput } from './hookdeck.js';
 import { providerConnectionName, providerSourceName } from './names.js';
@@ -7,7 +7,8 @@ import { providerConnectionName, providerSourceName } from './names.js';
  * `bridge setup`: creates or updates everything the config describes in Event
  * Gateway and at providers. Idempotent: a provider webhook is registered once
  * and its id is kept in the source description, so re-running doesn't create
- * another.
+ * another. If the enabled events or the provider's registration target (for
+ * example GitHub repositories) change, the webhook is updated.
  */
 
 export const NOTIFICATIONS_SOURCE = 'bridge-hookdeck-notifications';
@@ -20,10 +21,12 @@ interface SourceDescription {
   provider: string;
   events: string[];
   webhookId: string | null;
+  /** Fingerprint of the provider's registration target, when it has one. */
+  target?: string;
 }
 
 export interface SetupReport {
-  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'existing' | 'none' }>;
+  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'updated' | 'configured' | 'existing' | 'none'; hint?: string }>;
   notifications: { source: string; connection: string };
   triggers: string[];
   mcp: { secret: string; generated: boolean; url: string };
@@ -42,6 +45,9 @@ function inboundDestination(config: ResolvedConfig, name: string, path: string):
   return { name, type: 'HTTP', config: { url: `${config.publicUrl}${path}`, auth_type: 'HOOKDECK_SIGNATURE', auth: {} } };
 }
 
+const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
+const sameList = (a: string[] | undefined, b: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...b].sort());
+
 function parseSourceDescription(value: string | null | undefined): SourceDescription | null {
   try {
     const parsed = JSON.parse(value ?? '') as SourceDescription;
@@ -58,6 +64,7 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   const sourceName = providerSourceName(provider.id);
   const connectionName = providerConnectionName(provider.id, config.deployment);
   const providerEvents = definition.events.filter((e) => provider.events.includes(e.name)).map((e) => e.providerEvent);
+  const target = definition.registrationTarget ? fingerprint(definition.registrationTarget(provider.options)) : undefined;
 
   // The source first, by name, so the connection upsert below never touches its auth config.
   let source = (await hookdeck.listSources({ name: sourceName })).models[0];
@@ -83,28 +90,64 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   });
   log(`upserted connection ${connectionName} (${config.inbound} inbound)`);
 
-  if (!definition.register) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'none' as const };
+  const hint = definition.setupHint?.({ sourceUrl: source.url, providerEvents, options: provider.options });
+  const report = (webhook: SetupReport['providers'][number]['webhook']) => ({
+    id: provider.id,
+    sourceUrl: source.url,
+    connection: connectionName,
+    webhook,
+    ...(hint !== undefined && { hint }),
+  });
+  if (!definition.register) return report('none');
+  let currentSecret: string | undefined;
+  let previousId: string | null = null;
   if (existing?.webhookId) {
-    const secretSet = Boolean((await hookdeck.getSource(source.id, { includeAuth: true })).config?.auth?.webhook_secret_key);
-    if (secretSet) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'existing' as const };
-    // The source lost its signing secret: replace the provider webhook, since its secret can't be read back.
-    log(`${sourceName} has no signing secret; replacing the ${definition.displayName} webhook`);
-    const staleId = existing.webhookId;
-    await definition.unregister?.({ webhookId: staleId, options: provider.options, fetch: deps.fetch }).catch((error: Error) =>
-      log(`could not remove the old webhook ${staleId}: ${error.message}`),
-    );
+    const secret = (await hookdeck.getSource(source.id, { includeAuth: true })).config?.auth?.webhook_secret_key;
+    const configured = definition.configuredSecret?.(provider.options);
+    const changed =
+      !sameList(existing.events, provider.events) || existing.target !== target || (configured !== undefined && configured !== secret);
+    if (typeof secret === 'string' && secret) {
+      if (!changed) return report('existing');
+      log(`the ${definition.displayName} events, registration target or secret changed; updating the webhook`);
+      currentSecret = secret;
+      previousId = existing.webhookId;
+    } else {
+      // The source lost its signing secret: replace the provider webhook, since its secret can't be read back.
+      log(`${sourceName} has no signing secret; replacing the ${definition.displayName} webhook`);
+      const staleId = existing.webhookId;
+      await definition.unregister?.({ webhookId: staleId, sourceUrl: source.url, options: provider.options, fetch: deps.fetch }).catch((error: Error) =>
+        log(`could not remove the old webhook ${staleId}: ${error.message}`),
+      );
+    }
   }
 
-  const { webhookId, signingSecret } = await definition.register({ sourceUrl: source.url, providerEvents, options: provider.options, fetch: deps.fetch });
-  const description: SourceDescription = { provider: definition.type, events: provider.events, webhookId };
+  const { webhookId, signingSecret } = await definition.register({
+    sourceUrl: source.url,
+    providerEvents,
+    options: provider.options,
+    fetch: deps.fetch,
+    ...(currentSecret !== undefined && { signingSecret: currentSecret }),
+  });
+  const description: SourceDescription = { provider: definition.type, events: provider.events, webhookId, ...(target !== undefined && { target }) };
   await hookdeck.upsertSource({
     name: sourceName,
     type: definition.sourceType,
     description: JSON.stringify(description),
     config: { auth: { webhook_secret_key: signingSecret } },
   });
-  log(`registered the ${definition.displayName} webhook and set its secret on ${sourceName}`);
-  return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'registered' as const };
+  if (previousId !== null && previousId !== webhookId) {
+    const oldId = previousId;
+    await definition.unregister?.({ webhookId: oldId, sourceUrl: source.url, options: provider.options, fetch: deps.fetch }).catch((error: Error) =>
+      log(`could not remove the old webhook ${oldId}: ${error.message}`),
+    );
+  }
+  if (definition.configuredSecret?.(provider.options) !== undefined) {
+    // The config supplies the secret and webhooks are added by hand (for example GitHub's manual mode).
+    log(`set the configured ${definition.displayName} secret on ${sourceName}`);
+    return report('configured');
+  }
+  log(`${previousId !== null ? 'updated' : 'registered'} the ${definition.displayName} webhook and set its secret on ${sourceName}`);
+  return report(previousId !== null ? 'updated' : 'registered');
 }
 
 async function setupNotifications(deps: SetupDeps) {
