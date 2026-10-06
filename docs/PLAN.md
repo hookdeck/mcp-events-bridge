@@ -15,7 +15,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 2 | Resend inbound | Spike | Done ([results](SPIKES.md#stage-2-resend-inbound)) |
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
-| 5 | Hosted bridge | Build | Steps 1 to 12 done; `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io. Remaining: ChatGPT (step 13, needs the maintainer) |
+| 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
 | 6 | Local agents | Build | Not started |
 | 7 | Production readiness and reach | Build | Not started |
 | Later | Depends on Event Gateway features or later decisions | | |
@@ -66,7 +66,7 @@ The bridge running on Fly.io: Resend events relayed to the test subscriber and t
 12. **Deploy.** Dockerfile and a Fly.io config (no volume); set secrets, deploy, run `bridge setup`, and repeat the end-to-end script against the deployed bridge.
 13. **ChatGPT.** Add the printed MCP URL in ChatGPT (Developer mode, "No Authentication"), subscribe from a Work chat, and send an email.
 
-Done when (all verified live by `E2E_EXTENDED=1 npm run e2e` except ChatGPT):
+Done when (all verified live: `E2E_EXTENDED=1 npm run e2e`, and ChatGPT on 6 Oct):
 
 - An email to the Resend address reaches the test subscriber, and `webhook-id` equals the `svix-id`.
 - A `from` filter drops other senders.
