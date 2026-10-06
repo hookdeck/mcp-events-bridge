@@ -93,7 +93,13 @@ Use a separate Hookdeck project for each deployment: deployments in one project 
 
 ## Connect ChatGPT
 
-With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Create MCP App, paste `https://<app>.fly.dev/mcp/<BRIDGE_MCP_SECRET>`, and choose No Authentication. Then, in a Work chat, ask to be told about new emails, for example from a particular sender.
+With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Create MCP App, paste `https://<app>.fly.dev/mcp/<BRIDGE_MCP_SECRET>`, and choose No Authentication. Then, in a Work chat, ask to be told about new emails, for example from a particular sender. ChatGPT subscribes to `email.received` and sets up a monitoring task:
+
+![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email notifications" task that is Monitoring](docs/images/chatgpt-subscribe.png)
+
+When an email arrives, the task runs with the event: sender, recipients and subject.
+
+![The same chat after an email arrived: "New email received" with the sender, the recipient on the Resend receiving domain, and the subject "Hello ChatGPT from the MCP Events bridge"](docs/images/chatgpt-email-event.png)
 
 The URL is a credential: anyone with it can use the bridge's MCP endpoint. Keep it private. OAuth options are planned (see "Authentication" in the architecture doc).
 
