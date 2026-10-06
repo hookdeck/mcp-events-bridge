@@ -37,7 +37,7 @@ The design, its trade-offs and how it maps to the spec are in [`docs/ARCHITECTUR
 
 You need:
 
-- Node 22 or later.
+- Node 22.12 or later.
 - A [Hookdeck](https://hookdeck.com) account and a project for the bridge. From the project's settings (Secrets): the **API key** and the **signing secret**.
 - The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally.
 - An account with at least one [webhook provider](#webhook-providers): Resend or GitHub.
