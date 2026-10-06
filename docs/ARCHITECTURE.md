@@ -345,7 +345,7 @@ export default defineConfig({
 - **Secrets are `env()` references only,** so the file can be committed and reviewed.
 - **Each provider entry is an instance** with an `id`, so one deployment can have several of the same provider (two Resend accounts, several GitHub orgs). Event Gateway resources are named after the instance id.
 - **Providers are code.** Built-in providers ship with the package; a deployment adds its own with `defineProvider` and redeploys, with no fork and no bridge release.
-- **The config is loaded at startup** with a TypeScript-aware loader (for example `c12` or `jiti`). A serverless build would bundle it as an ordinary module, so the `core/` boundary is unaffected.
+- **The config is loaded at startup.** A TypeScript config is imported through `tsx`'s API (`tsImport`), so it works from source and from the published package, which ships compiled JavaScript in `dist/`. A serverless build would bundle the config as an ordinary module, so the `core/` boundary is unaffected.
 
 Applying it:
 

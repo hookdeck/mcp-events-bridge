@@ -17,7 +17,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
 | 6 | Local agents | Build | Not started |
-| 7 | Production readiness and reach | Build | Not started |
+| 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
 ## Stage 1: Repo setup
@@ -95,10 +95,10 @@ Done when a local agent subscribed through the subscriber command receives an em
 - Bring your own identity provider (auth tier 3).
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
-- The GitHub provider (see "Second provider: GitHub" in `ARCHITECTURE.md`).
+- Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` 0.1.0, compiled to `dist/`; and the README, restructured around it.
+- A release workflow: publish from GitHub Actions with npm trusted publishing (provenance), instead of by hand.
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.
-- The README.
 
 ## Later
 
