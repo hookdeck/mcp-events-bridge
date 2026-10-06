@@ -27,7 +27,7 @@ const isEnvRef = (value: unknown): value is EnvRef =>
   typeof value === 'object' && value !== null && (value as EnvRef).kind === 'env' && typeof (value as EnvRef).name === 'string';
 
 type MaybeEnv<T> = T | EnvRef;
-type WithEnv<T> = { [K in keyof T]: T[K] extends string ? MaybeEnv<T[K]> : T[K] };
+type WithEnv<T> = { [K in keyof T]: NonNullable<T[K]> extends string ? MaybeEnv<T[K]> : T[K] };
 
 export interface ProviderInstance {
   /** Instance id, unique in the config; names Event Gateway resources. Defaults to the provider type. */

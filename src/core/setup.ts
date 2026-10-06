@@ -26,7 +26,7 @@ interface SourceDescription {
 }
 
 export interface SetupReport {
-  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'updated' | 'existing' | 'none' }>;
+  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'updated' | 'existing' | 'none'; hint?: string }>;
   notifications: { source: string; connection: string };
   triggers: string[];
   mcp: { secret: string; generated: boolean; url: string };
@@ -90,15 +90,25 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   });
   log(`upserted connection ${connectionName} (${config.inbound} inbound)`);
 
-  if (!definition.register) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'none' as const };
+  const hint = definition.setupHint?.({ sourceUrl: source.url, providerEvents, options: provider.options });
+  const report = (webhook: SetupReport['providers'][number]['webhook']) => ({
+    id: provider.id,
+    sourceUrl: source.url,
+    connection: connectionName,
+    webhook,
+    ...(hint !== undefined && { hint }),
+  });
+  if (!definition.register) return report('none');
   let currentSecret: string | undefined;
   let previousId: string | null = null;
   if (existing?.webhookId) {
     const secret = (await hookdeck.getSource(source.id, { includeAuth: true })).config?.auth?.webhook_secret_key;
-    const changed = !sameList(existing.events, provider.events) || existing.target !== target;
+    const configured = definition.configuredSecret?.(provider.options);
+    const changed =
+      !sameList(existing.events, provider.events) || existing.target !== target || (configured !== undefined && configured !== secret);
     if (typeof secret === 'string' && secret) {
-      if (!changed) return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: 'existing' as const };
-      log(`the ${definition.displayName} events or registration target changed; updating the webhook`);
+      if (!changed) return report('existing');
+      log(`the ${definition.displayName} events, registration target or secret changed; updating the webhook`);
       currentSecret = secret;
       previousId = existing.webhookId;
     } else {
@@ -132,7 +142,7 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
     );
   }
   log(`${previousId !== null ? 'updated' : 'registered'} the ${definition.displayName} webhook and set its secret on ${sourceName}`);
-  return { id: provider.id, sourceUrl: source.url, connection: connectionName, webhook: previousId !== null ? ('updated' as const) : ('registered' as const) };
+  return report(previousId !== null ? 'updated' : 'registered');
 }
 
 async function setupNotifications(deps: SetupDeps) {

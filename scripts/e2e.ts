@@ -22,7 +22,9 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *   npm run e2e                                         local bridge, CLI inbound
  *   E2E_BRIDGE_URL=https://<app>.fly.dev npm run e2e    a deployed bridge
  *   E2E_GITHUB=1 ...                                    also: GitHub's test push for the first repository in
- *                                                       GITHUB_REPOS, delivered to a github.push subscriber
+ *                                                       GITHUB_REPOS (or E2E_GITHUB_REPO in manual mode),
+ *                                                       delivered to a github.push subscriber. Uses
+ *                                                       GITHUB_TOKEN to find the webhook and trigger it
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
  *                                                       delivery, a 410 deleting a subscription, and
@@ -89,7 +91,7 @@ async function main() {
   const config = await loadConfig();
   const provider = config.providers.find((p) => p.definition.type === 'resend')!;
   const github = config.providers.find((p) => p.definition.type === 'github');
-  if (GITHUB && !github) throw new Error('E2E_GITHUB=1 needs GITHUB_REPOS (GitHub enabled in bridge.config.ts)');
+  if (GITHUB && !github) throw new Error('E2E_GITHUB=1 needs GitHub enabled in bridge.config.ts (GITHUB_REPOS or GITHUB_WEBHOOK_SECRET)');
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const from = env('RESEND_TEST_FROM');
   const run = Date.now().toString(36);
@@ -137,7 +139,8 @@ async function main() {
   const mcpUrl = `${bridgeUrl}/mcp/${config.auth.mcpSecret}`;
 
   // 2. Test subscribers, each with its own receiver and tunnel.
-  const githubRepo = GITHUB ? (github!.options.scope as { repos: string[] }).repos[0]! : '';
+  const githubRepo = GITHUB ? (process.env.E2E_GITHUB_REPO ?? (github!.options.scope as { repos?: string[] } | undefined)?.repos?.[0] ?? '') : '';
+  if (GITHUB && !githubRepo) throw new Error('E2E_GITHUB=1 in manual mode needs E2E_GITHUB_REPO=owner/name');
   const plan: Array<{ name: string; eventName?: string; arguments?: Record<string, unknown>; respondWith?: (e: McpEvent) => number }> = [
     { name: 'main' },
     ...(GITHUB ? [{ name: 'github', eventName: 'github.push', arguments: { repository: githubRepo } }] : []),
@@ -209,7 +212,7 @@ async function main() {
   await wait(45_000);
   record('from filter drops other senders', main.events.length === before, `${main.events.length - before} extra event(s) after 45s`);
 
-  if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: String(github!.options.token ?? ''), sourceName: providerSourceName(github!.id) });
+  if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: env('GITHUB_TOKEN'), sourceName: providerSourceName(github!.id) });
 
   if (EXTENDED) {
     await extended({

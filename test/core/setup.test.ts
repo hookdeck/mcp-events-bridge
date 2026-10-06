@@ -89,6 +89,23 @@ describe('bridge setup', () => {
     expect(gh.calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
   });
 
+  it('GitHub manual mode: puts the configured secret on the source, prints a hint, and follows secret changes', async () => {
+    const gateway = new FakeEventGateway();
+    const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
+    const gh = new FakeGithub();
+    const run = (webhookSecret: string) =>
+      runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', providers: [github({ webhookSecret })] }), environment), hookdeck, fetch: gh.fetch });
+
+    const first = await run('first-secret-0123456789');
+    const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
+    expect(first.providers[0]).toMatchObject({ webhook: 'registered', hint: expect.stringContaining(first.providers[0]!.sourceUrl) });
+    expect(source).toMatchObject({ type: 'GITHUB', config: { auth: { webhook_secret_key: 'first-secret-0123456789' } } });
+    expect((await run('first-secret-0123456789')).providers[0]!.webhook).toBe('existing');
+    expect((await run('second-secret-0123456789')).providers[0]!.webhook).toBe('updated');
+    expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'second-secret-0123456789' } });
+    expect(gh.calls).toEqual([]);
+  });
+
   it('uses an HTTP destination with Hookdeck signatures for http inbound', async () => {
     const { gateway, run } = setup({ inbound: 'http', publicUrl: 'https://bridge.example.com' });
     await run();

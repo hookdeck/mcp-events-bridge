@@ -133,4 +133,30 @@ describe('GitHub provider', () => {
       ).rejects.toThrow(/github: /);
     }
   });
+
+  it('manual mode: uses the configured secret, calls no GitHub API, and says how to add webhooks', async () => {
+    const gh = new FakeGithub();
+    const options = { webhookSecret: 'a-secret-of-16-chars-plus' };
+    const sourceUrl = 'https://hkdk.events/abc';
+    await expect(githubProvider.register!({ sourceUrl, providerEvents: ['issues'], options, fetch: gh.fetch })).resolves.toEqual({
+      webhookId: 'manual',
+      signingSecret: 'a-secret-of-16-chars-plus',
+    });
+    await githubProvider.unregister!({ webhookId: 'manual', sourceUrl, options, fetch: gh.fetch });
+    expect(gh.calls).toEqual([]);
+    const hint = githubProvider.setupHint!({ sourceUrl, providerEvents: ['issues', 'push'], options })!;
+    expect(hint).toContain(`Payload URL: ${sourceUrl}`);
+    expect(hint).toContain('application/json');
+    expect(hint).not.toContain('a-secret-of-16-chars-plus');
+    expect(githubProvider.setupHint!({ sourceUrl, providerEvents: ['issues'], options: { token: 't', scope: { org: 'o' } } })).toBeUndefined();
+  });
+
+  it.each([
+    ['neither scope nor secret', {}, /set scope and token/],
+    ['both scope and secret', { token: 't', scope: { org: 'o' }, webhookSecret: 'a-secret-of-16-chars-plus' }, /not both/],
+    ['a short secret', { webhookSecret: 'short' }, /at least 16/],
+    ['a scope without a token', { scope: { org: 'o' } }, /token is needed/],
+  ])('rejects %s', async (_label, options, error) => {
+    await expect(githubProvider.register!({ sourceUrl: 'https://hkdk.events/abc', providerEvents: ['issues'], options, fetch: new FakeGithub().fetch })).rejects.toThrow(error);
+  });
 });

@@ -14,14 +14,22 @@ import type { InboundRequest, ProviderDefinition, ProviderEvent } from './types.
  * the bridge generates when it registers the webhook.
  */
 
+/**
+ * Either automatic registration (`token` and `scope`) or manual mode
+ * (`webhookSecret`): you add webhooks to any repositories yourself, with the
+ * source URL `bridge setup` prints and this secret.
+ */
 export type GithubOptions = {
-  token: string;
+  /** Token with the Webhooks (read and write) permission. Only `bridge setup` uses it. */
+  token?: string;
   /**
    * Where webhooks are registered: a list of repositories (`owner/name`), one
    * webhook each, or a whole organization (needs an org admin token). All of
    * them deliver to the same Event Gateway source with the same secret.
    */
-  scope: { repos: string[] } | { org: string };
+  scope?: { repos: string[] } | { org: string };
+  /** Manual mode: the secret you set on each webhook. Event Gateway verifies deliveries with it. */
+  webhookSecret?: string;
 };
 
 const GITHUB_API = 'https://api.github.com';
@@ -30,6 +38,9 @@ const GITHUB_API = 'https://api.github.com';
  * than storing an id per repository, so the stored webhook id is a marker.
  */
 const HOOKS_BY_URL = 'matched-by-source-url';
+/** The webhook id stored in manual mode, where the bridge doesn't create webhooks. */
+const MANUAL = 'manual';
+const MIN_SECRET_LENGTH = 16;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TEXT_LIMIT = 500;
 
@@ -209,8 +220,17 @@ function githubEvent(type: string, description: string): ProviderEvent<GithubArg
   };
 }
 
+/** Automatic registration (with a scope) or manual mode (with a webhook secret), never both. */
+function mode(options: GithubOptions): 'auto' | 'manual' {
+  if (options.scope && options.webhookSecret) throw new Error('github: set either scope (automatic registration) or webhookSecret (manual mode), not both');
+  if (options.scope) return 'auto';
+  if (!options.webhookSecret) throw new Error('github: set scope and token to register webhooks, or webhookSecret to add them yourself');
+  if (options.webhookSecret.length < MIN_SECRET_LENGTH) throw new Error(`github: webhookSecret must be at least ${MIN_SECRET_LENGTH} characters`);
+  return 'manual';
+}
+
 /** The hooks API path for each repository, or the organization. */
-function hookPaths(scope: GithubOptions['scope']): string[] {
+function hookPaths(scope: NonNullable<GithubOptions['scope']>): string[] {
   if ('org' in scope) return [`/orgs/${encodeURIComponent(scope.org)}/hooks`];
   if (!Array.isArray(scope.repos) || scope.repos.length === 0) throw new Error('github: scope.repos needs at least one repository');
   const bad = scope.repos.filter((repo) => !REPO_PATTERN.test(repo));
@@ -251,7 +271,20 @@ export const githubProvider: ProviderDefinition<GithubOptions> = {
   defaultEvents: DEFAULT_GITHUB_EVENTS,
 
   registrationTarget: ({ scope }) =>
-    'org' in scope ? { org: scope.org.toLowerCase() } : { repos: scope.repos.map((repo) => repo.toLowerCase()).sort() },
+    !scope ? { manual: true } : 'org' in scope ? { org: scope.org.toLowerCase() } : { repos: scope.repos.map((repo) => repo.toLowerCase()).sort() },
+
+  configuredSecret: (options) => (options.scope ? undefined : options.webhookSecret),
+
+  setupHint({ sourceUrl, providerEvents, options }) {
+    if (mode(options) !== 'manual') return undefined;
+    return [
+      'Manual mode: in each repository (or organization), Settings > Webhooks > Add webhook:',
+      `  Payload URL: ${sourceUrl}`,
+      '  Content type: application/json',
+      '  Secret: the value of webhookSecret in your config',
+      `  Events: ${providerEvents.join(', ')} (others are ignored)`,
+    ].join('\n');
+  },
 
   /**
    * GitHub lets the caller choose the secret, so the bridge generates one (or
@@ -260,10 +293,11 @@ export const githubProvider: ProviderDefinition<GithubOptions> = {
    * re-run after a partial failure doesn't duplicate webhooks.
    */
   async register({ sourceUrl, providerEvents, options, fetch: fetchFn, signingSecret: current }) {
+    if (mode(options) === 'manual') return { webhookId: MANUAL, signingSecret: options.webhookSecret! };
     if (!options.token) throw new Error('github: a token is needed to register webhooks (GITHUB_TOKEN)');
     const signingSecret = current ?? randomBytes(32).toString('hex');
     const config = { url: sourceUrl, content_type: 'json', secret: signingSecret, insecure_ssl: '0' };
-    for (const path of hookPaths(options.scope)) {
+    for (const path of hookPaths(options.scope!)) {
       const [existing] = await hooksForUrl(fetchFn, options.token, path, sourceUrl);
       if (existing !== undefined) {
         await githubApi(fetchFn, options.token, `${path}/${existing}`, { method: 'PATCH', body: { active: true, events: providerEvents, config } });
@@ -274,8 +308,9 @@ export const githubProvider: ProviderDefinition<GithubOptions> = {
     return { webhookId: HOOKS_BY_URL, signingSecret };
   },
 
-  /** Deletes every webhook in scope that delivers to the source URL. */
+  /** Deletes every webhook in scope that delivers to the source URL. In manual mode there's nothing the bridge created. */
   async unregister({ sourceUrl, options, fetch: fetchFn }) {
+    if (!options.scope || !options.token) return;
     for (const path of hookPaths(options.scope)) {
       for (const id of await hooksForUrl(fetchFn, options.token, path, sourceUrl)) {
         await githubApi(fetchFn, options.token, `${path}/${id}`, { method: 'DELETE' });

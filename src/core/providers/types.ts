@@ -70,6 +70,13 @@ export interface ProviderDefinition<Options = Record<string, unknown>> {
    */
   registrationTarget?(options: Options): unknown;
   /**
+   * A signing secret the config supplies (for example GitHub's manual mode).
+   * Setup keeps the source's secret equal to it.
+   */
+  configuredSecret?(options: Options): string | undefined;
+  /** What the user still has to do after setup (for example add webhooks by hand), printed by `bridge setup`. */
+  setupHint?(ctx: { sourceUrl: string; providerEvents: string[]; options: Options }): string | undefined;
+  /**
    * Creates the provider-side webhook at the source URL, or updates it. The
    * returned secret goes straight onto the source. When updating, setup
    * unregisters the previous webhook id if the returned one differs.
