@@ -81,7 +81,8 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
 
   const callbacks = new CallbackRegistry({
     hookdeck,
-    inUse: (url) => store.list().some((s) => s.url === url),
+    // In use if a subscription's callback is the tunnel URL or a path under it.
+    inUse: (url) => store.list().some((s) => s.url === url || s.url.startsWith(`${url}/`)),
     subscription: (id) => store.get(id),
     onDeleted: (url) => subscriptions.forgetVerification(url),
     settings: options.callbackSettings,

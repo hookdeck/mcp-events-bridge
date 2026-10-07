@@ -221,10 +221,11 @@ export class SubscriptionService {
     return {};
   }
 
-  /** Drops cached verification for a URL from every principal, e.g. when a bridge callback at it is deleted. */
+  /** Drops cached verification for a URL and the paths under it, from every principal, e.g. when a bridge tunnel URL is deleted. */
   forgetVerification(url: string) {
     for (const key of [...this.verifiedUntil.keys()]) {
-      if ((JSON.parse(key) as [string, string])[1] === url) this.verifiedUntil.delete(key);
+      const verified = (JSON.parse(key) as [string, string])[1];
+      if (verified === url || verified.startsWith(`${url}/`)) this.verifiedUntil.delete(key);
     }
   }
 

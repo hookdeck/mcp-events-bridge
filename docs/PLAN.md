@@ -99,11 +99,12 @@ In order:
    - [ ] Run Hermes Agent locally from its draft PR ([NousResearch/hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908)) with `mcp_events` enabled, pointed at a local bridge.
    - [x] Confirm, by running it, the mismatches found by reading the code. Hermes's own client code against the bridge (7 Oct): every request is rejected as invalid JSON-RPC (`-32600`, its top-level `_meta`); with that fixed, subscribe and unsubscribe fail with `name is required`. `refreshBefore`, the delivery body's `name` and the challenge need a patched client to reach.
    - [x] Probe path forwarding on an `MCP_EVENTS` source: the challenge at a sub-path is answered, and a delivery's sub-path is forwarded (with destination path `/`, exactly). Hermes builds every callback URL from one public base URL plus `/mcp/events/webhook/<local id>`, so the bridge needs to recognize sub-paths of a tunnel URL as that tunnel's.
-   - [ ] Patch Hermes locally to follow the sketch and the 2026-07-28 base protocol, and receive an email event end to end through a tunnel URL.
+   - [x] The bridge recognizes paths under a tunnel URL (for Hermes's one base URL).
+   - [ ] Patch Hermes locally to follow the sketch and the 2026-07-28 base protocol, and receive an email event end to end through a tunnel URL (local path `/`, port 9901). Needs `HERMES_ANTHROPIC_API_KEY` for the agent itself.
    - [ ] Update the draft PR comment with what we observed, then decide: comment, and offer the patch as a PR.
 4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf and emits `notifications/claude/channel`.
 
-Open: one source per subscription (today) or one source per agent with a path per subscription, using Event Gateway's path forwarding. Hermes's receiver needs the second: it has one public base URL and routes by path. With dual signing, a shared source no longer ties subscribers' secrets together, so the choice is about per-subscription history and controls against fewer resources and no `listen` restarts.
+Decided 7 Oct: every source keeps its own bridge-generated secret, and a tunnel URL also covers the paths under it. Agents that take a URL per subscription get one source each; a client that builds every callback from one base URL plus a path (Hermes) uses one tunnel URL as that base, so its subscriptions share one source.
 
 Done when: the mock agent, given only a tunnel URL, receives an email; adding a subscription while events flow loses none, with no tool call; stopping `listen` (or the whole bridge), sending two emails and starting again delivers both, once each, with no tool call; and unused tunnel URLs are deleted.
 

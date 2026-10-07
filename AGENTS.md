@@ -16,6 +16,7 @@ You can't do these. Each is needed before the step that uses it.
 | Resend provider | A Resend account and an API key that can create webhooks. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address) | `RESEND_API_KEY` |
 | GitHub provider (optional) | A fine-grained token with the Webhooks permission on the repositories, or a webhook secret for manual mode | `GITHUB_REPOS`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` |
 | The e2e tests | A verified Resend sending domain, and a key that can send email | `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
+| The Hermes Agent test (optional) | An Anthropic API key with a spending limit, for the model Hermes runs | `HERMES_ANTHROPIC_API_KEY`, `HERMES_MODEL` |
 | ChatGPT | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
 | Everything | Hookdeck CLI with `gateway connection upsert`, Node 22.12 or later | |
 | The reference deployment | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |

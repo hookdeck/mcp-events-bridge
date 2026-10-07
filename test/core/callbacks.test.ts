@@ -266,6 +266,40 @@ describe('Signing for callback URLs', () => {
   });
 });
 
+describe('Paths under a tunnel URL (one base URL for every subscription, as Hermes builds them)', () => {
+  it('treats a path under a tunnel URL as that tunnel: the challenge and deliveries carry the source secret', async () => {
+    const { gateway, hookdeck, store, callbacks } = setup();
+    const record = await callbacks.create({ agent: 'hermes', name: 'base', port: 9901, path: '/' });
+    const subPath = `${record.url}/mcp/events/webhook/abc123`;
+    expect(callbacks.find(subPath)).toBe(record);
+    expect(callbacks.find(`${record.url}x/mcp/events/webhook/abc123`)).toBeUndefined(); // not a path under it
+    const sourceSecret = await callbacks.signingSecret(record.url);
+    expect(await callbacks.signingSecret(subPath)).toBe(sourceSecret);
+
+    // Subscribe: the challenge is signed with the agent's secret and the source's.
+    const seen: string[][] = [];
+    const service = new SubscriptionService({
+      settings: DEFAULT_SUBSCRIPTION_SETTINGS,
+      store,
+      catalog: new Catalog(config.providers),
+      transport: { assertPublicHost: async () => {}, post: async () => ({ status: 200, body: '' }) },
+      verify: async (_t, options) => (seen.push([options.secret, ...(options.extraSecrets ?? [])]), { ok: true }),
+      callbacks,
+    });
+    const agentSecret = generateWebhookSecret();
+    await service.subscribe('owner', { name: 'email.received', delivery: { url: subPath, secret: agentSecret } });
+    expect(seen).toEqual([[agentSecret, sourceSecret]]);
+
+    // Deliveries too.
+    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.providers), store, hookdeck, callbacks, now: () => new Date() });
+    const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fixtures', 'resend', 'email-received.json'), 'utf8')) as { headers: Record<string, string>; body: unknown };
+    const raw = JSON.stringify(fixture.body);
+    await relay.handle('/inbound/resend', { ...fixture.headers, 'x-hookdeck-signature': createHmac('sha256', 'hs').update(raw).digest('base64') }, raw);
+    const published = gateway.published.at(-1)!;
+    expect(matchSignatures([agentSecret, sourceSecret!], published.headers as unknown as SignedHeaders, published.body).map((m) => m.secretIndex).sort()).toEqual([0, 1]);
+  });
+});
+
 describe('Retrying missed deliveries', () => {
   const AGENT_SECRET = generateWebhookSecret();
   const SOURCE_SECRET = generateWebhookSecret();
@@ -282,7 +316,7 @@ describe('Retrying missed deliveries', () => {
     ignored?: Array<string | { cause: string; webhook_id: string }>;
   };
 
-  function retrySetup(requests: Req[], { pages = 1, subscriptions = ['sub_1'] }: { pages?: number; subscriptions?: string[] } = {}) {
+  function retrySetup(requests: Req[], { pages = 1, subscriptions = ['sub_1'], url = 'https://hkdk.events/cb' }: { pages?: number; subscriptions?: string[]; url?: string } = {}) {
     const listed: string[] = [];
     const sent: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
     let description = '';
@@ -334,7 +368,7 @@ describe('Retrying missed deliveries', () => {
       upsertConnection: async (input: { description: string }) => ((description = input.description), {}),
     } as unknown as CallbacksHookdeck;
     const store = new MemoryStore();
-    for (const id of subscriptions) void store.put(subscription({ id, url: 'https://hkdk.events/cb', secret: AGENT_SECRET }));
+    for (const id of subscriptions) void store.put(subscription({ id, url, secret: AGENT_SECRET }));
     const callbacks = new CallbackRegistry({
       hookdeck,
       inUse: () => true,
@@ -356,6 +390,13 @@ describe('Retrying missed deliveries', () => {
     // A standard verifier, with its 5-minute timestamp tolerance, accepts the re-send for the agent's and the source's secret.
     expect(() => new Webhook(AGENT_SECRET).verify(body, headers)).not.toThrow();
     expect(() => new Webhook(SOURCE_SECRET).verify(body, headers)).not.toThrow();
+  });
+
+  it("re-sends to the subscription's own callback URL when it's a path under the tunnel URL", async () => {
+    const { callbacks, sent } = retrySetup([{ id: 'req_offline', ignored: ['CLI_DISCONNECTED'] }], { url: 'https://hkdk.events/cb/mcp/events/webhook/abc123' });
+    await callbacks.load();
+    await callbacks.retryMissed('laptop');
+    expect(sent.map((s) => s.url)).toEqual(['https://hkdk.events/cb/mcp/events/webhook/abc123']);
   });
 
   it("doesn't send an event again while its re-send may not be listed yet (two runs moments apart)", async () => {

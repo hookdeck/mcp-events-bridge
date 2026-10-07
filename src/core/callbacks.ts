@@ -23,6 +23,11 @@ import type { SubscriptionRecord } from './store.js';
  * Event Gateway's edge when tested), and the agent can rotate its secret
  * without touching Event Gateway.
  *
+ * A callback URL also covers the paths under it: a client that builds every
+ * callback from one base URL plus a path (Hermes: `<base>/mcp/events/webhook/
+ * <id>`) can use a tunnel URL as that base. The source answers the challenge
+ * at a sub-path and forwards the sub-path through `listen` (probed 7 Oct).
+ *
  * A callback is deleted by the sweeper once no subscription has used it for a
  * grace period, not the moment one ends: an agent changing a subscription's
  * arguments unsubscribes and subscribes again on the same URL.
@@ -190,8 +195,14 @@ export class CallbackRegistry {
     return this.byUrl.size;
   }
 
+  /** The tunnel URL a callback URL belongs to: the URL itself, or one it's a sub-path of. */
   find(url: string): CallbackRecord | undefined {
-    return this.deleting.has(url) ? undefined : this.byUrl.get(url);
+    const exact = this.byUrl.get(url);
+    if (exact) return this.deleting.has(url) ? undefined : exact;
+    for (const [base, record] of this.byUrl) {
+      if (url.startsWith(`${base}/`) && !this.deleting.has(base)) return record;
+    }
+    return undefined;
   }
 
   forAgent(agent: string): CallbackRecord[] {
@@ -291,12 +302,12 @@ export class CallbackRegistry {
   async signingSecret(url: string): Promise<string | undefined> {
     const record = this.find(url);
     if (!record) return undefined;
-    const cached = this.secrets.get(url);
+    const cached = this.secrets.get(record.url);
     if (cached) return cached;
     try {
       const auth = (await this.deps.hookdeck.getSource(record.sourceId, { includeAuth: true })).config?.auth;
       const secret = typeof auth?.webhook_secret_key === 'string' ? auth.webhook_secret_key : undefined;
-      if (secret) this.secrets.set(url, secret);
+      if (secret) this.secrets.set(record.url, secret);
       return secret;
     } catch (error) {
       if (error instanceof HookdeckApiError && error.status === 404) {
@@ -416,7 +427,8 @@ export class CallbackRegistry {
         report.rejectedByAgent++;
       } else if (state === 'missed') {
         const subscription = this.deps.subscription(header(request, 'x-mcp-subscription-id') ?? '');
-        if (!subscription) continue; // the subscription has ended: nothing to deliver to
+        // The subscription has ended (nothing to deliver to), or isn't on this tunnel URL.
+        if (!subscription || this.find(subscription.url) !== record) continue;
         if (this.unlisted.has(root)) {
           // Re-sent, and the re-send isn't listed yet: wait for it rather than send again.
           report.pending++;
@@ -460,7 +472,8 @@ export class CallbackRegistry {
     }
     const sourceSecret = await this.signingSecret(record.url);
     if (sourceSecret) secrets.push(sourceSecret);
-    const res = await this.fetch(record.url, {
+    // To the subscription's own callback URL: the tunnel URL, or a path under it.
+    const res = await this.fetch(subscription.url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

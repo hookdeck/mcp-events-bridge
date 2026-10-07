@@ -228,7 +228,7 @@ An agent on a laptop has no public URL to receive webhooks on. Run the bridge on
 
 That's all the agent does. The bridge runs `hookdeck listen` for your port, and restarts it to cover each new URL. Deliveries missed while `listen` was down (the laptop slept, or during a restart) wait in Event Gateway, and the bridge sends them again when it reconnects, with the same `webhook-id` and a fresh signature, so standard verification (including its 5-minute window) passes. Delivery is at least once: dedupe by `webhook-id`. Provider events that reach Event Gateway while the bridge itself is stopped are recovered the same way when it starts again.
 
-A tunnel URL only accepts deliveries signed by the bridge, and one that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it. No local agent supports MCP Events yet, so this is tested with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
+If your agent builds every callback URL from one base URL plus a path, create one tunnel URL with path `/` and use it as the base: the URL covers the paths under it. A tunnel URL only accepts deliveries signed by the bridge, and one that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it. No local agent supports MCP Events yet, so this is tested with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Security and limitations
 
