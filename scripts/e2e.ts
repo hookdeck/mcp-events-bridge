@@ -15,11 +15,12 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
 /*
  * End-to-end check against real services:
  *
- *   Resend email -> Event Gateway (RESEND source) -> bridge
+ *   Resend email (or a signed fill) -> Event Gateway (provider source) -> bridge
  *   -> Publish API -> Event Gateway (subscription connection) -> test subscriber
  *
- * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_*,
- * and BRIDGE_MCP_SECRET. Each test subscriber's callback is its own Event
+ * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_API_KEY
+ * (this repo's config always includes Resend), RESEND_INBOUND_ADDRESS and
+ * RESEND_TEST_FROM for email, and BRIDGE_MCP_SECRET. Each test subscriber's callback is its own Event
  * Gateway MCP Events source, which answers the subscribe challenge and verifies
  * deliveries, and `hookdeck listen` forwards them to the subscriber. Subscribers
  * that test status codes (410, 500) use a cloudflared quick tunnel instead: an
@@ -27,6 +28,11 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  * never reaches the bridge's delivery. E2E_CALLBACK=tunnel uses tunnels for all.
  *
  *   npm run e2e                                         local bridge, CLI inbound
+ *   E2E_SOURCE=webhook ...                              drive the checks with signed fills to the generic
+ *                                                       webhook provider (fills.order.filled, filtered by symbol)
+ *                                                       instead of Resend emails: no email is sent, so no Resend
+ *                                                       quota is used. Needs the `fills` instance (FILLS_WEBHOOK_SECRET;
+ *                                                       see bridge.config.ts) and setup run with it
  *   E2E_BRIDGE_URL=https://<app>.fly.dev npm run e2e    a deployed bridge
  *   E2E_GITHUB=1 ...                                    also: a push to the first repository in GITHUB_REPOS
  *                                                       (or E2E_GITHUB_REPO in manual mode), delivered to a
@@ -67,6 +73,11 @@ const EXTENDED = process.env.E2E_EXTENDED === '1';
 const GITHUB = process.env.E2E_GITHUB === '1';
 const LOCAL = process.env.E2E_LOCAL === '1';
 const WEBHOOK = process.env.E2E_WEBHOOK === '1';
+const SOURCE = (process.env.E2E_SOURCE ?? 'email') as 'email' | 'webhook';
+// A typo mustn't fall back to sending real email.
+if (SOURCE !== 'email' && SOURCE !== 'webhook') throw new Error(`E2E_SOURCE must be email or webhook, not "${process.env.E2E_SOURCE}"`);
+/** What the checks send, for check names. */
+const NOUN = SOURCE === 'webhook' ? 'fill' : 'email';
 const CALLBACK: 'hookdeck' | 'tunnel' = process.env.E2E_CALLBACK === 'tunnel' ? 'tunnel' : 'hookdeck';
 
 const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
@@ -105,6 +116,78 @@ async function sendEmail(from: string, subject: string) {
     body: JSON.stringify({ from, to: [env('RESEND_INBOUND_ADDRESS')], subject, text: `${subject} (MCP Events bridge e2e)` }),
   });
   if (!res.ok) throw new Error(`Resend send failed: ${res.status} ${await res.text()}`);
+}
+
+/**
+ * What drives the checks: real emails through Resend (the default), or signed fills to the generic webhook provider
+ * (E2E_SOURCE=webhook). Each event carries a tag (the email's subject, the fill's id) so a check can find it.
+ */
+interface TestEvents {
+  providerId: string;
+  /** The MCP event name subscribers use. */
+  event: string;
+  /** Subscription arguments that `send` matches and `sendOther` doesn't. */
+  matching: Record<string, unknown>;
+  /** For check names: "an email", "a fill". */
+  a: string;
+  /** The provider header that becomes the delivery's webhook-id. */
+  idHeader: string;
+  idCheck: string;
+  filterCheck: string;
+  tag(key: string): string;
+  send(tag: string): Promise<void>;
+  sendOther(tag: string): Promise<void>;
+  tagOf(data: Record<string, unknown> | undefined): string | undefined;
+  tagOfRequest(request: { data?: { body?: unknown } | null }): string | undefined;
+}
+
+function emailEvents(config: Awaited<ReturnType<typeof loadConfig>>, run: string): TestEvents {
+  const provider = config.providers.find((p) => p.definition.type === 'resend');
+  if (!provider) throw new Error('the e2e needs Resend enabled in bridge.config.ts, or E2E_SOURCE=webhook');
+  const from = env('RESEND_TEST_FROM');
+  return {
+    providerId: provider.id,
+    event: `${provider.id}.email.received`,
+    matching: { from },
+    a: 'an email',
+    idHeader: 'svix-id',
+    idCheck: 'webhook-id equals the Resend svix-id',
+    filterCheck: 'from filter drops other senders',
+    tag: (key) => `e2e ${run}: ${key}`,
+    send: (subject) => sendEmail(from, subject),
+    sendOther: (subject) => sendEmail(from.replace(/^[^@]+/, 'bridge-other'), subject),
+    tagOf: (data) => (typeof data?.subject === 'string' ? data.subject : undefined),
+    tagOfRequest: (r) => (r.data?.body as { data?: { subject?: string } } | undefined)?.data?.subject,
+  };
+}
+
+/** Fills from "a trading server" (this script), signed as bridge.config.ts declares. The fill's id is its x-delivery-id. */
+async function fillEvents(config: Awaited<ReturnType<typeof loadConfig>>, hookdeck: HookdeckClient, run: string): Promise<TestEvents> {
+  const fills = config.providers.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
+  if (!fills) throw new Error('E2E_SOURCE=webhook needs the fills webhook enabled in bridge.config.ts (FILLS_WEBHOOK_SECRET), and setup run with it');
+  const source = (await hookdeck.listSources({ name: providerSourceName(fills.id) })).models[0];
+  if (!source) throw new Error(`no ${providerSourceName(fills.id)} source: run setup with FILLS_WEBHOOK_SECRET set`);
+  const secret = env('FILLS_WEBHOOK_SECRET');
+  const sendFill = async (id: string, symbol: string) => {
+    const body = JSON.stringify({ id, symbol, side: 'buy', quantity: 100, price: 187.5, filled_at: new Date().toISOString() });
+    const signature = createHmac('sha256', secret).update(body).digest('hex');
+    const res = await fetch(source.url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-signature': signature, 'x-delivery-id': id }, body });
+    if (!res.ok) throw new Error(`sending fill ${id} failed: ${res.status} ${await res.text()}`);
+  };
+  return {
+    providerId: fills.id,
+    event: `${fills.id}.order.filled`,
+    matching: { symbol: 'AAPL' },
+    a: 'a fill',
+    idHeader: 'x-delivery-id',
+    idCheck: "webhook-id equals the sender's x-delivery-id",
+    filterCheck: 'symbol filter drops other symbols',
+    tag: (key) => `e2e-${run}-${key.replace(/[^A-Za-z0-9]+/g, '-')}`,
+    send: (id) => sendFill(id, 'AAPL'),
+    sendOther: (id) => sendFill(id, 'MSFT'),
+    tagOf: (data) => (typeof data?.id === 'string' ? data.id : undefined),
+    tagOfRequest: (r) => (r.data?.body as { id?: string } | undefined)?.id,
+  };
 }
 
 /**
@@ -157,22 +240,18 @@ async function openTunnel(port: number): Promise<string | undefined> {
   return reachable ? url : undefined;
 }
 
-const subjectOf = (event: McpEvent) => String(event.data.subject ?? '');
-const countSubject = (subscriber: Subscriber, subject: string) => subscriber.events.filter((e) => subjectOf(e) === subject).length;
-const requestSubject = (r: { data?: { body?: unknown } | null }) => (r.data?.body as { data?: { subject?: string } } | undefined)?.data?.subject;
+const countTag = (events: TestEvents, subscriber: Subscriber, tag: string) => subscriber.events.filter((e) => events.tagOf(e.data) === tag).length;
 
 async function main() {
   const config = await loadConfig();
-  const provider = config.providers.find((p) => p.definition.type === 'resend')!;
-  // MCP event names are {instance id}.{provider event name}.
-  const emailEvent = `${provider.id}.email.received`;
   const github = config.providers.find((p) => p.definition.type === 'github');
   if (GITHUB && !github) throw new Error('E2E_GITHUB=1 needs GitHub enabled in bridge.config.ts (GITHUB_REPOS or GITHUB_WEBHOOK_SECRET)');
   const fills = config.providers.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
   if (WEBHOOK && !fills) throw new Error('E2E_WEBHOOK=1 needs the fills webhook enabled in bridge.config.ts (FILLS_WEBHOOK_SECRET), and setup run with it');
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
-  const from = env('RESEND_TEST_FROM');
   const run = Date.now().toString(36);
+  // MCP event names are {instance id}.{provider event name}: resend.email.received, fills.order.filled.
+  const events = SOURCE === 'webhook' ? await fillEvents(config, hookdeck, run) : emailEvents(config, run);
   cleanupHookdeck = hookdeck;
   const ci = spawnSync('hookdeck', ['ci', '--api-key', config.hookdeck.apiKey, '--hookdeck-config', CLI_CONFIG], { stdio: 'ignore' });
   if (ci.error || ci.status !== 0) throw new Error(`hookdeck ci failed (${ci.error?.message ?? `exit ${ci.status}`}); the e2e needs the Hookdeck CLI`);
@@ -248,8 +327,8 @@ async function main() {
         const subscriber = new Subscriber({
           serverUrl: mcpUrl,
           token: '',
-          eventName: eventName ?? emailEvent,
-          arguments: args ?? { from },
+          eventName: eventName ?? events.event,
+          arguments: args ?? events.matching,
           receiverPort: port,
           ...('url' in callback ? { callbackUrl: callback.url, secret: callback.secret } : callback),
           respondWith,
@@ -279,43 +358,43 @@ async function main() {
   const main = subs.get('main');
   if (!main) return;
 
-  // 3. A matching email.
-  const subject = `e2e ${run}: matching sender`;
+  // 3. A matching event.
+  const tag = events.tag('matching sender');
   const sentAt = Date.now();
-  await sendEmail(from, subject);
-  const received = await until(() => countSubject(main, subject) > 0, 240_000);
-  record('email delivered to the subscriber', Boolean(received), received ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
+  await events.send(tag);
+  const received = await until(() => countTag(events, main, tag) > 0, 240_000);
+  record(`${NOUN} delivered to the subscriber`, Boolean(received), received ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
   if (!received) return;
 
   // Event Gateway's header search can lag a new request by a few seconds; retry for up to a minute.
-  const webhookId = main.events.find((e) => subjectOf(e) === subject)!.eventId;
-  const source = (await hookdeck.listSources({ name: providerSourceName(provider.id) })).models[0]!;
+  const webhookId = main.events.find((e) => events.tagOf(e.data) === tag)!.eventId;
+  const source = (await hookdeck.listSources({ name: providerSourceName(events.providerId) })).models[0]!;
   const request = await until(
-    async () => (await hookdeck.listRequests({ source_id: source.id, headers: { 'svix-id': webhookId }, limit: 1 })).models[0],
+    async () => (await hookdeck.listRequests({ source_id: source.id, headers: { [events.idHeader]: webhookId }, limit: 1 })).models[0],
     60_000,
     3000,
   );
-  record('webhook-id equals the Resend svix-id', Boolean(request), webhookId);
+  record(events.idCheck, Boolean(request), webhookId);
 
   const client = new Client({ name: 'e2e', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
   await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
-  type ToolResult = { structuredContent?: { data?: { subject?: string } } };
+  type ToolResult = { structuredContent?: { data?: Record<string, unknown> } };
   const result = (await until(async () => {
-    const r = (await client.callTool({ name: 'get_event', arguments: { name: emailEvent, eventId: webhookId } })) as ToolResult;
+    const r = (await client.callTool({ name: 'get_event', arguments: { name: events.event, eventId: webhookId } })) as ToolResult;
     return r.structuredContent?.data ? r : undefined;
   }, 60_000, 3000)) as ToolResult | undefined;
-  record('get_event returns the summary', result?.structuredContent?.data?.subject === subject, result?.structuredContent?.data?.subject ?? 'none');
+  record('get_event returns the summary', events.tagOf(result?.structuredContent?.data) === tag, events.tagOf(result?.structuredContent?.data) ?? 'none');
   await client.close();
 
-  // 4. A non-matching sender is filtered out.
+  // 4. A non-matching event (another sender, another symbol) is filtered out.
   const before = main.events.length;
-  await sendEmail(from.replace(/^[^@]+/, 'bridge-other'), `e2e ${run}: other sender`);
+  await events.sendOther(events.tag('other sender'));
   await wait(45_000);
-  record('from filter drops other senders', main.events.length === before, `${main.events.length - before} extra event(s) after 45s`);
+  record(events.filterCheck, main.events.length === before, `${main.events.length - before} extra event(s) after 45s`);
 
   if (LOCAL && localRuntime) {
-    const inboundConnection = providerConnectionName(provider.id, config.deployment);
-    await localAgentChecks({ hookdeck, mcpUrl, run, from, emailEvent, runtime: localRuntime, providerSourceId: source.id, inboundConnection, main });
+    const inboundConnection = providerConnectionName(events.providerId, config.deployment);
+    await localAgentChecks({ hookdeck, mcpUrl, run, events, runtime: localRuntime, providerSourceId: source.id, inboundConnection, main });
   } else if (LOCAL) {
     record('local agent checks', false, 'E2E_LOCAL needs a local bridge: tunnel URLs are only offered by a bridge on the agent\'s machine');
   }
@@ -325,8 +404,8 @@ async function main() {
 
   if (EXTENDED) {
     await extended({
-      hookdeck, subs, attempts, from, run, sourceId: source.id,
-      inboundConnectionName: providerConnectionName(provider.id, deployment),
+      hookdeck, subs, attempts, events, sourceId: source.id,
+      inboundConnectionName: providerConnectionName(events.providerId, deployment),
       failNextPublish: (id) => (failNextPublishFor = id),
     });
   }
@@ -340,11 +419,10 @@ async function main() {
 }
 
 type LocalContext = {
-  emailEvent: string;
+  events: TestEvents;
   hookdeck: HookdeckClient;
   mcpUrl: string;
   run: string;
-  from: string;
   runtime: LocalRuntime;
   providerSourceId: string;
   inboundConnection: string;
@@ -384,18 +462,22 @@ async function localAgentFlow(ctx: LocalContext, agent: MockAgent, agentName: st
     await Promise.all(keys().map((k) => runtime.supervisor.resume(k)));
     return agentListenConnected();
   };
-  const count = (subscriptionId: string, subject: string) =>
-    agent.deliveries.filter((d) => d.subscriptionId === subscriptionId && (d.body.data as { subject?: string } | undefined)?.subject === subject).length;
+  const { events } = ctx;
+  const count = (subscriptionId: string, tag: string) =>
+    agent.deliveries.filter((d) => d.subscriptionId === subscriptionId && events.tagOf(d.body.data as Record<string, unknown> | undefined) === tag).length;
   const sourceId = async (name: string) => (await ctx.hookdeck.listSources({ name: `agent-${agentName}-${name}` })).models[0]?.id;
-  /** Waits until the tunnel source has stored a request for each subject: proof it arrived while `listen` was down. */
-  const arrivedWhileOffline = async (name: string, subjects: string[]) => {
+  /** Waits until the tunnel source has stored a request for each tag: proof it arrived while `listen` was down. */
+  const arrivedWhileOffline = async (name: string, tags: string[]) => {
     const id = await sourceId(name);
     if (!id) return false;
     return Boolean(
       await until(
         async () => {
-          const found = (await ctx.hookdeck.listRequests({ source_id: id, includeData: true, limit: 50 })).models.map(requestSubject);
-          return subjects.every((subject) => found.includes(subject));
+          // A tunnel source's requests are the bridge's deliveries: the envelope's data is the event's summary.
+          const found = (await ctx.hookdeck.listRequests({ source_id: id, includeData: true, limit: 50 })).models.map((r) =>
+            events.tagOf((r.data?.body as { data?: Record<string, unknown> } | undefined)?.data),
+          );
+          return tags.every((tag) => found.includes(tag));
         },
         120_000,
         5000,
@@ -413,28 +495,28 @@ async function localAgentFlow(ctx: LocalContext, agent: MockAgent, agentName: st
     first.url,
   );
   record("local agent: the bridge runs hookdeck listen for the agent's port", await agentListenConnected(), keys().join(', '));
-  const subA = await agent.subscribe(first.url, ctx.emailEvent, { from: ctx.from });
+  const subA = await agent.subscribe(first.url, events.event, events.matching);
   record("local agent: subscribe, with the challenge answered by the tunnel URL's source", subA.startsWith('sub_'), subA);
-  const s1 = `e2e ${ctx.run}: local agent`;
-  await sendEmail(ctx.from, s1);
+  const s1 = events.tag('local agent');
+  await events.send(s1);
   const got1 = await until(() => count(subA, s1) > 0, 180_000);
   record('local agent: delivered to the local port, verified like a standard receiver', Boolean(got1) && agent.rejected.length === 0, got1 ? `on ${agent.deliveries[0]?.path}` : `timed out; rejected: ${JSON.stringify(agent.rejected)}`);
 
-  // 2. `listen` down (the laptop slept): an email waits in Event Gateway, and arrives when `listen` is back, with no tool call.
+  // 2. `listen` down (the laptop slept): an event waits in Event Gateway, and arrives when `listen` is back, with no tool call.
   await agentListenDown();
-  const s2 = `e2e ${ctx.run}: while listen was down`;
-  await sendEmail(ctx.from, s2);
+  const s2 = events.tag('while listen was down');
+  await events.send(s2);
   const missed2 = await arrivedWhileOffline('email_a', [s2]);
   const back = await agentListenUp();
   const got2 = await until(() => count(subA, s2) > 0, 180_000);
-  record('local agent: an email sent while listen was down arrives when it is back, with no tool call', missed2 && back && Boolean(got2), `arrived while offline: ${missed2}`);
+  record(`local agent: ${events.a} sent while listen was down arrives when it is back, with no tool call`, missed2 && back && Boolean(got2), `arrived while offline: ${missed2}`);
 
   // 3. A second subscription: the bridge restarts `listen` to cover the new URL by itself.
   const second = await agent.createTunnel('email_b');
   localAgentCallbacks.push('email_b');
-  const subB = await agent.subscribe(second.url, ctx.emailEvent, {});
-  const s3 = `e2e ${ctx.run}: two subscriptions`;
-  await sendEmail(ctx.from, s3);
+  const subB = await agent.subscribe(second.url, events.event, {});
+  const s3 = events.tag('two subscriptions');
+  await events.send(s3);
   const got3 = await until(() => count(subA, s3) > 0 && count(subB, s3) > 0, 180_000);
   const paths = [...new Set(agent.deliveries.map((d) => d.path))];
   record(
@@ -443,29 +525,29 @@ async function localAgentFlow(ctx: LocalContext, agent: MockAgent, agentName: st
     `paths ${paths.join(',')}`,
   );
 
-  // 4. Offline with two subscriptions: two emails, then catch-up, freshly signed, with no tool call.
+  // 4. Offline with two subscriptions: two events, then catch-up, freshly signed, with no tool call.
   await agentListenDown();
-  const s4 = `e2e ${ctx.run}: offline 1`;
-  const s5 = `e2e ${ctx.run}: offline 2`;
-  await sendEmail(ctx.from, s4);
-  await sendEmail(ctx.from, s5);
+  const s4 = events.tag('offline 1');
+  const s5 = events.tag('offline 2');
+  await events.send(s4);
+  await events.send(s5);
   const missed45 = (await arrivedWhileOffline('email_a', [s4, s5])) && (await arrivedWhileOffline('email_b', [s4, s5]));
   await agentListenUp();
   const got45 = await until(() => [subA, subB].every((id) => count(id, s4) >= 1 && count(id, s5) >= 1), 180_000);
-  record('local agent: offline catch-up delivers each missed email to each subscription, with no tool call', missed45 && Boolean(got45), `arrived while offline: ${missed45}`);
+  record(`local agent: offline catch-up delivers each missed ${NOUN} to each subscription, with no tool call`, missed45 && Boolean(got45), `arrived while offline: ${missed45}`);
 
-  // 5. The bridge's own inbound: an email that reaches Event Gateway while the bridge's `listen` is down is recovered.
+  // 5. The bridge's own inbound: an event that reaches Event Gateway while the bridge's `listen` is down is recovered.
   await runtime.supervisor.suspend(runtime.inboundKey);
-  const s6 = `e2e ${ctx.run}: while the bridge was down`;
-  await sendEmail(ctx.from, s6);
+  const s6 = events.tag('while the bridge was down');
+  await events.send(s6);
   const connectionId = (await ctx.hookdeck.listConnections({ name: ctx.inboundConnection })).models[0]?.id;
   const waited = await until(
     async () => {
-      const request = (await ctx.hookdeck.listRequests({ source_id: ctx.providerSourceId, includeData: true, limit: 20 })).models.find((r) => requestSubject(r) === s6);
+      const request = (await ctx.hookdeck.listRequests({ source_id: ctx.providerSourceId, includeData: true, limit: 20 })).models.find((r) => events.tagOfRequest(r) === s6);
       if (!request) return undefined;
       const ignored = (await ctx.hookdeck.listIgnoredEventsForRequest(request.id)).models;
-      const events = (await ctx.hookdeck.listEventsForRequest(request.id)).models;
-      const missedHere = ignored.some((i) => i.webhook_id === connectionId && i.cause === 'CLI_DISCONNECTED') || events.some((e) => e.webhook_id === connectionId && e.status === 'FAILED');
+      const delivered = (await ctx.hookdeck.listEventsForRequest(request.id)).models;
+      const missedHere = ignored.some((i) => i.webhook_id === connectionId && i.cause === 'CLI_DISCONNECTED') || delivered.some((e) => e.webhook_id === connectionId && e.status === 'FAILED');
       return missedHere ? request : undefined;
     },
     180_000,
@@ -473,7 +555,7 @@ async function localAgentFlow(ctx: LocalContext, agent: MockAgent, agentName: st
   );
   await runtime.supervisor.resume(runtime.inboundKey);
   const inboundBack = Boolean(await until(() => runtime.supervisor.isConnected(runtime.inboundKey), 90_000));
-  const got6 = await until(() => count(subA, s6) > 0 && count(subB, s6) > 0 && countSubject(ctx.main, s6) > 0, 240_000);
+  const got6 = await until(() => count(subA, s6) > 0 && count(subB, s6) > 0 && countTag(events, ctx.main, s6) > 0, 240_000);
   record("local bridge: a provider event that arrived while the bridge's listen was down is recovered", Boolean(waited) && inboundBack && Boolean(got6), `missed while down: ${Boolean(waited)}`);
 
   await wait(20_000);
@@ -573,30 +655,30 @@ async function extended(ctx: {
   hookdeck: HookdeckClient;
   subs: Map<string, Subscriber>;
   attempts: Map<string, number[]>;
-  from: string;
-  run: string;
+  events: TestEvents;
   sourceId: string;
   inboundConnectionName: string;
   failNextPublish: (subscriptionId: string) => void;
 }) {
-  const { hookdeck, subs, attempts, from, run } = ctx;
+  const { hookdeck, subs, attempts, events } = ctx;
+  const countSubject = (subscriber: Subscriber, tag: string) => countTag(events, subscriber, tag);
   const main = subs.get('main')!;
   const second = subs.get('second');
   const gone = subs.get('gone');
   const failing = subs.get('failing');
-  const findRequest = (subject: string) =>
-    until(async () => (await hookdeck.listRequests({ source_id: ctx.sourceId, limit: 10, includeData: true })).models.find((r) => requestSubject(r) === subject), 60_000, 3000);
+  const findRequest = (tag: string) =>
+    until(async () => (await hookdeck.listRequests({ source_id: ctx.sourceId, limit: 10, includeData: true })).models.find((r) => events.tagOfRequest(r) === tag), 60_000, 3000);
   const inboundConnection = (await hookdeck.listConnections({ name: ctx.inboundConnectionName })).models[0];
   /** This deployment's inbound event for a request (other deployments in the project get their own). */
   const inboundEventFor = (requestId: string, accept: (status: string) => boolean = () => true) =>
     until(async () => (await hookdeck.listEventsForRequest(requestId)).models.find((e) => e.webhook_id === inboundConnection?.id && accept(e.status)), 60_000, 3000);
 
   // A. A forced publish failure for one of two subscribers: the bridge answers 5xx, the inbound event is retried,
-  //    and each subscriber gets the email once. Local only (the failure is injected). The retry is triggered by hand;
+  //    and each subscriber gets the event once. Local only (the failure is injected). The retry is triggered by hand;
   //    Event Gateway's own, 10 minutes later, is deduped.
-  const subject = `e2e ${run}: publish retry`;
+  const subject = events.tag('publish retry');
   if (second) ctx.failNextPublish(second.subscription!.id);
-  await sendEmail(from, subject);
+  await events.send(subject);
   await until(() => countSubject(main, subject) > 0, 240_000);
   const request = await findRequest(subject);
   if (second && request) {
@@ -606,7 +688,7 @@ async function extended(ctx: {
     await until(() => countSubject(second, subject) > 0, 120_000);
     await wait(15_000);
     record(
-      'after the inbound retry, each subscriber has the email once',
+      `after the inbound retry, each subscriber has the ${NOUN} once`,
       countSubject(main, subject) === 1 && countSubject(second, subject) === 1,
       `main ${countSubject(main, subject)}, second ${countSubject(second, subject)}`,
     );
