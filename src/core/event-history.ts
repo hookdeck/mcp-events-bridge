@@ -50,6 +50,17 @@ export class EventHistory {
   }
 
   /**
+   * Whether `get` can look up this event: the name is offered, and its provider has an event-id header to search
+   * Event Gateway's requests by (a generic webhook with `eventId: { field }` or the default request id has none).
+   */
+  lookup(name: string): 'ok' | 'unknown' | 'no-id-header' {
+    const entry = this.deps.catalog.get(name);
+    if (!entry) return 'unknown';
+    const provider = this.deps.providers.find((p) => p.id === entry.providerId);
+    return provider?.definition.eventIdHeader ? 'ok' : 'no-id-header';
+  }
+
+  /**
    * An event by its MCP name and id. The name says which provider instance to search: an event id is the provider's
    * own (a Resend svix-id, a sender's delivery id), so two instances can both have one.
    */

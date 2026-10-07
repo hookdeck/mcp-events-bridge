@@ -27,6 +27,7 @@ export function buildMcpServer(deps: {
   const server = new McpServer({ name: 'mcp-events-bridge', version: deps.version ?? '0.0.0' }, { capabilities });
 
   const json = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> });
+  const error = (text: string) => ({ content: [{ type: 'text' as const, text }], isError: true });
 
   server.registerTool(
     'get_event',
@@ -39,6 +40,9 @@ export function buildMcpServer(deps: {
       }),
     },
     async ({ name, eventId }) => {
+      const lookup = history.lookup(name);
+      if (lookup === 'unknown') return error(`Unknown event name ${name}; events/list has the names`);
+      if (lookup === 'no-id-header') return error(`${name} events can't be looked up by id; use list_events with name ${name}`);
       const event = await history.get(name, eventId);
       return event ? json(event) : { content: [{ type: 'text', text: `No ${name} event ${eventId}` }], isError: true };
     },
@@ -49,9 +53,16 @@ export function buildMcpServer(deps: {
     {
       description:
         'List events that happened, newest first, optionally for one event name and since a time (ISO 8601), read from Hookdeck Event Gateway. For the kinds of events you can subscribe to, see events/list.',
-      inputSchema: z.object({ name: z.string().optional(), since: z.string().optional(), limit: z.number().int().min(1).max(100).optional() }),
+      inputSchema: z.object({
+        name: z.string().describe('An event name, such as resend.email.received').optional(),
+        since: z.string().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      }),
     },
-    async (args) => json({ events: await history.recent(args) }),
+    async (args) => {
+      if (args.name !== undefined && history.lookup(args.name) === 'unknown') return error(`Unknown event name ${args.name}; events/list has the names`);
+      return json({ events: await history.recent(args) });
+    },
   );
 
   server.registerTool(

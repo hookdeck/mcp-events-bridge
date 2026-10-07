@@ -7,7 +7,7 @@ import type { InboundRequest, ProviderDefinition, ProviderEvent } from './types.
  * provider without an Event Gateway source type. The source is a WEBHOOK
  * source with verification configured (HMAC, Standard Webhooks, Basic auth or
  * an API key), so Event Gateway rejects unverified requests before they reach
- * the bridge. Everything else is static config: which MCP events the instance
+ * the bridge. Everything else is static config: which events the instance
  * offers, how a request maps to one, where its id and time come from, and
  * which top-level fields subscribers can filter on.
  *
@@ -49,7 +49,7 @@ export type ValueSource = { header: string } | { field: string };
 export interface WebhookEventOptions {
   /** What the event means, for the agent. */
   description?: string;
-  /** The sender's value for this event, read from `eventType`. Default: the MCP event name. */
+  /** The sender's value for this event, read from `eventType`. Default: the event's name (as in `events`). */
   value?: string;
 }
 
@@ -57,7 +57,7 @@ export interface WebhookOptions {
   /** Instance id: names the Event Gateway source (`bridge-<id>`) and the inbound route. */
   id: string;
   verification: WebhookVerification;
-  /** MCP event names, or names with a description and the sender's value for each. */
+  /** The instance's event names (offered over MCP as `{id}.{name}`), or names with a description and the sender's value for each. */
   events: string[] | Record<string, WebhookEventOptions>;
   /** Where the sender says which event a request is. Needed with more than one event; without it, every request is the one event. */
   eventType?: ValueSource;

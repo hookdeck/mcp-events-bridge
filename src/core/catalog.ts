@@ -12,8 +12,6 @@ export interface CatalogEntry {
   /** The MCP event name: `{instance id}.{event.name}`. */
   name: string;
   providerId: string;
-  /** The provider type (`resend`, `github`, `webhook`), for mapping names from before `{id}.{event}` naming. */
-  providerType: string;
   // Events have varying argument and summary types.
   event: ProviderEvent<any, any>;
 }
@@ -28,7 +26,7 @@ export class Catalog {
         const name = mcpEventName(provider.id, event.name);
         // Ids are unique and have no dots, so a name splits at its first dot and can't repeat: an assertion.
         if (this.byName.has(name)) throw new Error(`Two provider instances offer "${name}"`);
-        this.byName.set(name, { name, providerId: provider.id, providerType: provider.definition.type, event });
+        this.byName.set(name, { name, providerId: provider.id, event });
       }
     }
   }

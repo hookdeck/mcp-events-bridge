@@ -52,3 +52,14 @@ describe('EventHistory.recent', () => {
     expect(await history.recent({ name: 'nope.order.filled' })).toEqual([]);
   });
 });
+
+describe('EventHistory.lookup', () => {
+  it('says whether get can find an event: an offered name, from a provider with an event-id header', () => {
+    const noHeader = webhook({ id: 'plain', verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'a-long-enough-secret' }, events: ['ping'], eventId: { field: 'id' } });
+    const config = resolveConfig(defineConfig({ providers: [broker('broker_a'), noHeader] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+    const history = new EventHistory({ hookdeck: {} as HookdeckClient, catalog: new Catalog(config.providers), providers: config.providers });
+    expect(history.lookup('broker_a.order.filled')).toBe('ok');
+    expect(history.lookup('plain.ping')).toBe('no-id-header');
+    expect(history.lookup('order.filled')).toBe('unknown');
+  });
+});

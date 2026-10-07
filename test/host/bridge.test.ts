@@ -118,6 +118,26 @@ describe('bridge server', () => {
     }
   });
 
+  it('get_event and list_events need a name the bridge offers', async () => {
+    const { port } = await startBridge();
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    type Result = { isError?: boolean; content?: Array<{ text?: string }> };
+    const call = async (name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as Result;
+    try {
+      // The name is required: an event id is the provider's own, so it doesn't say which instance to search.
+      expect((await call('get_event', { eventId: 'msg_1' })).isError).toBe(true);
+      const unknown = await call('get_event', { name: 'email.received', eventId: 'msg_1' });
+      expect(unknown).toMatchObject({ isError: true });
+      expect(unknown.content?.[0]?.text).toContain('Unknown event name email.received');
+      const listed = await call('list_events', { name: 'email.received' });
+      expect(listed).toMatchObject({ isError: true });
+      expect(listed.content?.[0]?.text).toContain('Unknown event name email.received');
+    } finally {
+      await client.close();
+    }
+  });
+
   it("logs a subscription to an event the bridge doesn't offer", async () => {
     const store = new MemoryStore();
     await store.put({

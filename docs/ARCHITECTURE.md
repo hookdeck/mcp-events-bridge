@@ -411,7 +411,7 @@ No database. Event Gateway is the store, so the bridge is stateless and needs no
 - **Subscriptions:** one connection each, `mcp-sub-<id>`, from the topic source to an HTTP destination at the callback URL:
   - **connection description:** readable JSON metadata, so the operator can see it in the dashboard: `{"v":1,"principal":…,"event":…,"arguments":…,"expiresAt":…,"createdAt":…,"updatedAt":…}`, plus `delivery` while it isn't healthy. At most 500 characters; subscribe rejects arguments that don't fit.
   - **destination auth:** the signing secret, as `CUSTOM_SIGNATURE` config. This is Event Gateway's field for credentials: masked in the dashboard and in every listing, returned only by `GET /destinations/{id}?include=config.auth`. It's also where the secret will be used once Event Gateway can sign Standard Webhooks.
-- **Topics:** found by name, `bridge-out-<event name, slugged>`.
+- **Topics:** found by name, `bridge-out-<MCP event name, slugged>`.
 - **Provider instances:** found by name, `bridge-<instance id>` and `bridge-<instance id>-<deployment>`, with the provider's webhook id in the source description.
 
 At startup the bridge lists `mcp-sub-*` connections, reads each destination's secret, and builds an in-memory index; subscribe, unsubscribe, refresh and issue handling keep it current. That assumes one bridge instance per deployment, which fits single tenancy. A description edited into something unreadable is skipped and reported at startup.
