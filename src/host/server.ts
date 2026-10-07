@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
+import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
 import { Catalog } from '../core/catalog.js';
 import type { ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
@@ -38,6 +39,10 @@ export interface BridgeServer {
   server: http.Server;
   subscriptions: SubscriptionService;
   store: SubscriptionStore;
+  callbacks: CallbackRegistry;
+  hookdeck: HookdeckClient;
+  /** Inbound request ids the bridge retried itself (local recovery): the relay treats their delivery as a retry. */
+  recoveredRequests: Set<string>;
   listen(): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
 }
@@ -46,6 +51,12 @@ export interface BridgeServerOptions {
   hookdeck?: HookdeckClient;
   store?: SubscriptionStore;
   subscriptionOverrides?: Partial<Pick<SubscriptionServiceDeps, 'verify' | 'transport' | 'now'>>;
+  callbackSettings?: Partial<CallbackSettings>;
+  /**
+   * Offer the tunnel URL tools for local agents. Only a bridge on the agent's machine can run `hookdeck listen`
+   * for them (see host/local-runtime.ts). Default: on with CLI inbound, off with HTTP inbound.
+   */
+  localAgents?: boolean;
   log?: (message: string) => void;
 }
 
@@ -68,16 +79,39 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const loaded = await store.load();
   log(`loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}`);
 
+  const callbacks = new CallbackRegistry({
+    hookdeck,
+    // In use if a subscription's callback is the tunnel URL or a path under it.
+    inUse: (url) => store.list().some((s) => s.url === url || s.url.startsWith(`${url}/`)),
+    subscription: (id) => store.get(id),
+    onDeleted: (url) => subscriptions.forgetVerification(url),
+    settings: options.callbackSettings,
+    log,
+  });
+  const loadedCallbacks = await callbacks.load();
+  if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
+
   const catalog = new Catalog(config.providers);
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
     store,
     catalog,
     transport: createNodeCallbackTransport(),
+    callbacks,
     log,
     ...options.subscriptionOverrides,
   });
-  const relay = new Relay({ signingSecret: config.hookdeck.signingSecret, providerIds: config.providers.map((p) => p.id), catalog, store, hookdeck, log });
+  const recoveredRequests = new Set<string>();
+  const relay = new Relay({
+    signingSecret: config.hookdeck.signingSecret,
+    providerIds: config.providers.map((p) => p.id),
+    catalog,
+    store,
+    hookdeck,
+    callbacks,
+    recovered: (id) => recoveredRequests.has(id),
+    log,
+  });
   const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
   const providers = () =>
     config.providers.map((p) => ({
@@ -87,8 +121,11 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
       subscriptions: store.list().filter((s) => p.events.includes(s.name)).length,
     }));
 
+  const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(
-    createMcpHandler((ctx) => buildMcpServer({ subscriptions, catalog, history, providers, principal: ctx.authInfo?.clientId })),
+    createMcpHandler((ctx) =>
+      buildMcpServer({ subscriptions, catalog, history, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId }),
+    ),
   );
 
   const json = (res: http.ServerResponse, status: number, body: unknown) => {
@@ -128,7 +165,10 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     }
   });
 
-  const sweeper = setInterval(() => void subscriptions.sweep(), config.subscriptions.sweepIntervalMs);
+  const sweeper = setInterval(() => {
+    void subscriptions.sweep();
+    void callbacks.sweep();
+  }, config.subscriptions.sweepIntervalMs);
   sweeper.unref();
   const host = config.inbound === 'cli' ? '127.0.0.1' : '0.0.0.0';
 
@@ -136,6 +176,9 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     server,
     subscriptions,
     store,
+    callbacks,
+    hookdeck,
+    recoveredRequests,
     listen: () =>
       new Promise((resolve) => server.listen(config.port, host, () => resolve({ host, port: (server.address() as { port: number }).port }))),
     close: () =>

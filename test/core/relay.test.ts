@@ -27,16 +27,18 @@ function setup(now = new Date('2026-10-05T16:30:00.000Z')) {
   const gateway = new FakeEventGateway();
   const store = new MemoryStore();
   const logs: string[] = [];
+  const recovered = new Set<string>();
   const relay = new Relay({
     signingSecret: SIGNING_SECRET,
     providerIds: ['resend'],
     catalog: new Catalog(config.providers),
     store,
     hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    recovered: (id) => recovered.has(id),
     now: () => now,
     log: (m) => logs.push(m),
   });
-  return { gateway, store, relay, logs };
+  return { gateway, store, relay, logs, recovered };
 }
 
 const signed = (rawBody: string, extra: Record<string, string> = {}) => ({
@@ -112,7 +114,7 @@ describe('Relay: provider events', () => {
   });
 
   it('skips expired subscriptions, and on an inbound retry ones created after the event happened', async () => {
-    const { relay, store, gateway } = setup();
+    const { relay, store, gateway, recovered } = setup();
     await store.put(subscription({ id: 'sub_late', createdAt: '2026-10-05T16:25:00.000Z' }));
     await store.put(subscription({ id: 'sub_expired', expiresAt: '2026-10-05T16:29:00.000Z' }));
     // A first attempt reaches every current subscription: provider timestamps can predate the action.
@@ -120,6 +122,12 @@ describe('Relay: provider events', () => {
     expect(gateway.published.map((p) => p.headers['X-MCP-Subscription-Id'])).toEqual(['sub_late']);
     // A retry doesn't hand the old event to a subscription made after it.
     expect(await inbound(relay, fixture.body, { 'x-hookdeck-attempt-count': '2' })).toEqual({ status: 200, body: { published: 0 } });
+    // Nor does a manual retry, such as the bridge recovering a request it missed while its listen was down (attempt 1 of a new event).
+    expect(await inbound(relay, fixture.body, { 'x-hookdeck-attempt-count': '1', 'x-hookdeck-attempt-trigger': 'MANUAL' })).toEqual({ status: 200, body: { published: 0 } });
+    expect(await inbound(relay, fixture.body, { 'x-hookdeck-attempt-trigger': 'INITIAL' })).toEqual({ status: 200, body: { published: 1 } });
+    // A request the bridge itself recovered arrives as attempt 1, INITIAL, of a new event: recognized by its request id.
+    recovered.add('req_recovered');
+    expect(await inbound(relay, fixture.body, { 'x-hookdeck-attempt-trigger': 'INITIAL', 'x-hookdeck-requestid': 'req_recovered' })).toEqual({ status: 200, body: { published: 0 } });
   });
 
   it('returns 502 if any publish fails, so Event Gateway retries the inbound event', async () => {

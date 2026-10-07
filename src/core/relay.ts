@@ -4,6 +4,7 @@ import type { HookdeckClient } from './hookdeck.js';
 import { verifyHookdeckSignature } from './hookdeck-signature.js';
 import { topicSourceName } from './names.js';
 import type { InboundRequest } from './providers/types.js';
+import type { CallbackRegistry } from './callbacks.js';
 import { signStandardWebhook } from './sign.js';
 import type { SubscriptionRecord, SubscriptionStore } from './store.js';
 
@@ -32,6 +33,13 @@ export interface RelayDeps {
   catalog: Catalog;
   store: SubscriptionStore;
   hookdeck: HookdeckClient;
+  /** Deliveries to a bridge-created callback URL are also signed with the callback's own secret. */
+  callbacks?: Pick<CallbackRegistry, 'signingSecret'>;
+  /**
+   * Whether the bridge itself retried this inbound request (recovering it after its `listen` was down). Event Gateway
+   * delivers such a retry as attempt 1 of a new event, with trigger INITIAL, so only the request id tells it apart.
+   */
+  recovered?: (requestId: string) => boolean;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -95,13 +103,22 @@ export class Relay {
     const occurredAt = event.occurredAt(req);
     const summary = event.summarize(req);
     const now = this.now();
-    const retry = Number(req.headers['x-hookdeck-attempt-count'] ?? '1') > 1;
+    // A retry is any delivery but the first: Event Gateway's own retries (attempt count above 1, trigger AUTOMATIC),
+    // manual ones (MANUAL), and the bridge's recovery of requests it missed while its `listen` was down (a new event,
+    // attempt 1 and INITIAL, so recognized by request id).
+    const trigger = req.headers['x-hookdeck-attempt-trigger'];
+    const requestId = req.headers['x-hookdeck-requestid'];
+    const retry =
+      Number(req.headers['x-hookdeck-attempt-count'] ?? '1') > 1 ||
+      (trigger !== undefined && trigger !== 'INITIAL') ||
+      (requestId !== undefined && (this.deps.recovered?.(requestId) ?? false));
     const subscribers = this.deps.store
       .list({ name: event.name })
       .filter((s) => Date.parse(s.expiresAt) > now.getTime())
       // On an inbound retry, a subscription made after the event happened doesn't get it: the retry would otherwise
-      // hand it an old event. Not applied on a first attempt, since provider timestamps can predate the action (editing
-      // an old GitHub release keeps its published_at), which would drop the event for good.
+      // hand it an old event (for example a day-old one recovered after the laptop slept). Not applied on a first
+      // attempt, since provider timestamps can predate the action (editing an old GitHub release keeps its
+      // published_at), which would drop the event for good.
       .filter((s) => !retry || Date.parse(s.createdAt) <= Date.parse(occurredAt))
       .filter((s) => event.accepts(s.arguments, summary));
 
@@ -119,11 +136,14 @@ export class Relay {
     return { status: 200, body: { published: subscribers.length } };
   }
 
-  private publish(subscription: SubscriptionRecord, eventId: string, body: string, now: Date) {
+  private async publish(subscription: SubscriptionRecord, eventId: string, body: string, now: Date) {
     const secrets = [subscription.secret];
     if (subscription.previousSecret && subscription.previousSecretExpiresAt && Date.parse(subscription.previousSecretExpiresAt) > now.getTime()) {
       secrets.push(subscription.previousSecret);
     }
+    // A callback the bridge created for a local agent: its MCP Events source verifies this signature, the agent its own.
+    const callbackSecret = await this.deps.callbacks?.signingSecret(subscription.url);
+    if (callbackSecret) secrets.push(callbackSecret);
     const headers = {
       'content-type': 'application/json',
       // Signed at the real time of publishing; `now` (injectable) only drives expiry and grace windows.

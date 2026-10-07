@@ -14,6 +14,20 @@ export interface Page<T> {
   count?: number;
 }
 
+/** Reads every page of a listing (up to maxPages). `complete` is false if it stopped early. */
+export async function allPages<T>(page: (next: string | undefined) => Promise<Page<T>>, maxPages = 100): Promise<{ models: T[]; complete: boolean }> {
+  const models: T[] = [];
+  let next: string | undefined;
+  for (let i = 0; i < maxPages; i++) {
+    const result = await page(next);
+    models.push(...result.models);
+    const cursor = result.pagination?.next;
+    next = cursor && result.models.length > 0 ? (cursor.startsWith('http') ? (new URL(cursor).searchParams.get('next') ?? undefined) : cursor) : undefined;
+    if (!next) return { models, complete: true };
+  }
+  return { models, complete: false };
+}
+
 export interface HookdeckRequest {
   id: string;
   source_id: string;
@@ -228,10 +242,13 @@ export class HookdeckClient {
     next?: string;
     headers?: Record<string, unknown>;
     includeData?: boolean;
+    /** Only requests with at least one ignored event (verified live: the count filters work). */
+    withIgnored?: boolean;
   }) {
     return this.api<Page<HookdeckRequest>>('/requests', {
       query: {
         source_id: query.source_id,
+        'ignored_count[gt]': query.withIgnored ? '0' : undefined,
         headers: query.headers ? JSON.stringify(query.headers) : undefined,
         include: query.includeData ? 'data' : undefined,
         // The API takes bracketed comparison operators for date filters.
@@ -239,6 +256,21 @@ export class HookdeckClient {
         limit: query.limit ?? 100,
         order_by: query.order_by ?? 'created_at',
         dir: query.dir ?? 'desc',
+        next: query.next,
+      },
+    });
+  }
+
+  /** Events, filtered by connection (`webhook_id`, verified live to filter) and creation time. */
+  listEvents(query: { webhook_id: string; created_at_gte?: string; status?: string; limit?: number; next?: string }) {
+    return this.api<Page<HookdeckEvent>>('/events', {
+      query: {
+        webhook_id: query.webhook_id,
+        status: query.status,
+        'created_at[gte]': query.created_at_gte,
+        limit: query.limit ?? 100,
+        order_by: 'created_at',
+        dir: 'asc',
         next: query.next,
       },
     });

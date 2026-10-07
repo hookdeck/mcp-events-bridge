@@ -4,6 +4,7 @@ import type { SubscriptionSettings } from './config.js';
 import { callbackEndpointError, forbidden, internalError, invalidParams, notFound, unsupported, type CallbackFailureReason } from './errors.js';
 import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
+import type { CallbackRegistry } from './callbacks.js';
 import { SubscriptionTooLargeError, healthyDelivery, type SubscriptionRecord, type SubscriptionStore } from './store.js';
 
 /*
@@ -32,6 +33,8 @@ export interface SubscriptionServiceDeps {
   catalog: Catalog;
   transport: CallbackTransport;
   verify?: (transport: CallbackTransport, options: VerifyEndpointOptions) => Promise<VerificationResult>;
+  /** Callback URLs the bridge created for local agents: the challenge is also signed with the callback's own secret. */
+  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'find'>;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -132,10 +135,19 @@ export class SubscriptionService {
     const id = deriveSubscriptionId(principal, href, event.name, rawArgs);
     const now = this.now();
 
-    // Endpoint verification, cached per (principal, url).
+    // Endpoint verification, cached per (principal, url). A bridge callback URL is always verified: the edge answers
+    // cheaply, and a callback deleted and recreated must not be skipped on the strength of an old result.
     const vKey = verificationKey(principal, href);
-    if ((this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
-      const result = await this.verify(transport, { url, secret, subscriptionId: id, timeoutMs: settings.verificationTimeoutMs });
+    const isCallback = Boolean(this.deps.callbacks?.find(href));
+    if (isCallback || (this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
+      const callbackSecret = await this.deps.callbacks?.signingSecret(href);
+      const result = await this.verify(transport, {
+        url,
+        secret,
+        ...(callbackSecret && { extraSecrets: [callbackSecret] }),
+        subscriptionId: id,
+        timeoutMs: settings.verificationTimeoutMs,
+      });
       if (!result.ok) {
         this.log(`verification failed for ${id}: ${result.reason}`);
         throw callbackEndpointError(result.reason);
@@ -207,6 +219,14 @@ export class SubscriptionService {
     }
     this.log(`unsubscribed ${id}`);
     return {};
+  }
+
+  /** Drops cached verification for a URL and the paths under it, from every principal, e.g. when a bridge tunnel URL is deleted. */
+  forgetVerification(url: string) {
+    for (const key of [...this.verifiedUntil.keys()]) {
+      const verified = (JSON.parse(key) as [string, string])[1];
+      if (verified === url || verified.startsWith(`${url}/`)) this.verifiedUntil.delete(key);
+    }
   }
 
   /** Deletes subscriptions whose grant has lapsed. */

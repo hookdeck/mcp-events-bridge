@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Not yet: local agents (stage 6), the Claude Code shim, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself; next is testing a real agent (Hermes) locally (see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
 
 ## What the maintainer sets up first
 
@@ -16,6 +16,7 @@ You can't do these. Each is needed before the step that uses it.
 | Resend provider | A Resend account and an API key that can create webhooks. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address) | `RESEND_API_KEY` |
 | GitHub provider (optional) | A fine-grained token with the Webhooks permission on the repositories, or a webhook secret for manual mode | `GITHUB_REPOS`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` |
 | The e2e tests | A verified Resend sending domain, and a key that can send email | `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
+| The Hermes Agent test (optional) | An Anthropic API key with a spending limit, for the model Hermes runs | `HERMES_ANTHROPIC_API_KEY`, `HERMES_MODEL` |
 | ChatGPT | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
 | Everything | Hookdeck CLI with `gateway connection upsert`, Node 22.12 or later | |
 | The reference deployment | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
@@ -26,7 +27,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 
 - **Work on a branch** and commit in small steps.
 - **Events only.** Don't add tools that wrap provider APIs (sending email, reading email bodies). Vendors' own MCP servers do that.
-- **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-` or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
+- **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-`, `agent-` (the bridge's callback URLs for local agents) or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
 - **Provider resources:** the same for Resend webhooks. Delete spike webhooks when the spike is done.
 - **Conventions,** as in `hookdeck/mcp-events-outpost-demo`: TypeScript ESM, Node 22+, `tsx`, `vitest`, `zod` v4, `@modelcontextprotocol/server` / `node` / `client` v2, `standardwebhooks`.
 - **Public repo.** Never put Hookdeck-internal details (private repo paths, internal PR numbers, security findings) in tracked files. They belong in `internal/`, which is gitignored.

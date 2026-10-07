@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createNodeCallbackTransport } from '../../src/host/callback-transport.js';
 import { createBridgeServer, redactPath } from '../../src/host/server.js';
 import { resend } from '../../src/providers.js';
@@ -30,9 +31,9 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((r) => r.close()));
 });
 
-async function startBridge() {
+async function startBridge({ inbound = 'cli' as 'cli' | 'http' } = {}) {
   const gateway = new FakeEventGateway();
-  const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, providers: [resend({ apiKey: 'x' })] }), {
+  const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', providers: [resend({ apiKey: 'x' })] }), {
     HOOKDECK_API_KEY: 'k',
     HOOKDECK_SIGNING_SECRET: SIGNING_SECRET,
     BRIDGE_MCP_SECRET: MCP_SECRET,
@@ -106,6 +107,39 @@ describe('bridge server', () => {
     await postInbound(port);
     await deliverPublished(gateway, subscriber);
     expect(subscriber.events).toHaveLength(0);
+  });
+
+  it('creates tunnel URLs for local agents over MCP, without exposing any secret', async () => {
+    const { port, gateway } = await startBridge();
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      const tools = (await client.listTools()).tools.map((t) => t.name);
+      expect(tools).toEqual(expect.arrayContaining(['create_tunnel_url', 'list_tunnel_urls']));
+      expect(tools).not.toContain('retry_missed_deliveries');
+      const result = (await client.callTool({ name: 'create_tunnel_url', arguments: { agent: 'laptop', name: 'email', port: 4000 } })) as {
+        structuredContent?: Record<string, unknown>;
+        content: Array<{ text?: string }>;
+      };
+      const source = [...gateway.sources.values()].find((s) => s.name === 'agent-laptop-email')!;
+      expect(result.structuredContent).toEqual({ name: 'email', url: source.url, port: 4000, path: '/events' });
+      const sourceSecret = (source.config as { auth: { webhook_secret_key: string } }).auth.webhook_secret_key;
+      expect(JSON.stringify(result)).not.toContain(sourceSecret);
+      expect(JSON.stringify(result)).not.toContain('whsec_');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("doesn't offer tunnel URLs on a deployed bridge, which can't run hookdeck listen on the agent's machine", async () => {
+    const { port } = await startBridge({ inbound: 'http' });
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('create_tunnel_url');
+    } finally {
+      await client.close();
+    }
   });
 
   it('refuses an oversized inbound body before reading it all', async () => {
