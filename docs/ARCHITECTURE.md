@@ -263,7 +263,7 @@ Searched on 7 Oct 2026, for clients that subscribe (not servers that emit):
 | Client | State | Delivery | Fit with the bridge |
 | --- | --- | --- | --- |
 | ChatGPT | Shipped (29 Sep) | Webhook, to a cloud callback | Verified with the bridge on 6 Oct |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent/pull/132908) | Draft PR, 4 Oct; not in a release | Webhook, to a local receiver (`POST /mcp/events/webhook/<local id>`, one public base URL, one global `whsec_` secret) | Yes, from the pull request: with our fixes in it, its branch (`3cda1278a6`) subscribed through a tunnel URL, a real email woke its agent, and it unsubscribed, unpatched (7 Oct). Its tools take the emitter's URL, so the bridge's MCP secret reaches the model (raised on the PR) |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent/pull/132908) | Draft PR, 4 Oct; not in a release | Webhook, to a local receiver (`POST /mcp/events/webhook/<local id>`, one public base URL, one global `whsec_` secret) | Yes, from the pull request: with our fixes in it, its branch (`3cda1278a6`) subscribed through a tunnel URL, a real email woke its agent, and it unsubscribed, unpatched (7 Oct). Named emitters (`8813311330`) keep the bridge's MCP URL in Hermes's `.env`, out of the model's context and logs |
 | [pi-mcp-events](https://github.com/richardanaya/pi-mcp-events) (Pi coding agent) | 0.1.1 | Webhook, poll and push calls as tools; receives no webhooks itself | Poll or push only |
 | [OpenClaw](https://github.com/openclaw/openclaw/issues/166586) | Feature request | Poll and push proposed; webhook deferred | None yet |
 

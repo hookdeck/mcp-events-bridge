@@ -2,9 +2,9 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can subscribe to the bridge's events and wake up on each delivery, through a tunnel URL.
 
-**Status: experimental.** Released Hermes (v0.21.5 and earlier) has no MCP Events support. It's in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908). These steps install that pull request at commit `3cda1278a6`, the version tested with this bridge. The pull request may change or may not be merged, and these steps will change with it.
+**Status: experimental.** Released Hermes (v0.21.5 and earlier) has no MCP Events support. It's in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908). These steps install that pull request at commit `8813311330`, the version tested with this bridge. The pull request may change or may not be merged, and these steps will change with it.
 
-**Known issue:** Hermes's tools take the bridge's MCP URL, which contains `BRIDGE_MCP_SECRET`, so the secret reaches the model provider, Hermes's session store and its logs. It's [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909). Use a local bridge only you can reach, and rotate the secret (change `BRIDGE_MCP_SECRET`, restart `serve`) when you're done testing.
+The bridge is configured in Hermes as a **named emitter**: its MCP URL, which contains `BRIDGE_MCP_SECRET`, lives only in Hermes's `.env`, and the agent, its sessions and its logs see the name. (Earlier commits took the URL in the tool call, which sent the secret to the model; [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909) and fixed there.)
 
 ## 1. Install Hermes from the pull request
 
@@ -13,7 +13,7 @@ Needs Python 3.14 and [uv](https://docs.astral.sh/uv/).
 ```sh
 git clone https://github.com/NousResearch/hermes-agent.git && cd hermes-agent
 git fetch origin pull/132908/head
-git checkout 3cda1278a69a07f1a2e18fe5ed27f76a9e5a6ac6
+git checkout 8813311330e66854dbb32a1f8db2d8246607501d
 uv venv --python 3.14 && uv pip install -e ".[anthropic]"
 .venv/bin/hermes --version
 ```
@@ -23,10 +23,10 @@ uv venv --python 3.14 && uv pip install -e ".[anthropic]"
 If `git checkout` can't find the commit (the pull request's branch was rewritten), fetch a copy kept on a fork, then check it out again:
 
 ```sh
-git fetch https://github.com/leggetter/hermes-agent.git mcp-events-pr-132908-3cda127
+git fetch https://github.com/leggetter/hermes-agent.git mcp-events-pr-132908-8813311
 ```
 
-**Success:** the version line ends `local 3cda1278 (+10 carried commits)`.
+**Success:** the version line ends `local 88133113 (+11 carried commits)`.
 
 If you already use Hermes, set `HERMES_HOME` to a new directory for these steps (every `hermes` command below needs it), so this build doesn't change your `~/.hermes`.
 
@@ -48,11 +48,12 @@ npx -y @modelcontextprotocol/inspector --cli "http://127.0.0.1:8080/mcp/$BRIDGE_
 
 ## 4. Configure Hermes
 
-In `$HERMES_HOME/.env` (by default `~/.hermes/.env`), the model provider's key and a webhook secret for Hermes:
+In `$HERMES_HOME/.env` (by default `~/.hermes/.env`), the model provider's key, a webhook secret for Hermes, and the bridge's MCP URL for the emitter named `mcp-events-bridge`:
 
 ```sh
 ANTHROPIC_API_KEY=...
 MCP_EVENTS_WEBHOOK_SECRET=whsec_...   # generate: echo "whsec_$(openssl rand -base64 32)"
+MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL=http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>
 ```
 
 In `$HERMES_HOME/config.yaml`:
@@ -66,6 +67,8 @@ mcp_events:
   port: 9901
   public_base_url: "https://hkdk.events/..."   # the tunnel URL from step 3
   trusted_emitters: ["127.0.0.1"]              # the bridge is on loopback, which Hermes refuses otherwise
+  emitters:
+    mcp-events-bridge: {}                      # its URL is in .env (MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL)
 ```
 
 ## 5. Start the Hermes gateway
@@ -81,7 +84,7 @@ mcp_events:
 In another terminal:
 
 ```sh
-.venv/bin/hermes chat --oneshot -q "Use mcp_events_subscribe with emitter_url http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET> and event resend.email.received. Tell me the subscription id."
+.venv/bin/hermes chat --oneshot -q "Use mcp_events_subscribe with emitter mcp-events-bridge and event resend.email.received. Tell me the subscription id."
 ```
 
 Use an event name from the bridge's `events/list` (`list_providers` shows them).
@@ -95,7 +98,7 @@ Trigger a real event for the subscription (for example, send an email to the Res
 **Success:**
 
 - `serve` logs `[listen] agent hermes: ... [200] POST http://localhost:9901/mcp/events/webhook/<id>`;
-- `gateway.log` has `inbound message: platform=mcp_events` and then `response ready`: the agent ran a session on the event.
+- `gateway.log` has `inbound message: platform=mcp_events user=mcp-events-bridge` and then `response ready`: the agent ran a session on the event. The bridge's MCP URL appears nowhere under `$HERMES_HOME` except `.env`.
 
 To stop, ask Hermes to unsubscribe (`mcp_events_unsubscribe` with the subscription id). The bridge deletes the tunnel URL an hour after no subscription uses it.
 
@@ -106,5 +109,6 @@ To stop, ask Hermes to unsubscribe (`mcp_events_unsubscribe` with the subscripti
 | Subscribing to `http://127.0.0.1:8080/...` is refused | Set `trusted_emitters: ["127.0.0.1"]` and `MCP_EVENTS_WEBHOOK_SECRET` (step 4) |
 | A delivery arrives, then `gateway.log` has `Agent error` with `not installed and lazy installs are disabled: ['anthropic']` | Install the provider's extra: `uv pip install -e ".[anthropic]"`, then restart the gateway |
 | Subscribe fails with `Unknown event` | Use a name from `events/list`, such as `resend.email.received` |
-| Deliveries reach Hermes but nothing runs, with "Unauthorized user" in `gateway.log` | An older commit of the pull request: check out `3cda1278a6` |
+| Deliveries reach Hermes but nothing runs, with "Unauthorized user" in `gateway.log` | An older commit of the pull request: check out `8813311330` |
+| Subscribe says the emitter isn't configured | Check the name under `mcp_events.emitters` and the `.env` variable: the name uppercased, with `-` as `_` (`mcp-events-bridge` is `MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL`) |
 | The gateway can't bind its port | Pick another port, in both the tunnel URL (step 3) and `mcp_events.port` |

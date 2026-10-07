@@ -309,7 +309,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) works with a local bridge through a tunnel URL: it subscribes, and each event wakes it in its own session. Released Hermes doesn't support MCP Events; support is in a draft pull request that may or may not be merged, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908), which includes fixes from running it against this bridge.
 
-[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. One known issue: Hermes's tools take the bridge's MCP URL, so its secret reaches the model provider and Hermes's logs; rotate `BRIDGE_MCP_SECRET` after testing.
+[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. Hermes keeps the bridge's MCP URL in its `.env` as a named emitter, so the URL's secret stays out of the model's context and Hermes's logs.
 
 ## Security and limitations
 
