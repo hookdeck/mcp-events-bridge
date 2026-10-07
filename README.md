@@ -163,7 +163,7 @@ The server signs each request's raw body with HMAC-SHA256 and the shared secret,
 - **`events`:** MCP event names, as a list or with a description each. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
 - **`eventId`:** the sender's id for a delivery, from `{ header }` or `{ field }`. It becomes the event's `webhook-id`, and Event Gateway drops repeats within an hour. Default: Event Gateway's request id, which stays the same when Event Gateway retries but not when the sender does, so set it if your sender retries.
 - **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when the bridge received the request.
-- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON, and the event at most 256 KiB.
+- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is ignored, and stays in Event Gateway), and the event at most 256 KiB.
 - **`filters`:** top-level body fields subscribers can filter on, by exact match.
 
 Credentials are `env()` references. The sender usually gives you its secret only after you register the URL, so the bridge can create the source first:

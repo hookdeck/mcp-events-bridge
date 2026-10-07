@@ -130,6 +130,14 @@ describe('Relay: provider events', () => {
     expect(await inbound(relay, fixture.body, { 'x-hookdeck-attempt-trigger': 'INITIAL', 'x-hookdeck-requestid': 'req_recovered' })).toEqual({ status: 200, body: { published: 0 } });
   });
 
+  it('ignores a body that is not JSON with 200, so Event Gateway does not retry it', async () => {
+    const { relay, store, gateway } = setup();
+    await store.put(subscription());
+    const raw = 'not json';
+    expect(await relay.handle('/inbound/resend', signed(raw), raw)).toEqual({ status: 200, body: { ignored: 'body is not JSON' } });
+    expect(gateway.published).toEqual([]);
+  });
+
   it('returns 502 if any publish fails, so Event Gateway retries the inbound event', async () => {
     const { relay, store, gateway } = setup();
     await store.put(subscription());
