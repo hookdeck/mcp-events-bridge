@@ -40,7 +40,7 @@ Creates the Event Gateway source bridge-<id> (or reuses it) and prints its URL, 
 with the sender before you have its secret. Delivery stays held until the secret is set and setup runs.
 
 Options:
-  --event <name>[=<value>]   MCP event name, repeatable (default: <id>.received). With several events,
+  --event <name>[=<value>]   event name, repeatable, offered over MCP as <id>.<name> (default: received). With several events,
                              <value> is the sender's value for each, read from --event-type-*
   --verification <type>      hmac (default), standard-webhooks, basic-auth or api-key
   --algorithm <name>         hmac: sha256 (default), sha1 or sha512
@@ -203,7 +203,7 @@ async function providers(argv: string[]) {
             : (() => {
                 throw new ConfigError(`--verification must be hmac, standard-webhooks, basic-auth or api-key`);
               })();
-  const events = (values.event?.length ? values.event : [`${id}.received`]).map((e) => e.split('=') as [string, string?]);
+  const events = (values.event?.length ? values.event : ['received']).map((e) => e.split('=') as [string, string?]);
   const withValues = events.some(([, value]) => value !== undefined);
   const source = (header?: string, field?: string) => (header ? { header } : field ? { field } : undefined);
   const options: WebhookOptions = {

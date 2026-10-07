@@ -43,7 +43,7 @@ export class EventHistory {
     const entry = this.deps.catalog.forProvider(providerId).find((e) => e.event.matches(req));
     if (!entry) return undefined;
     try {
-      return { eventId: entry.event.eventId(req), name: entry.event.name, timestamp: entry.event.occurredAt(req), data: entry.event.summarize(req) };
+      return { eventId: entry.event.eventId(req), name: entry.name, timestamp: entry.event.occurredAt(req), data: entry.event.summarize(req) };
     } catch {
       return undefined;
     }

@@ -99,7 +99,7 @@ export class Relay {
   private async relay(providerId: string, req: InboundRequest): Promise<InboundResponse> {
     const entry = this.deps.catalog.forProvider(providerId).find((e) => e.event.matches(req));
     if (!entry) return { status: 200, body: { ignored: 'event type not enabled' } };
-    const { event } = entry;
+    const { event, name } = entry;
 
     const eventId = event.eventId(req);
     const occurredAt = event.occurredAt(req);
@@ -115,7 +115,7 @@ export class Relay {
       (trigger !== undefined && trigger !== 'INITIAL') ||
       (requestId !== undefined && (this.deps.recovered?.(requestId) ?? false));
     const subscribers = this.deps.store
-      .list({ name: event.name })
+      .list({ name })
       .filter((s) => Date.parse(s.expiresAt) > now.getTime())
       // On an inbound retry, a subscription made after the event happened doesn't get it: the retry would otherwise
       // hand it an old event (for example a day-old one recovered after the laptop slept). Not applied on a first
@@ -124,7 +124,7 @@ export class Relay {
       .filter((s) => !retry || Date.parse(s.createdAt) <= Date.parse(occurredAt))
       .filter((s) => event.accepts(s.arguments, summary));
 
-    const body = JSON.stringify({ eventId, name: event.name, timestamp: occurredAt, data: summary, cursor: null });
+    const body = JSON.stringify({ eventId, name, timestamp: occurredAt, data: summary, cursor: null });
     if (Buffer.byteLength(body) > MAX_BODY_BYTES) {
       this.log(`${eventId}: envelope over 256 KiB, not delivered`);
       return { status: 200, body: { ignored: 'too large' } };
@@ -133,7 +133,7 @@ export class Relay {
     const results = await Promise.allSettled(subscribers.map((s) => this.publish(s, eventId, body, now)));
     const failed = results.filter((r) => r.status === 'rejected');
     for (const r of failed) this.log(`${eventId}: publish failed: ${(r as PromiseRejectedResult).reason}`);
-    this.log(`${event.name} ${eventId}: ${subscribers.length - failed.length}/${subscribers.length} published`);
+    this.log(`${name} ${eventId}: ${subscribers.length - failed.length}/${subscribers.length} published`);
     if (failed.length) return { status: 502, body: { error: 'publish failed', failed: failed.length } };
     return { status: 200, body: { published: subscribers.length } };
   }

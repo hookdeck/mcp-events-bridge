@@ -49,7 +49,7 @@ const signed = (rawBody: string, extra: Record<string, string> = {}) => ({
 const subscription = (over: Partial<SubscriptionInput> = {}): SubscriptionInput => ({
   id: 'sub_a',
   principal: 'owner',
-  name: 'email.received',
+  name: 'resend.email.received',
   arguments: {},
   url: 'https://receiver.example.com/a',
   secret: generateWebhookSecret(),
@@ -96,10 +96,10 @@ describe('Relay: provider events', () => {
     expect(response).toEqual({ status: 200, body: { published: 1 } });
     expect(gateway.published).toHaveLength(1);
     const [published] = gateway.published;
-    expect(published!.sourceName).toBe('bridge-out-email_received');
+    expect(published!.sourceName).toBe('bridge-out-resend_email_received');
     expect(published!.headers).toMatchObject({ 'webhook-id': fixture.headers['svix-id'], 'X-MCP-Subscription-Id': 'sub_a' });
     const envelope = new Webhook(a.secret).verify(published!.body, published!.headers) as Record<string, unknown>;
-    expect(envelope).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'email.received', timestamp: OCCURRED, cursor: null });
+    expect(envelope).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'resend.email.received', timestamp: OCCURRED, cursor: null });
     expect(envelope.data).toMatchObject({ fromAddress: 'sender@example.com', subject: 'Spike 3: inbound test' });
   });
 
@@ -182,8 +182,8 @@ describe('Relay: generic webhook', () => {
       store,
       hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
     });
-    await store.put(subscription({ name: 'order.filled', arguments: { symbol: 'AAPL' } }));
-    await store.put(subscription({ id: 'sub_b', name: 'order.filled', arguments: { symbol: 'MSFT' } }));
+    await store.put(subscription({ name: 'fills.order.filled', arguments: { symbol: 'AAPL' } }));
+    await store.put(subscription({ id: 'sub_b', name: 'fills.order.filled', arguments: { symbol: 'MSFT' } }));
     const raw = JSON.stringify({ symbol: 'AAPL', side: 'buy', quantity: 100 });
     const send = (verified: string) => relay.handle('/inbound/fills', signed(raw, { 'x-hookdeck-verified': verified, 'x-delivery-id': 'dlv_42' }), raw);
 
@@ -191,8 +191,8 @@ describe('Relay: generic webhook', () => {
     expect(gateway.published).toEqual([]);
     expect(await send('true')).toEqual({ status: 200, body: { published: 1 } });
     expect(gateway.published).toHaveLength(1);
-    expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
-    expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
+    expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-fills_order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
+    expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'fills.order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
   });
 });
 

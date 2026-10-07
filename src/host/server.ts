@@ -93,6 +93,13 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
 
   const catalog = new Catalog(config.providers);
+  // Subscriptions whose event this bridge no longer offers (for example from before events were named
+  // {id}.{event}) get nothing; say so, with the name to subscribe to instead when there's one.
+  for (const subscription of store.list()) {
+    if (catalog.get(subscription.name)) continue;
+    const renamed = catalog.list().find((e) => e.name.endsWith(`.${subscription.name}`))?.name;
+    log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer${renamed ? `; the client needs to subscribe to "${renamed}"` : ''}`);
+  }
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
     store,

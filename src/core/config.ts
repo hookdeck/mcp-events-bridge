@@ -39,7 +39,7 @@ export interface ProviderInstance {
   /** Instance id, unique in the config; names Event Gateway resources. Defaults to the provider type. */
   id: string;
   definition: ProviderDefinition<Record<string, unknown>>;
-  /** MCP event names to enable. */
+  /** The provider's event names to enable (offered over MCP as `{id}.{name}`). */
   events: string[];
   options: Record<string, unknown>;
 }
@@ -52,8 +52,11 @@ export function defineProvider<Options extends Record<string, unknown>>(definiti
   return (options: WithEnv<Options> & { id?: string; events?: string[] }): ProviderInstance => {
     const { id, events, ...rest } = options as WithEnv<Options> & { id?: string; events?: string[] };
     const known = definition.events.map((e) => e.name);
+    // Events are the provider's own names; an MCP name with the type as prefix (`github.issues`, as before
+    // `{id}.{event}` naming) is accepted for the same event.
+    const unprefix = (name: string) => (!known.includes(name) && name.startsWith(`${definition.type}.`) ? name.slice(definition.type.length + 1) : name);
     // `['*']` enables every event the provider offers.
-    const selected = events?.includes('*') ? known : (events ?? definition.defaultEvents ?? known);
+    const selected = events?.includes('*') ? known : (events?.map(unprefix) ?? definition.defaultEvents ?? known);
     for (const name of selected) {
       if (!known.includes(name)) throw new Error(`${definition.type}: unknown event "${name}" (known: ${known.join(', ')})`);
     }

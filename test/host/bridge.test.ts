@@ -54,7 +54,7 @@ async function startSubscriber(port: number, args: Record<string, unknown> = {})
   const subscriber = new Subscriber({
     serverUrl: `http://127.0.0.1:${port}/mcp/${MCP_SECRET}`,
     token: '',
-    eventName: 'email.received',
+    eventName: 'resend.email.received',
     arguments: args,
     callbackUrl: 'https://receiver.example.com/hook',
     log: () => {},
@@ -98,7 +98,7 @@ describe('bridge server', () => {
     expect((await postInbound(port)).status).toBe(200);
     await deliverPublished(gateway, subscriber);
     expect(subscriber.events).toHaveLength(1);
-    expect(subscriber.events[0]).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'email.received', data: { fromAddress: 'sender@example.com' } });
+    expect(subscriber.events[0]).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'resend.email.received', data: { fromAddress: 'sender@example.com' } });
   });
 
   it('applies the from filter', async () => {

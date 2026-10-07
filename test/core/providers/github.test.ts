@@ -18,21 +18,23 @@ describe('GitHub provider', () => {
     expect(githubProvider.events.length).toBeGreaterThan(20);
     expect(github({ token: 't', scope: { repos: ['o/r'] } }).events).toEqual(DEFAULT_GITHUB_EVENTS);
     expect(github({ token: 't', scope: { repos: ['o/r'] }, events: ['*'] }).events).toHaveLength(githubProvider.events.length);
-    expect(() => github({ token: 't', scope: { repos: ['o/r'] }, events: ['github.nope'] })).toThrow(/unknown event/);
+    expect(() => github({ token: 't', scope: { repos: ['o/r'] }, events: ['nope'] })).toThrow(/unknown event/);
+    // GitHub's own names; the earlier MCP names (github.issues) are still accepted in the config.
+    expect(github({ token: 't', scope: { repos: ['o/r'] }, events: ['github.issues', 'push'] }).events).toEqual(['issues', 'push']);
   });
 
   it('matches on X-GitHub-Event and ignores ping', () => {
-    expect(matching(load('issues-opened.json'))).toEqual(['github.issues']);
-    expect(matching(load('push.json'))).toEqual(['github.push']);
+    expect(matching(load('issues-opened.json'))).toEqual(['issues']);
+    expect(matching(load('push.json'))).toEqual(['push']);
     expect(matching(load('ping.json'))).toEqual([]);
   });
 
   it('uses X-GitHub-Delivery as the event id', () => {
-    expect(event('github.issues').eventId(load('issues-opened.json'))).toBe('11111111-1111-1111-1111-111111111111');
+    expect(event('issues').eventId(load('issues-opened.json'))).toBe('11111111-1111-1111-1111-111111111111');
   });
 
   it('summarizes an issue with the generic fields plus issue extras', () => {
-    expect(event('github.issues').summarize(load('issues-opened.json'))).toEqual({
+    expect(event('issues').summarize(load('issues-opened.json'))).toEqual({
       event: 'issues',
       action: 'opened',
       repository: 'example-org/widgets',
@@ -46,7 +48,7 @@ describe('GitHub provider', () => {
   });
 
   it('summarizes a comment on a pull request, with the parent title and number', () => {
-    expect(event('github.issue_comment').summarize(load('issue-comment-on-pr.json'))).toMatchObject({
+    expect(event('issue_comment').summarize(load('issue-comment-on-pr.json'))).toMatchObject({
       action: 'created',
       title: 'Add retries',
       number: 7,
@@ -56,7 +58,7 @@ describe('GitHub provider', () => {
   });
 
   it('summarizes a push and a workflow run', () => {
-    expect(event('github.push').summarize(load('push.json'))).toMatchObject({
+    expect(event('push').summarize(load('push.json'))).toMatchObject({
       action: null,
       ref: 'refs/heads/main',
       commits: 2,
@@ -65,7 +67,7 @@ describe('GitHub provider', () => {
       deleted: false,
       url: 'https://github.com/Example-Org/Widgets/compare/aaa...bbb',
     });
-    expect(event('github.workflow_run').summarize(load('workflow-run-completed.json'))).toMatchObject({
+    expect(event('workflow_run').summarize(load('workflow-run-completed.json'))).toMatchObject({
       action: 'completed',
       title: 'CI',
       conclusion: 'failure',
@@ -74,21 +76,21 @@ describe('GitHub provider', () => {
   });
 
   it('takes occurred-at from the push time, or the main object', () => {
-    expect(event('github.issues').occurredAt(load('issues-opened.json'))).toBe('2026-10-06T10:00:00.000Z');
-    expect(event('github.issue_comment').occurredAt(load('issue-comment-on-pr.json'))).toBe('2026-10-06T11:05:00.000Z');
+    expect(event('issues').occurredAt(load('issues-opened.json'))).toBe('2026-10-06T10:00:00.000Z');
+    expect(event('issue_comment').occurredAt(load('issue-comment-on-pr.json'))).toBe('2026-10-06T11:05:00.000Z');
     // The push time, not the head commit's (11:00).
-    expect(event('github.push').occurredAt(load('push.json'))).toBe('2026-10-06T11:01:00.000Z');
+    expect(event('push').occurredAt(load('push.json'))).toBe('2026-10-06T11:01:00.000Z');
   });
 
   it('filters by repository, actions and sender, case-insensitively for names', () => {
-    const issues = event('github.issues');
+    const issues = event('issues');
     const summary = issues.summarize(load('issues-opened.json'));
     expect(issues.accepts(issues.parseArguments({ repository: 'Example-Org/Widgets' }), summary)).toBe(true);
     expect(issues.accepts(issues.parseArguments({ repository: 'example-org/other' }), summary)).toBe(false);
     expect(issues.accepts(issues.parseArguments({ actions: ['opened', 'reopened'] }), summary)).toBe(true);
     expect(issues.accepts(issues.parseArguments({ actions: ['closed'] }), summary)).toBe(false);
     expect(issues.accepts(issues.parseArguments({ sender: 'OCTO-DEV' }), summary)).toBe(true);
-    const push = event('github.push');
+    const push = event('push');
     expect(push.accepts(push.parseArguments({ actions: ['opened'] }), push.summarize(load('push.json')))).toBe(false);
     expect(() => issues.parseArguments({ label: 'bug' })).toThrow();
   });
