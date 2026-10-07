@@ -116,8 +116,6 @@ export class Relay {
       (requestId !== undefined && (this.deps.recovered?.(requestId) ?? false));
     const subscribers = this.deps.store
       .list({ name })
-      // For this instance: a subscription from before 0.2.0 (no instance recorded) may mean another provider's event.
-      .filter((s) => s.providerId === providerId)
       .filter((s) => Date.parse(s.expiresAt) > now.getTime())
       // On an inbound retry, a subscription made after the event happened doesn't get it: the retry would otherwise
       // hand it an old event (for example a day-old one recovered after the laptop slept). Not applied on a first

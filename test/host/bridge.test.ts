@@ -118,15 +118,15 @@ describe('bridge server', () => {
     }
   });
 
-  it('logs a subscription to an event from before {id}.{event} naming, with the name to use now', async () => {
+  it("logs a subscription to an event the bridge doesn't offer", async () => {
     const store = new MemoryStore();
     await store.put({
-      id: 'sub_old', principal: 'owner', name: 'email.received', providerId: null, arguments: {}, url: 'https://receiver.example.com/hook',
+      id: 'sub_old', principal: 'owner', name: 'email.received', arguments: {}, url: 'https://receiver.example.com/hook',
       secret: generateWebhookSecret(), previousSecret: null, previousSecretExpiresAt: null, delivery: healthyDelivery(),
       expiresAt: '2099-01-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
     });
     const { logs } = await startBridge({ store });
-    expect(logs).toContain('subscription sub_old ("email.received") is from before 0.2.0 and gets nothing; the client needs to subscribe to "resend.email.received"');
+    expect(logs).toContain('subscription sub_old is for "email.received", which this bridge doesn\'t offer');
   });
 
   it('applies the from filter', async () => {

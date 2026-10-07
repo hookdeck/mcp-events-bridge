@@ -5,7 +5,7 @@ import { providerSourceName } from './names.js';
 
 /*
  * Past events, read from Event Gateway: every provider request is kept there,
- * so the bridge stores none. Used by get_event and list_recent_events.
+ * so the bridge stores none. Used by get_event and list_events.
  */
 
 export interface PastEvent {
@@ -69,7 +69,10 @@ export class EventHistory {
 
   async recent({ name, since, limit = 20 }: { name?: string; since?: string; limit?: number } = {}): Promise<PastEvent[]> {
     const events: PastEvent[] = [];
-    for (const provider of this.deps.providers) {
+    // A name is one instance's event: search only that instance's source.
+    const instance = name === undefined ? undefined : this.deps.catalog.get(name)?.providerId;
+    if (name !== undefined && !instance) return events;
+    for (const provider of this.deps.providers.filter((p) => instance === undefined || p.id === instance)) {
       const sourceId = await this.sourceId(provider.id);
       if (!sourceId) continue;
       const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, created_at_gte: since, includeData: true, limit: Math.min(limit * 2, 100) });

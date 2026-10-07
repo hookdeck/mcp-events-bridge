@@ -19,8 +19,9 @@ describe('GitHub provider', () => {
     expect(github({ token: 't', scope: { repos: ['o/r'] } }).events).toEqual(DEFAULT_GITHUB_EVENTS);
     expect(github({ token: 't', scope: { repos: ['o/r'] }, events: ['*'] }).events).toHaveLength(githubProvider.events.length);
     expect(() => github({ token: 't', scope: { repos: ['o/r'] }, events: ['nope'] })).toThrow(/unknown event/);
-    // GitHub's own names; the earlier MCP names (github.issues) are still accepted in the config.
-    expect(github({ token: 't', scope: { repos: ['o/r'] }, events: ['github.issues', 'push'] }).events).toEqual(['issues', 'push']);
+    // GitHub's own names, as the config takes them; the MCP name (github.issues) isn't one.
+    expect(github({ token: 't', scope: { repos: ['o/r'] }, events: ['issues', 'push'] }).events).toEqual(['issues', 'push']);
+    expect(() => github({ token: 't', scope: { repos: ['o/r'] }, events: ['github.issues'] })).toThrow('unknown event "github.issues"');
   });
 
   it('matches on X-GitHub-Event and ignores ping', () => {

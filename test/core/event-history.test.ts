@@ -33,3 +33,22 @@ describe('EventHistory.get', () => {
     expect(await history.get('broker_c.order.filled', '1001')).toBeUndefined();
   });
 });
+
+describe('EventHistory.recent', () => {
+  it("lists only the name's instance when given a name", async () => {
+    const config = resolveConfig(defineConfig({ providers: [broker('broker_a'), broker('broker_b')] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+    const searched: string[] = [];
+    const hookdeck = {
+      listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }),
+      listRequests: async ({ source_id }: { source_id: string }) => {
+        searched.push(source_id);
+        return { models: [{ id: 'req_1', verified: true, rejection_cause: null, data: { headers: { 'x-delivery-id': '1', 'x-hookdeck-verified': 'true' }, body: { symbol: 'AAPL' } } }] };
+      },
+    } as unknown as HookdeckClient;
+    const history = new EventHistory({ hookdeck, catalog: new Catalog(config.providers), providers: config.providers });
+
+    expect((await history.recent({ name: 'broker_a.order.filled' })).map((e) => e.name)).toEqual(['broker_a.order.filled']);
+    expect(searched).toEqual(['src_bridge-broker_a']);
+    expect(await history.recent({ name: 'nope.order.filled' })).toEqual([]);
+  });
+});

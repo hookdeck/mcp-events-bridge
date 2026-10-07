@@ -167,7 +167,7 @@ Nothing in MCP Events requires the MCP server to be the sender. A delivery is a 
 - **Failures happen outside the bridge.** A transformation error becomes a `TRANSFORMATION_FAILED` ignored event; nothing tells the subscriber. The bridge learns of it through Event Gateway issue notifications (see "Problem feedback from Event Gateway").
 - **Filter expressiveness.** As above: arguments must map to Hookdeck filters, with normalization done in the transformation (rule order: transformation, filter, dedupe, retry).
 - **Size.** The 256 KiB payload limit has to be enforced in the transformation.
-- **What stays the same:** `get_event` and `list_recent_events` already read from Event Gateway; the challenge is already sent by the bridge; expiry and unsubscribe already delete connections.
+- **What stays the same:** `get_event` and `list_events` already read from Event Gateway; the challenge is already sent by the bridge; expiry and unsubscribe already delete connections.
 
 To answer before committing to it: whether a destination can carry a per-subscription static header, whether a transformation can be shared across connections with per-connection values, and how transformation failures are surfaced through the API. (Event Gateway documents no limits on the number of connections.)
 
@@ -319,7 +319,7 @@ src/
     mcp.ts              MCP server: tools + hand-registered events/* handlers
     setup.ts            `setup`: Event Gateway resources, provider webhooks, issue feedback
     inbound-plan.ts     the inbound connections a config implies; `hookdeck listen` arguments
-    event-history.ts    get_event and list_recent_events, from Event Gateway's requests
+    event-history.ts    get_event and list_events, from Event Gateway's requests
     callbacks.ts        tunnel URLs for local agents: create, sweep unused, plan listen, retry missed deliveries
     inbound-recovery.ts recover provider events a local bridge missed while its listen was down
   host/
@@ -409,7 +409,7 @@ No database. Event Gateway is the store, so the bridge is stateless and needs no
 
 - **Events:** never stored by the bridge; Event Gateway is the record of every event.
 - **Subscriptions:** one connection each, `mcp-sub-<id>`, from the topic source to an HTTP destination at the callback URL:
-  - **connection description:** readable JSON metadata, so the operator can see it in the dashboard: `{"v":1,"principal":…,"event":…,"provider":…,"arguments":…,"expiresAt":…,"createdAt":…,"updatedAt":…}`, plus `delivery` while it isn't healthy. `provider` is the instance id, and a subscription is only matched to its own instance's events: one from before 0.2.0 has none, and its name can now mean another instance's event (an instance with id `email` offers `email.received`, once Resend's name), so it gets nothing until the client subscribes again. At most 500 characters; subscribe rejects arguments that don't fit.
+  - **connection description:** readable JSON metadata, so the operator can see it in the dashboard: `{"v":1,"principal":…,"event":…,"arguments":…,"expiresAt":…,"createdAt":…,"updatedAt":…}`, plus `delivery` while it isn't healthy. At most 500 characters; subscribe rejects arguments that don't fit.
   - **destination auth:** the signing secret, as `CUSTOM_SIGNATURE` config. This is Event Gateway's field for credentials: masked in the dashboard and in every listing, returned only by `GET /destinations/{id}?include=config.auth`. It's also where the secret will be used once Event Gateway can sign Standard Webhooks.
 - **Topics:** found by name, `bridge-out-<event name, slugged>`.
 - **Provider instances:** found by name, `bridge-<instance id>` and `bridge-<instance id>-<deployment>`, with the provider's webhook id in the source description.
@@ -524,7 +524,7 @@ For senders with no Event Gateway source type: a service you run yourself (the m
 - **Occurred-at:** a body field (ISO 8601, or Unix seconds or milliseconds); else the time received, as GitHub's last fallback.
 - **Data:** the JSON body as sent, optionally narrowed to top-level `fields`; a non-object JSON body is wrapped as `{ body }`. The relay's 256 KiB envelope limit applies, and a non-JSON body is ignored with `200` (a `4xx` would only make Event Gateway retry it); the request stays in Event Gateway.
 - **Arguments:** equality filters on declared top-level `filters` (string, number or boolean, compared as strings), as a strict JSON Schema object, so an agent subscribes with `{ "symbol": "AAPL" }`. Filters must be among `fields` when both are set.
-- **History:** `list_recent_events` maps stored requests too: the event history adds `x-hookdeck-requestid` and `x-hookdeck-verified` (from the request's `verified`) to each stored request's headers, as delivery would. `get_event` finds events by a header id only.
+- **History:** `list_events` maps stored requests too: the event history adds `x-hookdeck-requestid` and `x-hookdeck-verified` (from the request's `verified`) to each stored request's headers, as delivery would. `get_event` finds events by a header id only.
 
 The config edit in `providers add webhook --write-config` splices the entry into the `providers` array at positions from the parsed AST, so the rest of the file keeps its formatting, and adds the `webhook` and `env` imports through magicast (a small library for programmatic config edits, on Babel's parser; loaded only by this command). The result is re-parsed and checked, then written through a temporary file and a rename. It refuses, and prints the entry instead, when the default export isn't `defineConfig({...})` or an object literal, `providers` isn't an array literal or contains a spread (providers enabled conditionally, as in this repo's own config), or the import paths can't be inferred.
 
@@ -540,7 +540,7 @@ Tools:
 
 - `list_providers()`: configured instances, their events, and how many subscriptions each has.
 - `create_tunnel_url(agent, name, port?, path?)` and `list_tunnel_urls(agent)`: tunnel URLs for local agents, on a bridge with CLI inbound (see "A local agent receiving events"). Results carry the URL, port and path, never secrets.
-- `get_event(name, eventId)` and `list_recent_events(name?, since?, limit?)`, read from Event Gateway. These also work around openai/codex#50714, where dot runs don't receive event data.
+- `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (not the catalog of event kinds, which is `events/list`). These also work around openai/codex#50714, where dot runs don't receive event data.
 - Later, if a client needs it, poll mode: `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. Advertise `"poll"` in each event's `delivery` once built. If a host supports neither MCP Events nor `events/poll`, expose the same implementation as `poll_events` and `wait_for_event` tools.
 
 There are no setup tools: providers change through the config file.
@@ -815,7 +815,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **7 Oct, tunnel URLs per subscription.** One MCP Events source per subscription with a shared CLI destination per agent; the agent routes by `X-MCP-Subscription-Id`. Chosen over one source per agent for separate history and controls, accepting a `listen` restart per new subscription until hookdeck-cli#467.
 - **7 Oct, dual signing.** The bridge signs deliveries to a tunnel URL with its source's secret and the agent's, rather than updating the source's secret (61 seconds to take effect) or passing secrets through tools.
 - **7 Oct, retry, not replay.** Missed deliveries are re-sent by the bridge with a fresh signature; cursor replay is a separate, later feature.
-- **7 Oct, event names.** MCP events are named `{instance id}.{provider event name}` (#15). Chosen over merging same-named events across instances with an `instance` argument: simpler, no schema merging, and the catalog shows each provider. Breaking for Resend (`email.received` became `resend.email.received`); the bridge logs subscriptions to events it no longer offers, with the new name.
+- **7 Oct, event names.** MCP events are named `{instance id}.{provider event name}` (#15). Chosen over merging same-named events across instances with an `instance` argument: simpler, no schema merging, and the catalog shows each provider. Breaking, and accepted: 0.1.0 had no other users, so there's no migration. Resend's `email.received` became `resend.email.received`, configs use the provider's own event names (`issues`, not `github.issues`), and 0.1.0 subscriptions aren't carried over (the client subscribes again; the bridge logs subscriptions to events it doesn't offer). The name identifies the instance (ids have no dots), so subscriptions match on name alone. `get_event` takes the name as well as the id, since an event id is the provider's own and two instances can share one; `list_recent_events` became `list_events`.
 - **7 Oct, deployment names.** `deployment` is optional: `BRIDGE_DEPLOYMENT`, else `local` (CLI inbound) or `public` (HTTP inbound). It was `dev` in the examples, which read as "not for real use" once a bridge on a laptop became the setup for local agents.
 - **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions.
 - **7 Oct, local scope.** One bridge per machine, with one owner and its own Hookdeck project, running alongside the agent. The bridge runs `listen` and catches up by itself; the agent-facing tool becomes `create_tunnel_url`. Poll, push and cursor replay aren't local requirements and move to later (supersedes the 5 Oct poll fallback for local agents).
@@ -846,7 +846,7 @@ Searched on 5 Oct 2026. No open-source project turned up that turns third-party 
 | --- | --- | --- |
 | [Smithery triggers](https://smithery.ai/docs/build/triggers) (preview) | A vendor-prefixed MCP Events profile (`ai.smithery/events/*`). Smithery passes subscribe through to the MCP server, which registers the upstream webhook and delivers signed events straight to the consumer | Closest on protocol. Leaves provider ingestion, signing and retries to each server author, which is what the bridge does. Complementary: the bridge could act as a Smithery trigger server |
 | [Composio triggers](https://docs.composio.dev/docs/using-triggers) | Hosted. Provider webhooks (or polling) per connected account, fanned out to trigger instances and delivered to a subscriber URL with a rotatable secret | Closest on function, with its own envelope rather than MCP Events. Its trigger instance per connected account is the bridge's provider instance |
-| [Pipedream Connect triggers](https://pipedream.com/docs/connect/components/triggers) | Hosted. Deploy a trigger with a `webhook_url` and get a signing key; or pull recent events from an API | Same shape as subscribe-with-callback plus `list_recent_events`. Not MCP Events |
+| [Pipedream Connect triggers](https://pipedream.com/docs/connect/components/triggers) | Hosted. Deploy a trigger with a `webhook_url` and get a signing key; or pull recent events from an API | Same shape as subscribe-with-callback plus `list_events`. Not MCP Events |
 | Zapier SDK triggers ([docs](https://docs.zapier.com/sdk/index.md)) | Experimental: subscribe to app events in code, with Zapier holding subscription state and webhook reliability | Same idea, closed, not MCP Events |
 | [mcp-webhook-events](https://pypi.org/project/mcp-webhook-events/0.2.0/) | Python library for an MCP server to emit MCP Events about its own app | First-party emitting; the bridge is the third-party case |
 | [Hook0 MCP](https://www.hook0.com/webhooks-for-ai-agents) | MCP tools to manage the webhooks you send | Outbound management, a different direction |

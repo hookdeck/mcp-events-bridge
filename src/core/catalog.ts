@@ -37,27 +37,6 @@ export class Catalog {
     return this.byName.get(name);
   }
 
-  /**
-   * The event a subscription gets: its name's entry, if it's for the same provider instance. A subscription from
-   * before 0.2.0 records no instance, and its name may now be another instance's event (`email.received` from an
-   * instance with id `email`), so it gets nothing until the client subscribes again.
-   */
-  forSubscription(subscription: { name: string; providerId: string | null }) {
-    const entry = this.byName.get(subscription.name);
-    return entry && entry.providerId === subscription.providerId ? entry : undefined;
-  }
-
-  /**
-   * The names an event from before `{id}.{event}` naming is offered as now: `email.received` (Resend's own name) is
-   * `resend.email.received`; `github.issues` (type-prefixed) is `<github instance id>.issues`. Every instance that
-   * offers it, so the caller can say which to choose.
-   */
-  renamedFrom(oldName: string): string[] {
-    return [...this.byName.values()]
-      .filter((e) => e.event.name === oldName || `${e.providerType}.${e.event.name}` === oldName)
-      .map((e) => e.name);
-  }
-
   /** Entries for one provider instance, for mapping its inbound requests. */
   forProvider(providerId: string) {
     return [...this.byName.values()].filter((entry) => entry.providerId === providerId);

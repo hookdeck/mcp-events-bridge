@@ -93,14 +93,9 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
 
   const catalog = new Catalog(config.providers);
-  // Subscriptions that get nothing: from before 0.2.0 (events named {id}.{event}, with the instance recorded), or for an
-  // event this bridge no longer offers. Say so, with the name to subscribe to when there's one.
+  // Subscriptions to an event this bridge doesn't offer (a provider removed, an `id` renamed) get nothing; say so.
   for (const subscription of store.list()) {
-    if (catalog.forSubscription(subscription)) continue;
-    const renamed = catalog.renamedFrom(subscription.name).map((name) => `"${name}"`);
-    const hint = renamed.length === 1 ? `; the client needs to subscribe to ${renamed[0]}` : renamed.length ? `; the client needs to subscribe to one of ${renamed.join(', ')}` : '';
-    const why = subscription.providerId === null ? 'is from before 0.2.0 and gets nothing' : `is for "${subscription.name}", which this bridge doesn't offer`;
-    log(`subscription ${subscription.id} ${subscription.providerId === null ? `("${subscription.name}") ` : ''}${why}${hint}`);
+    if (!catalog.get(subscription.name)) log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer`);
   }
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
@@ -127,7 +122,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     config.providers.map((p) => {
       // MCP names, as in events/list and events/subscribe.
       const events = catalog.forProvider(p.id).map((e) => e.name);
-      return { id: p.id, type: p.definition.type, events, subscriptions: store.list().filter((s) => catalog.forSubscription(s)?.providerId === p.id).length };
+      return { id: p.id, type: p.definition.type, events, subscriptions: store.list().filter((s) => events.includes(s.name)).length };
     });
 
   const localAgents = options.localAgents ?? config.inbound === 'cli';

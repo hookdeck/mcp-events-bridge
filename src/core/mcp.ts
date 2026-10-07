@@ -32,7 +32,7 @@ export function buildMcpServer(deps: {
     'get_event',
     {
       description:
-        'Get a past event by its name and eventId (both are in every MCP Events delivery and in list_recent_events), read from Hookdeck Event Gateway.',
+        'Get one event that happened, by its name and eventId (both are in every MCP Events delivery and in list_events), read from Hookdeck Event Gateway.',
       inputSchema: z.object({
         name: z.string().describe('The event name, such as resend.email.received'),
         eventId: z.string(),
@@ -45,9 +45,10 @@ export function buildMcpServer(deps: {
   );
 
   server.registerTool(
-    'list_recent_events',
+    'list_events',
     {
-      description: 'List recent events, newest first, optionally for one event name and since a time (ISO 8601).',
+      description:
+        'List events that happened, newest first, optionally for one event name and since a time (ISO 8601), read from Hookdeck Event Gateway. For the kinds of events you can subscribe to, see events/list.',
       inputSchema: z.object({ name: z.string().optional(), since: z.string().optional(), limit: z.number().int().min(1).max(100).optional() }),
     },
     async (args) => json({ events: await history.recent(args) }),

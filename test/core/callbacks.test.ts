@@ -42,7 +42,6 @@ const subscription = (over: Partial<SubscriptionInput> = {}): SubscriptionInput 
   id: 'sub_1',
   principal: 'owner',
   name: 'resend.email.received',
-  providerId: 'resend',
   arguments: {},
   url: 'https://receiver.example.com/a',
   secret: generateWebhookSecret(),

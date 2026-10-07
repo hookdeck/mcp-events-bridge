@@ -129,7 +129,6 @@ function input(id: string, from = ''): SubscriptionInput {
     id,
     principal: 'owner',
     name: 'resend.email.received',
-    providerId: 'resend',
     arguments: from ? { from } : {},
     url: 'https://receiver.example.com/hook',
     secret: generateWebhookSecret(),
