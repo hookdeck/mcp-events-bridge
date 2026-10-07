@@ -5,6 +5,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
+import { MemoryStore } from '../../src/core/memory-store.js';
+import { generateWebhookSecret } from '../../src/core/secret.js';
+import { healthyDelivery } from '../../src/core/store.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createNodeCallbackTransport } from '../../src/host/callback-transport.js';
 import { createBridgeServer, redactPath } from '../../src/host/server.js';
@@ -31,7 +34,7 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((r) => r.close()));
 });
 
-async function startBridge({ inbound = 'cli' as 'cli' | 'http' } = {}) {
+async function startBridge({ inbound = 'cli' as 'cli' | 'http', store }: { inbound?: 'cli' | 'http'; store?: MemoryStore } = {}) {
   const gateway = new FakeEventGateway();
   const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', providers: [resend({ apiKey: 'x' })] }), {
     HOOKDECK_API_KEY: 'k',
@@ -41,6 +44,7 @@ async function startBridge({ inbound = 'cli' as 'cli' | 'http' } = {}) {
   const logs: string[] = [];
   const bridge = await createBridgeServer(config, {
     hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    ...(store && { store }),
     // The subscriber's receiver is local; stand in for Event Gateway's challenge answer.
     subscriptionOverrides: { verify: async () => ({ ok: true }), transport: createNodeCallbackTransport({ allowNonPublic: true }) },
     log: (m) => logs.push(m),
@@ -99,6 +103,30 @@ describe('bridge server', () => {
     await deliverPublished(gateway, subscriber);
     expect(subscriber.events).toHaveLength(1);
     expect(subscriber.events[0]).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'resend.email.received', data: { fromAddress: 'sender@example.com' } });
+  });
+
+  it('lists providers with their MCP event names and how many subscriptions each has', async () => {
+    const { port } = await startBridge();
+    await startSubscriber(port);
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      const result = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
+      expect(result.structuredContent?.providers).toEqual([{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('logs a subscription to an event from before {id}.{event} naming, with the name to use now', async () => {
+    const store = new MemoryStore();
+    await store.put({
+      id: 'sub_old', principal: 'owner', name: 'email.received', arguments: {}, url: 'https://receiver.example.com/hook',
+      secret: generateWebhookSecret(), previousSecret: null, previousSecretExpiresAt: null, delivery: healthyDelivery(),
+      expiresAt: '2099-01-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+    const { logs } = await startBridge({ store });
+    expect(logs).toContain('subscription sub_old is for "email.received", which this bridge doesn\'t offer; the client needs to subscribe to "resend.email.received"');
   });
 
   it('applies the from filter', async () => {

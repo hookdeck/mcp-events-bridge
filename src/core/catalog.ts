@@ -12,6 +12,8 @@ export interface CatalogEntry {
   /** The MCP event name: `{instance id}.{event.name}`. */
   name: string;
   providerId: string;
+  /** The provider type (`resend`, `github`, `webhook`), for mapping names from before `{id}.{event}` naming. */
+  providerType: string;
   // Events have varying argument and summary types.
   event: ProviderEvent<any, any>;
 }
@@ -24,15 +26,26 @@ export class Catalog {
       for (const event of provider.definition.events) {
         if (!provider.events.includes(event.name)) continue;
         const name = mcpEventName(provider.id, event.name);
-        // Instance ids are unique, so names are too, unless an id and an event name combine ambiguously (a.b + c vs a + b.c).
-        if (this.byName.has(name)) throw new Error(`Two provider instances offer "${name}"; rename one instance's id`);
-        this.byName.set(name, { name, providerId: provider.id, event });
+        // Ids are unique and have no dots, so a name splits at its first dot and can't repeat: an assertion.
+        if (this.byName.has(name)) throw new Error(`Two provider instances offer "${name}"`);
+        this.byName.set(name, { name, providerId: provider.id, providerType: provider.definition.type, event });
       }
     }
   }
 
   get(name: string) {
     return this.byName.get(name);
+  }
+
+  /**
+   * The names an event from before `{id}.{event}` naming is offered as now: `email.received` (Resend's own name) is
+   * `resend.email.received`; `github.issues` (type-prefixed) is `<github instance id>.issues`. Every instance that
+   * offers it, so the caller can say which to choose.
+   */
+  renamedFrom(oldName: string): string[] {
+    return [...this.byName.values()]
+      .filter((e) => e.event.name === oldName || `${e.providerType}.${e.event.name}` === oldName)
+      .map((e) => e.name);
   }
 
   /** Entries for one provider instance, for mapping its inbound requests. */

@@ -23,4 +23,17 @@ describe('Catalog', () => {
     expect(catalog.get('broker_b.order.filled')).toMatchObject({ providerId: 'broker_b', event: { name: 'order.filled' } });
     expect(catalog.forProvider('broker_a').map((e) => e.name)).toEqual(['broker_a.order.filled']);
   });
+
+  it('maps names from before {id}.{event} naming to every instance that offers the event now', () => {
+    const config = resolveConfig(
+      defineConfig({
+        providers: [resend({ apiKey: 'x' }), resend({ id: 'support', apiKey: 'y' }), github({ id: 'acme', webhookSecret: 'a-long-enough-secret', events: ['issues'] })],
+      }),
+      environment,
+    );
+    const catalog = new Catalog(config.providers);
+    expect(catalog.renamedFrom('email.received')).toEqual(['resend.email.received', 'support.email.received']);
+    expect(catalog.renamedFrom('github.issues')).toEqual(['acme.issues']); // type-prefixed, with a non-default id
+    expect(catalog.renamedFrom('github.push')).toEqual([]); // not enabled here
+  });
 });

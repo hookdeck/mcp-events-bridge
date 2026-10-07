@@ -86,8 +86,10 @@ destination: bridge-<instance id>-<deployment> -> https://<bridge>/inbound/<inst
 Per MCP event name (a topic), created on first subscribe:
 
 ```text
-source:      bridge-out-<event name, slugged>     (PUBLISH_API: only Publish API requests accepted)
-             e.g. bridge-out-email_received: resource names allow only letters, digits, - and _
+source:      bridge-out-<MCP event name, slugged> (PUBLISH_API: only Publish API requests accepted)
+             e.g. bridge-out-resend_email_received: resource names allow only letters, digits, - and _
+             (two names can slug alike, e.g. a_b.c and a.b_c; they share a source harmlessly,
+             since each subscription's connection filters on X-MCP-Subscription-Id)
 ```
 
 Per subscription:

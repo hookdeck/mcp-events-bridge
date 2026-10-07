@@ -97,8 +97,9 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   // {id}.{event}) get nothing; say so, with the name to subscribe to instead when there's one.
   for (const subscription of store.list()) {
     if (catalog.get(subscription.name)) continue;
-    const renamed = catalog.list().find((e) => e.name.endsWith(`.${subscription.name}`))?.name;
-    log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer${renamed ? `; the client needs to subscribe to "${renamed}"` : ''}`);
+    const renamed = catalog.renamedFrom(subscription.name).map((name) => `"${name}"`);
+    const hint = renamed.length === 1 ? `; the client needs to subscribe to ${renamed[0]}` : renamed.length ? `; the client needs to subscribe to one of ${renamed.join(', ')}` : '';
+    log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer${hint}`);
   }
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
@@ -122,12 +123,11 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   });
   const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
   const providers = () =>
-    config.providers.map((p) => ({
-      id: p.id,
-      type: p.definition.type,
-      events: p.events,
-      subscriptions: store.list().filter((s) => p.events.includes(s.name)).length,
-    }));
+    config.providers.map((p) => {
+      // MCP names, as in events/list and events/subscribe.
+      const events = catalog.forProvider(p.id).map((e) => e.name);
+      return { id: p.id, type: p.definition.type, events, subscriptions: store.list().filter((s) => events.includes(s.name)).length };
+    });
 
   const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(
