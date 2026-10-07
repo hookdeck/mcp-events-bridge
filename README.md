@@ -14,7 +14,7 @@ MCP Events is an experimental MCP extension that lets an agent subscribe to even
 
 The bridge closes that gap:
 
-- **Webhooks become MCP Events.** Built-in webhook providers: Resend inbound email and GitHub. Add others with `defineProvider`, for any service Event Gateway has a source type for. Generic HMAC-signed webhooks, such as ones from a service you've built, aren't supported yet.
+- **Webhooks become MCP Events.** Built-in webhook providers: Resend inbound email, GitHub, and generic webhooks from any HTTP sender, such as a service you've built, verified with HMAC, Standard Webhooks, Basic auth or an API key. Add others with `defineProvider`.
 - **Subscribers choose what wakes them.** Events have filters, such as an email's sender, or a GitHub repository and action.
 - **Every event verified, delivered and recorded.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.
@@ -40,7 +40,7 @@ You need:
 - Node 22.12 or later.
 - A [Hookdeck](https://hookdeck.com) account and a project for the bridge. From the project's settings (Secrets): the **API key** and the **signing secret**.
 - The [Hookdeck CLI](https://hookdeck.com/docs/cli), for running the bridge locally (and for `npm run e2e`).
-- An account with at least one [webhook provider](#webhook-providers): Resend or GitHub.
+- At least one [webhook provider](#webhook-providers): a Resend or GitHub account, or any service that sends webhooks, including your own.
 
 1. **Create a project and install the bridge:**
 
@@ -130,9 +130,60 @@ Two ways to connect repositories:
 | **Automatic** | `github({ token, scope: { repos: ['owner/name', ...] } })`, or `scope: { org: 'name' }` for every repository in an organization | `setup`, with a fine-grained token that has the Webhooks (read and write) permission. For an organization's repositories, the token's resource owner must be the organization. `scope: { org }` creates one organization webhook, which needs an organization owner and the organization Webhooks permission |
 | **Manual** | `github({ webhookSecret })`, no token | You: in each repository, Settings > Webhooks > Add webhook, with the Payload URL `setup` prints, content type `application/json`, and the same secret |
 
+### Generic webhooks
+
+Webhooks from any HTTP sender: a service you run yourself, or a provider the bridge has no built-in support for. For example, instead of an agent polling a trading server's orders every bar to see whether an order filled, the server sends a webhook when it fills, and the agent subscribes to `order.filled` for the symbols it trades:
+
+```ts
+import { defineConfig, env } from '@hookdeck/mcp-events-bridge';
+import { webhook } from '@hookdeck/mcp-events-bridge/providers';
+
+export default defineConfig({
+  deployment: process.env.BRIDGE_DEPLOYMENT ?? 'dev',
+  providers: [
+    webhook({
+      id: 'fills',                       // names the Event Gateway source: bridge-fills
+      verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: env('FILLS_WEBHOOK_SECRET') },
+      events: { 'order.filled': { description: 'An order on my trading server filled.' } },
+      eventId: { header: 'x-delivery-id' },     // stable across the sender's retries
+      occurredAt: { field: 'filled_at' },
+      filters: ['symbol', 'side'],              // an agent subscribes with { "symbol": "AAPL" }
+    }),
+  ],
+});
+```
+
+The server signs each request's raw body with HMAC-SHA256 and the shared secret, hex-encoded in `x-signature`, and POSTs JSON such as `{ "symbol": "AAPL", "side": "buy", "quantity": 100, "price": 187.5, "filled_at": "2026-10-07T14:30:00Z" }`.
+
+- **`verification`** (required): Event Gateway verifies every request and rejects the rest before they reach the bridge. One of:
+  - `{ type: 'hmac', algorithm, encoding, header, secret }`: an HMAC of the raw body in a header. `algorithm` is `sha1`, `sha256` or `sha512`; `encoding` is `hex`, `base64` or `base64url`. A `sha256=` prefix on the value is accepted.
+  - `{ type: 'standard-webhooks', secret }`: [Standard Webhooks](https://www.standardwebhooks.com) signatures, usually with a `whsec_...` secret.
+  - `{ type: 'basic-auth', username, password }` or `{ type: 'api-key', header, key }`: a shared credential sent with every request. Prefer a signature: Event Gateway keeps request headers, so these credentials are stored with each request, and anyone who sees one can replay it.
+  There's no unverified option: anyone with the URL could otherwise wake your agents with whatever they send.
+- **`events`:** MCP event names, as a list or with a description each. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
+- **`eventId`:** the sender's id for a delivery, from `{ header }` or `{ field }`. It becomes the event's `webhook-id`, and Event Gateway drops repeats within an hour. Default: Event Gateway's request id, which stays the same when Event Gateway retries but not when the sender does, so set it if your sender retries.
+- **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when the bridge received the request.
+- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON, and the event at most 256 KiB.
+- **`filters`:** top-level body fields subscribers can filter on, by exact match.
+
+Credentials are `env()` references. The sender usually gives you its secret only after you register the URL, so the bridge can create the source first:
+
+1. **Create the source and the config entry:**
+
+   ```sh
+   npx mcp-events-bridge providers add webhook fills --event order.filled --event-id-header x-delivery-id --filter symbol --filter side
+   ```
+
+   It creates the Event Gateway source `bridge-fills` and prints its URL, adds `FILLS_WEBHOOK_SECRET=` to `.env` (empty, and only if `.env` doesn't have it), and prints the `webhook({...})` entry to paste into `providers`. `--write-config` adds the entry to `bridge.config.ts` itself, or prints it if the file isn't a shape it can edit safely (for example providers built conditionally). `--verification` chooses `hmac` (the default; `--algorithm`, `--encoding` and `--header` set the rest), `standard-webhooks`, `basic-auth` or `api-key`; `providers add webhook --help` lists every option. Re-running it reuses the source and adds nothing twice.
+2. **Register the URL with the sender,** and copy the secret it gives you (or, for your own server, generate one with `openssl rand -hex 32` and give it to the server).
+3. **Put the secret in `.env`:** `FILLS_WEBHOOK_SECRET=...`.
+4. **Run `npx mcp-events-bridge setup`.** It sets the secret on the source and connects the source to the bridge. A new or changed secret can take up to about a minute to take effect at Event Gateway; the bridge ignores any request Event Gateway didn't verify in the meantime.
+
+Until the secret is set, delivery is held: `setup` creates no connection from the source to the bridge, so requests that arrive are kept in Event Gateway but never delivered, and `serve` refuses to start, naming the variable to set.
+
 ### Adding a webhook provider
 
-A provider is a `defineProvider({...})` object: the Event Gateway source type, how to recognize and summarize each event, the subscribe filters, and optionally how to register the webhook. See ["Adding a provider"](docs/ARCHITECTURE.md#adding-a-provider) and the built-in [Resend](src/core/providers/resend.ts) and [GitHub](src/core/providers/github.ts) providers.
+For a sender that signs with HMAC, Standard Webhooks, Basic auth or an API key, the generic provider above needs no code. Otherwise, a provider is a `defineProvider({...})` object: the Event Gateway source type (or a `WEBHOOK` source with the verification config in `sourceConfig`), how to recognize and summarize each event, the subscribe filters, and optionally how to register the webhook. See ["Adding a provider"](docs/ARCHITECTURE.md#adding-a-provider) and the built-in [Resend](src/core/providers/resend.ts), [GitHub](src/core/providers/github.ts) and [generic webhook](src/core/providers/webhook.ts) providers.
 
 ## Deploy to Fly.io
 
@@ -160,7 +211,7 @@ BRIDGE_DEPLOYMENT=fly BRIDGE_INBOUND=http BRIDGE_PUBLIC_URL=https://<app>.fly.de
 fly deploy
 ```
 
-On Fly.io, the bridge receives events over HTTP at its public URL instead of through the Hookdeck CLI, using the `fly` resources that `setup` created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret; in GitHub's manual mode, set `GITHUB_WEBHOOK_SECRET` as a Fly secret too. The Dockerfile copies only `bridge.config.ts`: copy any other files your config imports, such as your own providers.
+On Fly.io, the bridge receives events over HTTP at its public URL instead of through the Hookdeck CLI, using the `fly` resources that `setup` created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret; in GitHub's manual mode, set `GITHUB_WEBHOOK_SECRET` as a Fly secret too, and likewise each generic webhook's credentials. The Dockerfile copies only `bridge.config.ts`: copy any other files your config imports, such as your own providers.
 
 Use a separate Hookdeck project for each environment you want isolated: deployments in one project share the provider sources and the subscriptions. An optional namespace for sharing a project is proposed in [#13](https://github.com/hookdeck/mcp-events-bridge/issues/13).
 
@@ -210,6 +261,18 @@ Set only what the providers in your `bridge.config.ts` need. The names are the o
 | `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission. Only `setup` uses it |
 | `GITHUB_WEBHOOK_SECRET` | In manual mode | The secret on the webhooks you add (at least 16 characters). Needed wherever the bridge runs |
 
+#### Generic webhooks
+
+Each `webhook()` instance's credentials, named as its `env()` references name them. `providers add webhook <id>` uses these names:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `<ID>_WEBHOOK_SECRET` | For `hmac` and `standard-webhooks` | The signing secret the sender uses |
+| `<ID>_WEBHOOK_API_KEY` | For `api-key` | The key the sender sends in its header |
+| `<ID>_WEBHOOK_USERNAME`, `<ID>_WEBHOOK_PASSWORD` | For `basic-auth` | The sender's Basic auth credentials |
+
+`<ID>` is the instance id, upper-cased, with other characters as `_` (`fills` gives `FILLS_WEBHOOK_SECRET`). Needed wherever the bridge runs: `setup` sets them on the Event Gateway source, and `serve` refuses to start without them.
+
 ## MCP surface
 
 - `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery.
@@ -231,7 +294,7 @@ If your agent builds every callback URL from one base URL plus a path, create on
 ## Security and limitations
 
 - **The MCP URL is a credential.** One secret URL authenticates one owner. It's redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned.
-- **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first.
+- **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first. Generic webhooks have no unverified option, and the bridge relays only requests Event Gateway marked as verified.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook delivery only.** Poll and push delivery, and replay cursors, may come later if clients need them. Local agents receive webhooks through the Hookdeck CLI (above).
 - **Retries reuse the first signature.** The spec asks for a fresh signature on each attempt. Retries are kept inside the 5-minute window receivers check, until Event Gateway signs deliveries itself.
@@ -248,7 +311,7 @@ npm run build             # compiles to dist/, as published
 npm run bridge -- setup   # the CLI from source; this repo's bridge.config.ts imports from ./src
 ```
 
-`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_GITHUB=1` adds a real GitHub push; `E2E_LOCAL=1` adds a mock local agent receiving through tunnel URLs, with the bridge running `hookdeck listen` and catching up by itself, and the bridge recovering its own missed inbound; `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
+`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_GITHUB=1` adds a real GitHub push; `E2E_LOCAL=1` adds a mock local agent receiving through tunnel URLs, with the bridge running `hookdeck listen` and catching up by itself, and the bridge recovering its own missed inbound; `E2E_WEBHOOK=1` adds the generic webhook provider, with the script as a trading server sending signed and wrongly signed fills (needs `FILLS_WEBHOOK_SECRET`, which enables the `fills` instance in this repo's `bridge.config.ts`, and `setup` run with it); `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
 
 Issues and pull requests are welcome. [`AGENTS.md`](AGENTS.md) has the project's conventions, for people and coding agents alike.
 
