@@ -70,7 +70,10 @@ async function setup(configFile: string | undefined) {
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
-    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(config, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
+    // Without providers still waiting for a secret: their source has no connection yet, and `listen` would create a default one.
+    const waiting = new Set(report.providers.filter((p) => p.waitingFor?.length).map((p) => p.id));
+    const ready = { ...config, providers: config.providers.filter((p) => !waiting.has(p.id)) };
+    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(ready, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
   }
   if (report.mcp.generated) {
     console.log(`\nGenerated an MCP secret. Set it before running serve, and keep it private (the URL is a credential):`);

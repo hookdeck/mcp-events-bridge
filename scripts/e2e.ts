@@ -547,7 +547,8 @@ async function webhookFills(ctx: { hookdeck: HookdeckClient; subscriber: Subscri
   const other = `e2e-${ctx.run}-other-symbol`;
   const sentAt = Date.now();
   const statuses = [await send(good, 'AAPL', ctx.secret), await send(bad, 'AAPL', 'not-the-secret'), await send(other, 'MSFT', ctx.secret)];
-  const event = await until(() => ctx.subscriber!.events.find((e) => e.eventId === good), 120_000);
+  // As long as the email checks allow: once, Event Gateway queued a fill for ~80s before its first attempt to the CLI.
+  const event = await until(() => ctx.subscriber!.events.find((e) => e.eventId === good), 240_000);
   record('signed fill delivered to the order.filled subscriber', Boolean(event), event ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
   record('webhook-id equals the sender\'s x-delivery-id, and data is the body', event?.data.symbol === 'AAPL' && event.data.id === good, JSON.stringify(event?.data ?? null));
   await wait(30_000);
