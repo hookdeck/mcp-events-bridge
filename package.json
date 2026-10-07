@@ -62,6 +62,7 @@
   "dependencies": {
     "@modelcontextprotocol/node": "^2.1.0",
     "@modelcontextprotocol/server": "^2.2.0",
+    "magicast": "^0.5.5",
     "standardwebhooks": "^1.1.1",
     "tsx": "^4.23.15",
     "zod": "^4.6.5"
