@@ -95,6 +95,11 @@ In order:
 
    The agent then needs no Hookdeck CLI or credentials: it asks for a URL and subscribes.
 3. **A real local agent.** No local agent harness supports MCP Events yet (searched 7 Oct; see "MCP Events clients" in `ARCHITECTURE.md`). The closest is Hermes Agent's draft webhook receiver, which doesn't yet send the spec's `events/subscribe` shape. Until one does, the mock agent stands in.
+   - [ ] Run Hermes Agent locally from its draft PR ([NousResearch/hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908)) with `mcp_events` enabled, pointed at a local bridge.
+   - [ ] Confirm, by running it, the mismatches found by reading the code: subscribe params, `refreshBefore`, unsubscribe params, `name` in the delivery body, `_meta` placement and required keys, and no challenge handler.
+   - [ ] Probe path forwarding on an `MCP_EVENTS` source (the challenge and deliveries sent to a sub-path). Hermes builds every callback URL from one public base URL plus `/mcp/events/webhook/<local id>`, so it needs this, or one tunnel URL per agent.
+   - [ ] Patch Hermes locally to follow the sketch and the 2026-07-28 base protocol, and receive an email event end to end through a tunnel URL.
+   - [ ] Update the draft PR comment with what we observed, then decide: comment, and offer the patch as a PR.
 4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf and emits `notifications/claude/channel`.
 
 Open: one source per subscription (today) or one source per agent with a path per subscription, using Event Gateway's path forwarding. Hermes's receiver needs the second: it has one public base URL and routes by path. With dual signing, a shared source no longer ties subscribers' secrets together, so the choice is about per-subscription history and controls against fewer resources and no `listen` restarts.
