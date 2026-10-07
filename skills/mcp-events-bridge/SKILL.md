@@ -100,7 +100,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 | `setup` exits 1: "Setup isn't complete", then `<id>: set <VAR>` | A webhook secret isn't set | Register the URL, put the secret in `.env`, run `setup` |
 | `serve`: "Not set: <VAR> (provider <id>)" | Same | Same, then `serve` |
 | `serve`: "Event Gateway isn't set up for deployment ..." | `setup` hasn't run with this deployment name and inbound mode | Run `setup` with the same `BRIDGE_DEPLOYMENT` and `BRIDGE_INBOUND` |
-| Log: `subscription ... is for "email.received", which this bridge doesn't offer` | The subscription predates `{id}.{event}` names (0.2.0) | The agent subscribes again to the name in the log line |
+| Log: `subscription ... is from before 0.2.0 and gets nothing` | The subscription predates `{id}.{event}` names | The agent subscribes again to the name in the log line |
 | `events/subscribe` fails: "Unknown event" | Old or wrong name | Use a name from `events/list` |
 | A generic webhook sender gets 401 | Wrong signature, header, encoding or secret | Match the `verification` settings; a new secret can take about a minute |
 | `[bridge] ... 0/0 published` | No subscription matches (name or filters) | Check the subscription's name and arguments |
