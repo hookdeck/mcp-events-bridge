@@ -4,8 +4,12 @@
 
 ### Breaking
 
-- **Event names are `{instance id}.{event}`** ([#15](https://github.com/hookdeck/mcp-events-bridge/issues/15)): the provider instance's `id`, then the provider's own name for the event. `email.received` is now `resend.email.received`; GitHub's names are unchanged with the default `id` (`github.issues`), and an instance with another `id` offers `<id>.issues`. Two instances can now offer the same event. Subscriptions now record their provider instance, so every subscription from 0.1.0 gets nothing, including GitHub's with unchanged names: `serve` logs each one with the name to subscribe to, and agents (ChatGPT included) need to subscribe again.
-- **`get_event(name, eventId)`:** `name` is required. An event id is the provider's own, so two instances can share one; both are in every delivery and in `list_recent_events`.
+0.2.0 breaks compatibility with 0.1.0 deliberately, with no migration paths: 0.1.0 was an early demo release, as far as we know used only by this project.
+
+- **Event names are `{instance id}.{event}`** ([#15](https://github.com/hookdeck/mcp-events-bridge/issues/15)): the provider instance's `id`, then the provider's own name for the event. `email.received` is now `resend.email.received`; GitHub's names are unchanged with the default `id` (`github.issues`), and an instance with another `id` offers `<id>.issues`. Two instances can now offer the same event.
+- **No migration from 0.1.0.** Subscriptions to renamed events get nothing (`serve` logs each subscription to an event it doesn't offer): agents, ChatGPT included, subscribe again with a name from `events/list`. Configs take the provider's own event names: `events: ['issues']`, not `['github.issues']`.
+- **`get_event(name, eventId)`:** `name` is required. An event id is the provider's own, so two instances can share one; both are in every delivery and in `list_events`.
+- **`list_recent_events` is `list_events`.** With a name, it searches only that instance.
 
 ### Added
 

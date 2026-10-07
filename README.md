@@ -325,7 +325,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 |---|---|---|
 | `setup` exits 1: "Setup isn't complete", then `<id>: set <VAR>` | A generic webhook's secret isn't set; everything else was set up | Register the printed URL with the sender, put the secret in `.env`, run `setup` again |
 | `serve`: "Event Gateway isn't set up for deployment ..." | `setup` hasn't run with this deployment name and inbound mode | Run `setup` with the same `BRIDGE_DEPLOYMENT` and `BRIDGE_INBOUND` |
-| `serve` logs `subscription ... is from before 0.2.0 and gets nothing` | The subscription predates `{id}.{event}` names | The agent subscribes again, to the name in the log line |
+| `serve` logs `subscription ... is for "...", which this bridge doesn't offer` | The provider was removed, its `id` renamed, or the subscription is from 0.1.0 (before `{id}.{event}` names) | The agent subscribes again, to a name from `events/list` |
 | `events/subscribe` fails with "Unknown event" | An old or wrong name | Use a name from `events/list` |
 | A generic webhook sender gets 401 | Wrong signature, header, encoding or secret | Match the provider's `verification`; a new secret can take about a minute to apply |
 | `serve` logs `0/0 published` | No subscription matches the event's name or filters | Check the subscription's name and arguments with `list_providers` |
