@@ -16,7 +16,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
-| 6 | Local agents | Build | In progress: callback URLs for local agents built (`E2E_LOCAL=1`); next poll mode, then the Claude Code channel |
+| 6 | Local agents | Build | In progress: callback URLs built (`E2E_LOCAL=1`, PR #12); next, the bridge runs `listen` and catches up by itself |
 | 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
@@ -80,17 +80,26 @@ Done when (all verified live: `E2E_EXTENDED=1 npm run e2e`, and ChatGPT on 6 Oct
 
 ## Stage 6: Local agents (build)
 
-Local agents receive MCP Events through Event Gateway and the Hookdeck CLI: the CLI connects out from inside the firewall, so a laptop gets a real webhook endpoint with Event Gateway's retries, and events wait while it's offline. Event Gateway's MCP Events source type (shipped 6 Oct 2026) answers the subscribe challenge and verifies deliveries; the e2e test subscribers already use it.
+Scope (decided 7 Oct): an agent on a laptop that implements MCP Events webhook delivery, with the bridge running on the same machine. One bridge per machine, with one owner, so nothing is shared between users. Delivery goes through Event Gateway and the Hookdeck CLI: the CLI connects out from inside the firewall, so the laptop gets a real webhook endpoint with Event Gateway's retries, and events wait while it's offline. Event Gateway's MCP Events source type (shipped 6 Oct 2026) answers the subscribe challenge and verifies deliveries.
+
+Poll, push and cursor replay aren't part of this stage. They serve clients that can't receive webhooks wherever they run, so they're under "Later".
 
 In order:
 
-1. **Webhook delivery to local agents (callback URLs).** For agents that support MCP Events themselves: the bridge's `create_callback_url` tool gives each subscription its own MCP Events source with a connection to the agent's shared CLI destination; the bridge signs the challenge and deliveries with both the source's secret and the agent's (client-supplied at subscribe), so no secret passes through a tool; `hookdeck listen` covers the agent's sources; and `retry_missed_deliveries` re-sends, freshly signed, events missed while offline or during a restart. A mock agent (an MCP client that subscribes in webhook mode and routes by `X-MCP-Subscription-Id`) proves it end to end (`E2E_LOCAL=1`).
-   - **Known limit:** a running `listen` only receives events for the connections it resolved at startup, so adding a subscription means restarting `listen` (the agent's job), and `retry_missed_deliveries` re-sends what arrived during the restart (ignored as `CLI_DISCONNECTED`, not lost). Proposed CLI change: [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467), sessions that pick up newly matching sources.
-2. **Poll mode** (`events/poll`) from Event Gateway's stored requests, with cursor replay; tools wrapping it for hosts without MCP Events support.
-3. **Push mode** (`events/stream`): undecided. Build it if a local host implements push only.
-4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf (managed mode) and emits `notifications/claude/channel`.
+1. **Callback URLs (built, PR #12).** Each subscription gets its own MCP Events source with a connection to the agent's shared CLI destination. The bridge signs the challenge and deliveries with both the source's secret and the agent's (client-supplied at subscribe), so no secret passes through a tool. Missed deliveries are re-sent with a fresh signature, and unused URLs are deleted after an hour. A mock agent (an MCP client that subscribes in webhook mode and routes by `X-MCP-Subscription-Id`) proves it end to end: `E2E_LOCAL=1`, 16/16 on 7 Oct.
+2. **The bridge runs `listen` and catches up by itself (next).** Today the agent runs `hookdeck listen` and calls `retry_missed_deliveries`. Instead:
+   - `create_callback_url` becomes `create_tunnel_url` and returns only the URL;
+   - the bridge starts and supervises the agent's `hookdeck listen` with its own CLI login, and restarts it when a URL is created (a running `listen` only covers the connections it started with, until [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467));
+   - the bridge retries missed deliveries after every (re)connect and on a timer, and `retry_missed_deliveries` leaves the MCP surface;
+   - the bridge also recovers its own inbound: provider events that arrived while the laptop slept wait in Event Gateway as `CLI_DISCONNECTED` on the bridge's inbound connection, and are retried when `listen` reconnects.
 
-Done when the mock agent subscribed through callback mode receives an email; adding a subscription while events flow loses none; stopping `listen`, sending two emails and restarting delivers both, once each; restarting during the roughly 2-minute grace window also delivers once; and a poll with a stale cursor returns the missed events.
+   The agent then needs no Hookdeck CLI or credentials: it asks for a URL and subscribes.
+3. **A real local agent.** No local agent harness supports MCP Events yet (searched 7 Oct; see "MCP Events clients" in `ARCHITECTURE.md`). The closest is Hermes Agent's draft webhook receiver, which doesn't yet send the spec's `events/subscribe` shape. Until one does, the mock agent stands in.
+4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf and emits `notifications/claude/channel`.
+
+Open: one source per subscription (today) or one source per agent with a path per subscription, using Event Gateway's path forwarding. Hermes's receiver needs the second: it has one public base URL and routes by path. With dual signing, a shared source no longer ties subscribers' secrets together, so the choice is about per-subscription history and controls against fewer resources and no `listen` restarts.
+
+Done when: the mock agent, given only a tunnel URL, receives an email; adding a subscription while events flow loses none, with no tool call; stopping `listen` (or the whole bridge), sending two emails and starting again delivers both, once each, with no tool call; and unused tunnel URLs are deleted.
 
 ## Stage 7: Production readiness and reach (build)
 
@@ -105,9 +114,11 @@ Done when the mock agent subscribed through callback mode receives an email; add
 
 ## Later
 
-Depends on Event Gateway features or later decisions:
+Depends on Event Gateway features, a client that needs it, or later decisions:
 
 - Standard Webhooks destination signing, then publish once per topic.
 - Delivering straight from the provider source.
 - Outpost for spec-conformant delivery, as an option.
-- Push mode (`events/stream`), only if a client needs it.
+- Poll mode (`events/poll`) from Event Gateway's stored requests, with cursor replay, for clients that can't receive webhooks. Tools wrapping it for hosts without MCP Events support.
+- Push mode (`events/stream`). With a bridge on the same machine, a push-only client would connect over `localhost` and need no tunnel.
+- An optional namespace so several bridges can share one Hookdeck project ([#13](https://github.com/hookdeck/mcp-events-bridge/issues/13)). Until then, one project per bridge.

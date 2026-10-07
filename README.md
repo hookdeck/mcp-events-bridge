@@ -29,7 +29,7 @@ It's for developers who want agents (ChatGPT today, local agents next) to react 
 
 - **Event Gateway** verifies each provider's webhook signature, keeps every request, and delivers each MCP Event to each subscriber with retries.
 - **The bridge** is the MCP server: it lists the events on offer, handles subscribe (including the spec's endpoint challenge), and turns each provider webhook into an MCP Event signed for each subscriber.
-- **The Hookdeck CLI** forwards provider events to a bridge on your laptop, so local development needs no public URL.
+- **The Hookdeck CLI** forwards provider events to a bridge on your laptop, and MCP Events to [local agents](#local-agents), so neither needs a public URL.
 
 The design, its trade-offs and how it maps to the spec are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -164,7 +164,7 @@ fly deploy
 
 On Fly.io, the bridge receives events over HTTP at its public URL instead of through the Hookdeck CLI, using the `fly` resources that `setup` created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret; in GitHub's manual mode, set `GITHUB_WEBHOOK_SECRET` as a Fly secret too. The Dockerfile copies only `bridge.config.ts`: copy any other files your config imports, such as your own providers.
 
-Use a separate Hookdeck project for each environment you want isolated: deployments in one project share the provider sources and the subscriptions.
+Use a separate Hookdeck project for each environment you want isolated: deployments in one project share the provider sources and the subscriptions. An optional namespace for sharing a project is proposed in [#13](https://github.com/hookdeck/mcp-events-bridge/issues/13).
 
 ## What setup creates
 
@@ -221,7 +221,7 @@ Set only what the providers in your `bridge.config.ts` need. The names are the o
 
 ## Local agents
 
-An agent on a laptop has no public URL to receive webhooks on. The bridge gives it one per subscription, through Event Gateway and the Hookdeck CLI:
+An agent on a laptop has no public URL to receive webhooks on. The bridge gives it one per subscription, through Event Gateway and the Hookdeck CLI. Run the bridge on the same machine, in its own Hookdeck project:
 
 1. **Create a callback URL** with the `create_callback_url` tool: your `agent` name, a `name` for the subscription, and your local `port` (default 3000) and `path` (default `/events`; set by your first callback and shared by all of them). It returns the URL and the `hookdeck listen` commands that cover your agent's callbacks (10 sources per command).
 2. **Run the commands.** `hookdeck listen` forwards deliveries to `http://localhost:<port><path>`. Restart it after creating another callback URL: a running `listen` only covers the sources it started with ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)).
@@ -230,12 +230,14 @@ An agent on a laptop has no public URL to receive webhooks on. The bridge gives 
 
 A callback URL that no subscription has used for an hour is deleted. `listen` needs access to the bridge's Hookdeck project, and an agent name is a label, not an identity: any client of the bridge's owner can use it.
 
+Coming next: the bridge runs `listen` and catches up by itself, so an agent only asks for a URL (`create_tunnel_url`) and subscribes. No local agent supports MCP Events yet, so this is tested with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
+
 ## Security and limitations
 
 - **The MCP URL is a credential.** One secret URL authenticates one owner. It's redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned.
 - **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
-- **Webhook delivery only.** Poll delivery is planned, so agents that can't receive webhooks can use the bridge. Push delivery and replay cursors aren't planned.
+- **Webhook delivery only.** Poll and push delivery, and replay cursors, may come later if clients need them. Local agents receive webhooks through the Hookdeck CLI (above).
 - **Retries reuse the first signature.** The spec asks for a fresh signature on each attempt. Retries are kept inside the 5-minute window receivers check, until Event Gateway signs deliveries itself.
 
 ## Development

@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Stage 6 has started (callback URLs for local agents). Not yet: poll mode, the Claude Code shim, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Stage 6 is in progress: callback URLs for local agents are built, and next the bridge runs `listen` and catches up by itself (see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
 
 ## What the maintainer sets up first
 
