@@ -303,7 +303,13 @@ That's all the agent does. The bridge runs `hookdeck listen` for your port, and 
 
 If your agent builds every callback URL from one base URL plus a path, create one tunnel URL with path `/` and use it as the base: the URL covers the paths under it. A tunnel URL only accepts deliveries signed by the bridge, and one that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it.
 
-What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in [`skills/mcp-events-bridge/references/receiving-deliveries.md`](skills/mcp-events-bridge/references/receiving-deliveries.md). [Hermes Agent](https://github.com/NousResearch/hermes-agent)'s MCP Events support, in review in [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908), has been run against this bridge; `npm run e2e` uses a mock agent. See [`docs/PLAN.md`](docs/PLAN.md).
+What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in [`skills/mcp-events-bridge/references/receiving-deliveries.md`](skills/mcp-events-bridge/references/receiving-deliveries.md). `npm run e2e` tests this path with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
+
+### Hermes Agent (preview)
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) works with a local bridge through a tunnel URL: it subscribes, and each event wakes it in its own session. Released Hermes doesn't support MCP Events yet; support is in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908), which includes fixes from running it against this bridge.
+
+[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. One known issue: Hermes's tools take the bridge's MCP URL, so its secret reaches the model provider and Hermes's logs; rotate `BRIDGE_MCP_SECRET` after testing.
 
 ## Security and limitations
 

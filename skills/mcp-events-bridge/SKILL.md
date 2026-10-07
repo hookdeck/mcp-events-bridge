@@ -83,6 +83,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
   1. It calls the bridge's `create_tunnel_url` tool (`agent`, `name`, `port`, `path`; use `path: '/'` if the agent builds callbacks from one base URL plus a path). It gets a public `https://hkdk.events/...` URL; the bridge runs `hookdeck listen` to the agent's port.
   2. It calls `events/subscribe` with that URL and a `whsec_` secret it generates.
   3. What the agent's receiver must do: [references/receiving-deliveries.md](references/receiving-deliveries.md).
+- **Hermes Agent** (preview, from a pull request; released Hermes has no MCP Events support): follow [references/hermes-agent.md](references/hermes-agent.md).
 - **Agents without MCP Events support:** they can still call `get_event` and `list_recent_events` (past events from Event Gateway).
 
 ## 5. Verify
