@@ -26,7 +26,15 @@ interface SourceDescription {
 }
 
 export interface SetupReport {
-  providers: Array<{ id: string; sourceUrl: string; connection: string; webhook: 'registered' | 'updated' | 'configured' | 'existing' | 'none'; hint?: string }>;
+  providers: Array<{
+    id: string;
+    sourceUrl: string;
+    connection: string;
+    webhook: 'registered' | 'updated' | 'configured' | 'existing' | 'pending' | 'none';
+    /** Credentials still to set (pending): the inbound connection isn't created until they are. */
+    waitingFor?: string[];
+    hint?: string;
+  }>;
   notifications: { source: string; connection: string };
   triggers: string[];
   mcp: { secret: string; generated: boolean; url: string };
@@ -57,6 +65,54 @@ function parseSourceDescription(value: string | null | undefined): SourceDescrip
   }
 }
 
+/** A changed source secret took about 61 seconds to apply at Event Gateway's edge in one test, and about a second in another. */
+export const SECRET_PROPAGATION_NOTE = 'a new or changed secret can take up to about a minute to take effect at Event Gateway';
+
+/** Same verification config: the type and every auth field the provider sets. */
+function sameSourceConfig(current: { auth_type?: string | null; auth?: Record<string, unknown> | null } | null | undefined, wanted: Record<string, unknown>) {
+  const auth = (wanted.auth ?? {}) as Record<string, unknown>;
+  return current?.auth_type === wanted.auth_type && Object.entries(auth).every(([key, value]) => current?.auth?.[key] === value);
+}
+
+/**
+ * Finds or creates a provider instance's source, by name, so connection upserts never touch its auth config.
+ * For a provider with `sourceConfig` (verification it configures itself), the config is set when the source is
+ * created and rewritten only when it differs, so re-running doesn't churn the secret. While credentials are
+ * missing, the source is created without verification, and the caller must not connect it.
+ */
+export async function ensureSource(hookdeck: HookdeckClient, provider: ResolvedProvider, log: (message: string) => void = () => {}) {
+  const { definition } = provider;
+  const sourceName = providerSourceName(provider.id);
+  const missing = definition.missingCredentials?.(provider.options) ?? [];
+  const sourceConfig = definition.sourceConfig && !missing.length ? definition.sourceConfig(provider.options) : undefined;
+  const description: SourceDescription = { provider: definition.type, events: provider.events, webhookId: null };
+
+  let source = (await hookdeck.listSources({ name: sourceName })).models[0];
+  let existing = parseSourceDescription(source?.description);
+  let configured = false;
+  if (!source) {
+    source = await hookdeck.upsertSource({
+      name: sourceName,
+      type: definition.sourceType,
+      description: JSON.stringify(description),
+      ...(sourceConfig && { config: sourceConfig }),
+    });
+    existing = description;
+    configured = Boolean(sourceConfig);
+    log(`created source ${sourceName}${sourceConfig ? ' with verification' : ''}`);
+  } else if (sourceConfig) {
+    const current = (await hookdeck.getSource(source.id, { includeAuth: true })).config;
+    if (!sameSourceConfig(current, sourceConfig) || source.type !== definition.sourceType || !sameList(existing?.events, provider.events)) {
+      source = await hookdeck.upsertSource({ name: sourceName, type: definition.sourceType, description: JSON.stringify(description), config: sourceConfig });
+      existing = description;
+      configured = true;
+      log(`set verification on ${sourceName}`);
+    }
+  }
+  if (configured) log(`note: ${SECRET_PROPAGATION_NOTE}; until then the bridge ignores requests Event Gateway didn't verify`);
+  return { source, existing, configured, missing };
+}
+
 async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   const { config, hookdeck } = deps;
   const log = deps.log ?? (() => {});
@@ -66,14 +122,21 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   const providerEvents = definition.events.filter((e) => provider.events.includes(e.name)).map((e) => e.providerEvent);
   const target = definition.registrationTarget ? fingerprint(definition.registrationTarget(provider.options)) : undefined;
 
-  // The source first, by name, so the connection upsert below never touches its auth config.
-  let source = (await hookdeck.listSources({ name: sourceName })).models[0];
-  let existing = parseSourceDescription(source?.description);
-  if (!source) {
-    const description: SourceDescription = { provider: definition.type, events: provider.events, webhookId: null };
-    source = await hookdeck.upsertSource({ name: sourceName, type: definition.sourceType, description: JSON.stringify(description) });
-    existing = description;
-    log(`created source ${sourceName}`);
+  const { source, existing, configured, missing } = await ensureSource(hookdeck, provider, log);
+  const hint = definition.setupHint?.({ sourceUrl: source.url, providerEvents, options: provider.options });
+  const report = (webhook: SetupReport['providers'][number]['webhook']) => ({
+    id: provider.id,
+    sourceUrl: source.url,
+    connection: connectionName,
+    webhook,
+    ...(missing.length > 0 && { waitingFor: missing }),
+    ...(hint !== undefined && { hint }),
+  });
+  // Without its credentials the source can't verify anything, so nothing may reach the bridge: no inbound
+  // connection yet. Requests that arrive meanwhile are kept by Event Gateway, rejected as NO_CONNECTION (verified live).
+  if (missing.length) {
+    log(`${sourceName}: waiting for ${missing.join(', ')}; delivery is held (no inbound connection) until it's set`);
+    return report('pending');
   }
 
   const rules: Rule[] = [
@@ -90,14 +153,7 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
   });
   log(`upserted connection ${connectionName} (${config.inbound} inbound)`);
 
-  const hint = definition.setupHint?.({ sourceUrl: source.url, providerEvents, options: provider.options });
-  const report = (webhook: SetupReport['providers'][number]['webhook']) => ({
-    id: provider.id,
-    sourceUrl: source.url,
-    connection: connectionName,
-    webhook,
-    ...(hint !== undefined && { hint }),
-  });
+  if (definition.sourceConfig) return report(configured ? 'configured' : 'existing');
   if (!definition.register) return report('none');
   let currentSecret: string | undefined;
   let previousId: string | null = null;

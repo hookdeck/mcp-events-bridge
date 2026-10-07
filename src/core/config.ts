@@ -184,3 +184,17 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
   }
   return resolved;
 }
+
+/**
+ * Fails closed when a provider instance's credentials aren't set (for example a generic webhook's secret, which
+ * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` instead
+ * holds that instance's delivery until they're set.
+ */
+export function assertCredentials(config: ResolvedConfig): void {
+  const missing = config.providers.flatMap((p) => (p.definition.missingCredentials?.(p.options) ?? []).map((name) => `${name} (provider ${p.id})`));
+  if (missing.length) {
+    throw new ConfigError(
+      `Not set: ${missing.join(', ')}. Set it in .env (or as a secret where the bridge runs), then run \`mcp-events-bridge setup\` to apply it to the Event Gateway source before serving.`,
+    );
+  }
+}

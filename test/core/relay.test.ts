@@ -10,7 +10,7 @@ import { MemoryStore } from '../../src/core/memory-store.js';
 import { Relay, failureReason } from '../../src/core/relay.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { healthyDelivery, type SubscriptionInput } from '../../src/core/store.js';
-import { resend } from '../../src/providers.js';
+import { resend, webhook } from '../../src/providers.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
 const SIGNING_SECRET = 'hookdeck-signing-secret';
@@ -144,6 +144,47 @@ describe('Relay: provider events', () => {
     expect((await inbound(relay, { type: 'email.sent' })).body).toEqual({ ignored: 'event type not enabled' });
     const raw = JSON.stringify(fixture.body);
     expect((await relay.handle('/inbound/github', signed(raw), raw)).status).toBe(404);
+  });
+});
+
+describe('Relay: generic webhook', () => {
+  const fillsConfig = resolveConfig(
+    defineConfig({
+      deployment: 'dev',
+      providers: [
+        webhook({
+          id: 'fills',
+          verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'fills-secret-0123456789' },
+          events: ['order.filled'],
+          eventId: { header: 'x-delivery-id' },
+          filters: ['symbol'],
+        }),
+      ],
+    }),
+    { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET },
+  );
+
+  it('relays a verified fill to a matching subscriber with webhook-id from the sender, and ignores unverified requests', async () => {
+    const gateway = new FakeEventGateway();
+    const store = new MemoryStore();
+    const relay = new Relay({
+      signingSecret: SIGNING_SECRET,
+      providerIds: ['fills'],
+      catalog: new Catalog(fillsConfig.providers),
+      store,
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    });
+    await store.put(subscription({ name: 'order.filled', arguments: { symbol: 'AAPL' } }));
+    await store.put(subscription({ id: 'sub_b', name: 'order.filled', arguments: { symbol: 'MSFT' } }));
+    const raw = JSON.stringify({ symbol: 'AAPL', side: 'buy', quantity: 100 });
+    const send = (verified: string) => relay.handle('/inbound/fills', signed(raw, { 'x-hookdeck-verified': verified, 'x-delivery-id': 'dlv_42' }), raw);
+
+    expect(await send('false')).toEqual({ status: 200, body: { ignored: 'event type not enabled' } });
+    expect(gateway.published).toEqual([]);
+    expect(await send('true')).toEqual({ status: 200, body: { published: 1 } });
+    expect(gateway.published).toHaveLength(1);
+    expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
+    expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
   });
 });
 
