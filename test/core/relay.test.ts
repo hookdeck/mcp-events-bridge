@@ -50,6 +50,7 @@ const subscription = (over: Partial<SubscriptionInput> = {}): SubscriptionInput 
   id: 'sub_a',
   principal: 'owner',
   name: 'resend.email.received',
+  providerId: 'resend',
   arguments: {},
   url: 'https://receiver.example.com/a',
   secret: generateWebhookSecret(),
@@ -182,8 +183,8 @@ describe('Relay: generic webhook', () => {
       store,
       hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
     });
-    await store.put(subscription({ name: 'fills.order.filled', arguments: { symbol: 'AAPL' } }));
-    await store.put(subscription({ id: 'sub_b', name: 'fills.order.filled', arguments: { symbol: 'MSFT' } }));
+    await store.put(subscription({ name: 'fills.order.filled', providerId: 'fills', arguments: { symbol: 'AAPL' } }));
+    await store.put(subscription({ id: 'sub_b', name: 'fills.order.filled', providerId: 'fills', arguments: { symbol: 'MSFT' } }));
     const raw = JSON.stringify({ symbol: 'AAPL', side: 'buy', quantity: 100 });
     const send = (verified: string) => relay.handle('/inbound/fills', signed(raw, { 'x-hookdeck-verified': verified, 'x-delivery-id': 'dlv_42' }), raw);
 
@@ -193,6 +194,36 @@ describe('Relay: generic webhook', () => {
     expect(gateway.published).toHaveLength(1);
     expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-fills_order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
     expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'fills.order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
+  });
+
+  it("doesn't relay to a subscription from before 0.2.0 whose name is now another instance's event", async () => {
+    // A webhook instance with id `email` and event `received` offers `email.received`: Resend's event name before 0.2.0.
+    const config = resolveConfig(
+      defineConfig({
+        deployment: 'dev',
+        providers: [
+          resend({ apiKey: 'x' }),
+          webhook({ id: 'email', verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'email-secret-0123456789' }, events: ['received'], eventId: { header: 'x-delivery-id' } }),
+        ],
+      }),
+      { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET },
+    );
+    const gateway = new FakeEventGateway();
+    const store = new MemoryStore();
+    const relay = new Relay({
+      signingSecret: SIGNING_SECRET,
+      providerIds: ['resend', 'email'],
+      catalog: new Catalog(config.providers),
+      store,
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    });
+    await store.put(subscription({ id: 'sub_old', name: 'email.received', providerId: null })); // a 0.1.0 subscription to Resend's emails
+    await store.put(subscription({ id: 'sub_new', name: 'email.received', providerId: 'email' }));
+    const raw = JSON.stringify({ hello: 'world' });
+    const result = await relay.handle('/inbound/email', signed(raw, { 'x-hookdeck-verified': 'true', 'x-delivery-id': 'dlv_1' }), raw);
+
+    expect(result).toEqual({ status: 200, body: { published: 1 } });
+    expect(gateway.published.map((p) => p.headers['X-MCP-Subscription-Id'])).toEqual(['sub_new']);
   });
 });
 

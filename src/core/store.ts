@@ -19,6 +19,11 @@ export interface SubscriptionInput {
   id: string;
   principal: string;
   name: string;
+  /**
+   * The provider instance the subscription is for (the `{id}` in its name). Matching needs it as well as the name:
+   * a subscription from before 0.2.0 has none, and its name may now mean another instance's event.
+   */
+  providerId: string | null;
   arguments: Record<string, unknown>;
   url: string;
   /** The relay signs each publish, so the secret is kept (and the previous one during a rotation grace window). */

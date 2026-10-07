@@ -98,7 +98,7 @@ export class SubscriptionService {
 
     const rawArgs = params.arguments ?? {};
     if (typeof rawArgs !== 'object' || rawArgs === null || Array.isArray(rawArgs)) throw invalidParams('arguments must be an object');
-    return { name: params.name, event: entry?.event, url, rawArgs: rawArgs as Record<string, unknown>, delivery };
+    return { name: params.name, providerId: entry?.providerId ?? null, event: entry?.event, url, rawArgs: rawArgs as Record<string, unknown>, delivery };
   }
 
   async subscribe(principal: string | undefined, params: Params): Promise<SubscribeResult> {
@@ -167,6 +167,8 @@ export class SubscriptionService {
           id,
           principal,
           name: key.name,
+          // Set on every subscribe, so refreshing a subscription from before 0.2.0 makes it current.
+          providerId: key.providerId,
           arguments: args,
           url: href,
           secret,

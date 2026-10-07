@@ -31,12 +31,16 @@ export function buildMcpServer(deps: {
   server.registerTool(
     'get_event',
     {
-      description: 'Get a past event by its eventId (for example from an MCP Events delivery), read from Hookdeck Event Gateway.',
-      inputSchema: z.object({ eventId: z.string() }),
+      description:
+        'Get a past event by its name and eventId (both are in every MCP Events delivery and in list_recent_events), read from Hookdeck Event Gateway.',
+      inputSchema: z.object({
+        name: z.string().describe('The event name, such as resend.email.received'),
+        eventId: z.string(),
+      }),
     },
-    async ({ eventId }) => {
-      const event = await history.get(eventId);
-      return event ? json(event) : { content: [{ type: 'text', text: `No event ${eventId}` }], isError: true };
+    async ({ name, eventId }) => {
+      const event = await history.get(name, eventId);
+      return event ? json(event) : { content: [{ type: 'text', text: `No ${name} event ${eventId}` }], isError: true };
     },
   );
 

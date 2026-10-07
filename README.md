@@ -278,7 +278,7 @@ Each `webhook()` instance's credentials, named as its `env()` references name th
 ## MCP surface
 
 - `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery. Event names are `{id}.{event}` (see [Webhook providers](#webhook-providers)).
-- `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`: past events, read from Event Gateway.
+- `get_event(name, eventId)` and `list_recent_events(name?, since?, limit?)`: past events, read from Event Gateway. `get_event` takes the event's name as well as its id, since an id is the provider's own and two instances can share one.
 - `list_providers()`: configured providers and their subscriptions.
 - `create_tunnel_url` and `list_tunnel_urls`: public URLs for agents on the same machine as a local bridge (see below). Not offered by a deployed bridge.
 

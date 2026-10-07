@@ -49,16 +49,20 @@ export class EventHistory {
     }
   }
 
-  async get(eventId: string): Promise<PastEvent | undefined> {
-    for (const provider of this.deps.providers) {
-      const header = provider.definition.eventIdHeader;
-      const sourceId = await this.sourceId(provider.id);
-      if (!header || !sourceId) continue;
-      const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, headers: { [header]: eventId }, includeData: true, limit: 5 });
-      for (const request of page.models) {
-        const event = this.toEvent(provider.id, request);
-        if (event?.eventId === eventId) return event;
-      }
+  /**
+   * An event by its MCP name and id. The name says which provider instance to search: an event id is the provider's
+   * own (a Resend svix-id, a sender's delivery id), so two instances can both have one.
+   */
+  async get(name: string, eventId: string): Promise<PastEvent | undefined> {
+    const entry = this.deps.catalog.get(name);
+    const provider = entry && this.deps.providers.find((p) => p.id === entry.providerId);
+    const header = provider?.definition.eventIdHeader;
+    const sourceId = provider && (await this.sourceId(provider.id));
+    if (!provider || !header || !sourceId) return undefined;
+    const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, headers: { [header]: eventId }, includeData: true, limit: 5 });
+    for (const request of page.models) {
+      const event = this.toEvent(provider.id, request);
+      if (event?.name === name && event.eventId === eventId) return event;
     }
     return undefined;
   }

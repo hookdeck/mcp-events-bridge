@@ -15,7 +15,8 @@ import {
  * PUBLISH_API source to an HTTP destination at the callback URL:
  *
  *   connection description   readable JSON metadata: principal, event name,
- *                            arguments, expiry, timestamps, delivery state
+ *                            provider instance id, arguments, expiry,
+ *                            timestamps, delivery state
  *                            (omitted while healthy). Versioned: it starts
  *                            with {"v":1, so a sealed format could be added
  *                            later (for example for multi-tenant hosting)
@@ -45,6 +46,8 @@ interface Metadata {
   v: 1;
   principal: string;
   event: string;
+  /** The provider instance id. Missing on subscriptions from before 0.2.0. */
+  provider?: string;
   arguments: Record<string, unknown>;
   expiresAt: string;
   createdAt: string;
@@ -129,6 +132,7 @@ export class EventGatewayStore implements SubscriptionStore {
       v: 1,
       principal: input.principal,
       event: input.name,
+      ...(input.providerId && { provider: input.providerId }),
       arguments: input.arguments,
       expiresAt: input.expiresAt,
       createdAt: input.createdAt,
@@ -202,6 +206,7 @@ export class EventGatewayStore implements SubscriptionStore {
       id,
       principal: metadata.principal,
       name: metadata.event,
+      providerId: typeof metadata.provider === 'string' ? metadata.provider : null,
       arguments: metadata.arguments ?? {},
       url,
       secret,

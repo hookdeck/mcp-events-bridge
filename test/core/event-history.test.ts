@@ -1,0 +1,35 @@
+import { describe, expect, it } from 'vitest';
+import { Catalog } from '../../src/core/catalog.js';
+import { defineConfig, resolveConfig } from '../../src/core/config.js';
+import { EventHistory } from '../../src/core/event-history.js';
+import type { HookdeckClient } from '../../src/core/hookdeck.js';
+import { webhook } from '../../src/providers.js';
+
+const broker = (id: string) =>
+  webhook({ id, verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'a-long-enough-secret' }, events: ['order.filled'], eventId: { header: 'x-delivery-id' } });
+
+describe('EventHistory.get', () => {
+  it("finds an event in its name's instance, when two instances have an event with the same id", async () => {
+    const config = resolveConfig(defineConfig({ providers: [broker('broker_a'), broker('broker_b')] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+    // Each instance's source has a request with delivery id 1001.
+    const request = (symbol: string) => ({
+      id: `req_${symbol}`,
+      verified: true,
+      rejection_cause: null,
+      data: { headers: { 'x-delivery-id': '1001', 'x-hookdeck-verified': 'true' }, body: { symbol } },
+    });
+    const searched: string[] = [];
+    const hookdeck = {
+      listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }),
+      listRequests: async ({ source_id }: { source_id: string }) => {
+        searched.push(source_id);
+        return { models: [request(source_id === 'src_bridge-broker_a' ? 'AAPL' : 'MSFT')] };
+      },
+    } as unknown as HookdeckClient;
+    const history = new EventHistory({ hookdeck, catalog: new Catalog(config.providers), providers: config.providers });
+
+    expect(await history.get('broker_b.order.filled', '1001')).toMatchObject({ eventId: '1001', name: 'broker_b.order.filled', data: { symbol: 'MSFT' } });
+    expect(searched).toEqual(['src_bridge-broker_b']);
+    expect(await history.get('broker_c.order.filled', '1001')).toBeUndefined();
+  });
+});

@@ -301,7 +301,7 @@ async function main() {
   await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
   type ToolResult = { structuredContent?: { data?: { subject?: string } } };
   const result = (await until(async () => {
-    const r = (await client.callTool({ name: 'get_event', arguments: { eventId: webhookId } })) as ToolResult;
+    const r = (await client.callTool({ name: 'get_event', arguments: { name: emailEvent, eventId: webhookId } })) as ToolResult;
     return r.structuredContent?.data ? r : undefined;
   }, 60_000, 3000)) as ToolResult | undefined;
   record('get_event returns the summary', result?.structuredContent?.data?.subject === subject, result?.structuredContent?.data?.subject ?? 'none');
