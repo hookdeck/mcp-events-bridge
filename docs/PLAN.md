@@ -16,7 +16,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
-| 6 | Local agents | Build | Not started |
+| 6 | Local agents | Build | Started: plan set (callback mode, then poll, then the Claude Code channel) |
 | 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
@@ -80,14 +80,17 @@ Done when (all verified live: `E2E_EXTENDED=1 npm run e2e`, and ChatGPT on 6 Oct
 
 ## Stage 6: Local agents (build)
 
-Local delivery through Event Gateway and the Hookdeck CLI, using Event Gateway's MCP Events source type for the challenge. It shipped on 6 Oct 2026; the e2e test subscribers already use it in place of a cloudflared tunnel.
+Local agents receive MCP Events through Event Gateway and the Hookdeck CLI: the CLI connects out from inside the firewall, so a laptop gets a real webhook endpoint with Event Gateway's retries, and events wait while it's offline. Event Gateway's MCP Events source type (shipped 6 Oct 2026) answers the subscribe challenge and verifies deliveries; the e2e test subscribers already use it.
 
-- **Subscriber command.** `mcp-events-bridge subscriber`: creates the agent's MCP Events source and CLI connection, supervises `hookdeck listen`, recovers events missed while offline (ported from the fleet demo's `recover.ts`), and forwards deliveries to the local agent.
-- **Claude Code channel shim.** Built on the subscriber command; emits `notifications/claude/channel`.
-- **Local bridge.** Inbound connection with a CLI destination, `listen` supervision and recovery; MCP endpoint on `127.0.0.1`; `bridge serve --tunnel` for ChatGPT through a cloudflared quick tunnel.
-- **Poll mode** (`events/poll`) from Event Gateway's stored requests, with cursor replay; tools wrapping it for hosts without MCP Events support.
+In order:
 
-Done when a local agent subscribed through the subscriber command receives an email; stopping `listen`, sending two emails and restarting delivers both, once each; restarting during the roughly 2-minute grace window also delivers once; and a poll with a stale cursor returns the missed events.
+1. **Webhook delivery to local agents (callback mode).** For agents that support MCP Events themselves: a tool that gives each subscription its own MCP Events source (the spec makes the secret per subscription, and a source holds one), connects it to the agent's CLI destination, keeps one `hookdeck listen` covering the agent's sources (`agent-<device>-*`), and recovers events missed while offline or during a restart. A mock agent (an MCP client that subscribes in webhook mode) proves it end to end.
+   - **Known limit:** a running `listen` only receives events for the connections it resolved at startup, so adding a subscription restarts `listen`, and recovery replays the requests that arrived during the restart (they're ignored as `CLI_DISCONNECTED`, not lost). Proposed CLI change: [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467), sessions that pick up newly matching sources. Restarting is behind one function, so the change only replaces that.
+2. **Poll mode** (`events/poll`) from Event Gateway's stored requests, with cursor replay; tools wrapping it for hosts without MCP Events support.
+3. **Push mode** (`events/stream`): undecided. Build it if a local host implements push only.
+4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf (managed mode) and emits `notifications/claude/channel`.
+
+Done when the mock agent subscribed through callback mode receives an email; adding a subscription while events flow loses none; stopping `listen`, sending two emails and restarting delivers both, once each; restarting during the roughly 2-minute grace window also delivers once; and a poll with a stale cursor returns the missed events.
 
 ## Stage 7: Production readiness and reach (build)
 
