@@ -11,7 +11,7 @@ Full reference: the [README](https://github.com/hookdeck/mcp-events-bridge#readm
 
 ## Rules
 
-- **Credentials come from the user.** Ask for the Hookdeck project's API key and signing secret (Project settings > Secrets) and any provider key; never create accounts, and never print a secret or `.env` in your output.
+- **Credentials come from the user.** Ask for the Hookdeck project's API key and signing secret (Project settings > Secrets) and any provider key; never create accounts. Some commands print secrets (`setup` prints the MCP URL): never repeat a secret in your replies, and never print `.env`.
 - **The MCP URL (`/mcp/<BRIDGE_MCP_SECRET>`) is a credential.** Share it only with the agent being connected.
 - **One bridge per Hookdeck project.** Two bridges in one project relay each event twice.
 
@@ -22,7 +22,7 @@ Full reference: the [README](https://github.com/hookdeck/mcp-events-bridge#readm
 | Runs | On the agent's machine | On a host with a public URL (Fly.io in the README) |
 | Provider events arrive through | The Hookdeck CLI (`hookdeck listen`, started by the bridge) | Event Gateway, over HTTPS |
 | Agents it can serve | Agents on the same machine (through tunnel URLs) | Cloud agents such as ChatGPT |
-| Resource names | `bridge-<provider>-local` | `bridge-<provider>-public`, or `BRIDGE_DEPLOYMENT` |
+| Inbound connection | `bridge-<provider>-local` | `bridge-<provider>-public`, or `BRIDGE_DEPLOYMENT` |
 
 ChatGPT needs a deployed bridge (or a tunnel to a local one). For deployment, follow the README's "Deploy to Fly.io" section, then continue at step 3.
 
@@ -55,7 +55,7 @@ npx mcp-events-bridge setup
 ```
 
 - **Success:** a line per provider (`provider resend: source https://hkdk.events/..., connection bridge-resend-local, webhook registered`; on a re-run, `updated` or `existing`), then `MCP URL:`. Exit code 0.
-- **First run:** it generates an MCP secret and prints `BRIDGE_MCP_SECRET=...`. Add that line to `.env` without echoing it.
+- **First run:** it generates an MCP secret and prints `BRIDGE_MCP_SECRET=...`. Add that line to `.env`. `setup` prints the full MCP URL, secret included, on every run: don't repeat it in your replies or write it anywhere but `.env`.
 - **Exit code 1 with "Setup isn't complete":** a webhook secret is missing (step 3, generic webhooks). Everything else was set up.
 
 ```sh
@@ -78,7 +78,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 
 ## 4. Connect an agent
 
-- **ChatGPT (deployed bridge):** ChatGPT > Plugins > Add > Create MCP App, URL `https://<bridge>/mcp/<BRIDGE_MCP_SECRET>`, No Authentication. Then ask it, in a Work chat, to tell you about new events (e.g. emails from a sender).
+- **ChatGPT (deployed bridge):** needs Developer mode on (ChatGPT Plus or above). ChatGPT > Plugins > Add > Create MCP App, URL `https://<bridge>/mcp/<BRIDGE_MCP_SECRET>`, No Authentication. Then ask it, in a Work chat, to tell you about new events (e.g. emails from a sender).
 - **An agent on the same machine as a local bridge**, which implements MCP Events webhook delivery itself:
   1. It calls the bridge's `create_tunnel_url` tool (`agent`, `name`, `port`, `path`; use `path: '/'` if the agent builds callbacks from one base URL plus a path). It gets a public `https://hkdk.events/...` URL; the bridge runs `hookdeck listen` to the agent's port.
   2. It calls `events/subscribe` with that URL and a `whsec_` secret it generates.

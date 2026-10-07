@@ -151,7 +151,6 @@ import { defineConfig, env } from '@hookdeck/mcp-events-bridge';
 import { webhook } from '@hookdeck/mcp-events-bridge/providers';
 
 export default defineConfig({
-  deployment: process.env.BRIDGE_DEPLOYMENT ?? 'dev',
   providers: [
     webhook({
       id: 'fills',                       // names the Event Gateway source: bridge-fills

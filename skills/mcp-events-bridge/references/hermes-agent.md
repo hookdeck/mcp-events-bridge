@@ -14,17 +14,23 @@ Needs Python 3.14 and [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/NousResearch/hermes-agent.git && cd hermes-agent
 git fetch origin pull/132908/head
 git checkout 8813311330e66854dbb32a1f8db2d8246607501d
+```
+
+If `git checkout` can't find the commit (the pull request's branch was rewritten), fetch a copy kept on a fork and check it out, before installing:
+
+```sh
+git fetch https://github.com/leggetter/hermes-agent.git mcp-events-pr-132908-8813311
+git checkout 8813311330e66854dbb32a1f8db2d8246607501d
+```
+
+Then install:
+
+```sh
 uv venv --python 3.14 && uv pip install -e ".[anthropic]"
 .venv/bin/hermes --version
 ```
 
 `[anthropic]` installs the Anthropic provider, used in step 4; install the extra for your model provider (`pyproject.toml` lists them). The gateway doesn't install it on demand.
-
-If `git checkout` can't find the commit (the pull request's branch was rewritten), fetch a copy kept on a fork, then check it out again:
-
-```sh
-git fetch https://github.com/leggetter/hermes-agent.git mcp-events-pr-132908-8813311
-```
 
 **Success:** the version line ends `local 88133113 (+11 carried commits)`.
 
@@ -38,7 +44,10 @@ Run a local bridge (`npx mcp-events-bridge serve`; see the [skill](../SKILL.md),
 
 Hermes builds every callback URL from one base URL plus its own path, so create one tunnel URL with path `/` for the port Hermes will listen on (Hermes's default is 9901; any free port works):
 
+Run it from the bridge's directory, so `BRIDGE_MCP_SECRET` comes from its `.env` (not typed into your shell history):
+
 ```sh
+set -a; . ./.env; set +a
 npx -y @modelcontextprotocol/inspector --cli "http://127.0.0.1:8080/mcp/$BRIDGE_MCP_SECRET" --transport http \
   --method tools/call --tool-name create_tunnel_url \
   --tool-arg agent=hermes --tool-arg name=base --tool-arg port=9901 --tool-arg path=/

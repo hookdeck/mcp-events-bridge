@@ -10,13 +10,13 @@
 - **No migration from 0.1.0.** Subscriptions to renamed events get nothing (`serve` logs each subscription to an event it doesn't offer): agents, ChatGPT included, subscribe again with a name from `events/list`. Configs take the provider's own event names: `events: ['issues']`, not `['github.issues']`.
 - **`get_event(name, eventId)`:** `name` is required. An event id is the provider's own, so two instances can share one; both are in every delivery and in `list_events`.
 - **`list_recent_events` is `list_events`.** With a name, it searches only that instance.
+- **`list_providers`** returns each provider's events as MCP names (`resend.email.received`, not `email.received`).
 
 ### Added
 
 - **Local agents** ([#12](https://github.com/hookdeck/mcp-events-bridge/pull/12)): a local bridge gives agents on the same machine public tunnel URLs (`create_tunnel_url`, `list_tunnel_urls`), runs and supervises `hookdeck listen` for them, and re-sends deliveries they missed while `listen` was down. A tunnel URL covers the paths under it, for agents that build callback URLs from one base URL.
 - **Inbound recovery:** a local bridge retries provider events that reached Event Gateway while it was stopped, and restarts its own `hookdeck listen` if it stops.
 - **Generic webhooks** ([#14](https://github.com/hookdeck/mcp-events-bridge/pull/14)): `webhook({ id, verification, events, ... })` relays webhooks from any HTTP sender, verified by Event Gateway with HMAC, Standard Webhooks, Basic auth or an API key. `mcp-events-bridge providers add webhook <id>` creates the source, prints its URL and the config entry, and adds the secret's variable to `.env` (`--write-config` edits `bridge.config.ts`).
-- **`list_providers`** reports MCP event names and each provider's subscription count.
 - **Agent skill:** [`skills/mcp-events-bridge`](skills/mcp-events-bridge/SKILL.md) (`npx skills add hookdeck/mcp-events-bridge`), also in the npm package.
 - **Hermes Agent guide** (experimental): [`references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) runs Hermes's MCP Events pull request against a local bridge.
 
