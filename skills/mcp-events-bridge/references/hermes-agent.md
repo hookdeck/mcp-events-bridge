@@ -2,7 +2,7 @@
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can subscribe to the bridge's events and wake up on each delivery, through a tunnel URL.
 
-**Status:** released Hermes (v0.21.5 and earlier) has no MCP Events support. It's in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908). These steps install that pull request at commit `3cda1278a6`, the version tested with this bridge. They'll change when it's merged.
+**Status: experimental.** Released Hermes (v0.21.5 and earlier) has no MCP Events support. It's in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908). These steps install that pull request at commit `3cda1278a6`, the version tested with this bridge. The pull request may change or may not be merged, and these steps will change with it.
 
 **Known issue:** Hermes's tools take the bridge's MCP URL, which contains `BRIDGE_MCP_SECRET`, so the secret reaches the model provider, Hermes's session store and its logs. It's [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909). Use a local bridge only you can reach, and rotate the secret (change `BRIDGE_MCP_SECRET`, restart `serve`) when you're done testing.
 
@@ -19,6 +19,12 @@ uv venv --python 3.14 && uv pip install -e ".[anthropic]"
 ```
 
 `[anthropic]` installs the Anthropic provider, used in step 4; install the extra for your model provider (`pyproject.toml` lists them). The gateway doesn't install it on demand.
+
+If `git checkout` can't find the commit (the pull request's branch was rewritten), fetch a copy kept on a fork, then check it out again:
+
+```sh
+git fetch https://github.com/leggetter/hermes-agent.git mcp-events-pr-132908-3cda127
+```
 
 **Success:** the version line ends `local 3cda1278 (+10 carried commits)`.
 
