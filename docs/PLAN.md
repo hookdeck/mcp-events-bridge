@@ -101,7 +101,8 @@ In order:
    - [x] Probe path forwarding on an `MCP_EVENTS` source: the challenge at a sub-path is answered, and a delivery's sub-path is forwarded (with destination path `/`, exactly). Hermes builds every callback URL from one public base URL plus `/mcp/events/webhook/<local id>`, so the bridge needs to recognize sub-paths of a tunnel URL as that tunnel's.
    - [x] The bridge recognizes paths under a tunnel URL (for Hermes's one base URL).
    - [x] Patch Hermes locally and run it end to end (7 Oct): Hermes Agent from the PR branch (Claude Haiku), asked in chat, subscribed through a tunnel URL (local path `/`); a real email woke its agent in an `mcp_events` session; it unsubscribed in the spec's shape. The patch fixes the protocol mismatches plus plugin bugs found on the way (the adapter didn't start, tool calls failed, deliveries were dropped as an unauthorized user, and loopback emitters were refused once a secret was set).
-   - [ ] Decide on the PR comment (drafted, not posted) and whether to offer the patch as a PR.
+   - [x] Comment on the PR with the findings and a link to the fixes, offered as a PR against the author's branch ([posted 7 Oct](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6042749607)).
+   - [ ] If the author wants it, open the fixes as a PR against their branch.
 4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf and emits `notifications/claude/channel`.
 
 Decided 7 Oct: every source keeps its own bridge-generated secret, and a tunnel URL also covers the paths under it. Agents that take a URL per subscription get one source each; a client that builds every callback from one base URL plus a path (Hermes) uses one tunnel URL as that base, so its subscriptions share one source.
