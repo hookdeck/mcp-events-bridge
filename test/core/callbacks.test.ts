@@ -41,7 +41,7 @@ const secretOf = (gateway: FakeEventGateway, sourceId: string) => (gateway.sourc
 const subscription = (over: Partial<SubscriptionInput> = {}): SubscriptionInput => ({
   id: 'sub_1',
   principal: 'owner',
-  name: 'email.received',
+  name: 'resend.email.received',
   arguments: {},
   url: 'https://receiver.example.com/a',
   secret: generateWebhookSecret(),
@@ -227,7 +227,7 @@ describe('Signing for callback URLs', () => {
       callbacks,
     });
     const agentSecret = generateWebhookSecret();
-    const params = (args: Record<string, unknown>) => ({ name: 'email.received', arguments: args, delivery: { url: record.url, secret: agentSecret } });
+    const params = (args: Record<string, unknown>) => ({ name: 'resend.email.received', arguments: args, delivery: { url: record.url, secret: agentSecret } });
     await service.subscribe('owner', params({}));
     await service.unsubscribe('owner', params({}));
     await service.unsubscribe('owner', params({ from: 'nobody@example.com' })); // matches nothing: harmless
@@ -239,7 +239,7 @@ describe('Signing for callback URLs', () => {
     expect(callbacks.find(record.url)).toBeDefined(); // unsubscribing doesn't delete the callback
 
     // A plain URL is cached; forgetting it makes the next subscribe verify again.
-    const plain = { name: 'email.received', delivery: { url: 'https://receiver.example.com/hook', secret: agentSecret } };
+    const plain = { name: 'resend.email.received', delivery: { url: 'https://receiver.example.com/hook', secret: agentSecret } };
     await service.subscribe('owner', plain);
     await service.subscribe('owner', { ...plain, arguments: { from: 'x@example.com' } });
     expect(seen).toHaveLength(3);
@@ -287,7 +287,7 @@ describe('Paths under a tunnel URL (one base URL for every subscription, as Herm
       callbacks,
     });
     const agentSecret = generateWebhookSecret();
-    await service.subscribe('owner', { name: 'email.received', delivery: { url: subPath, secret: agentSecret } });
+    await service.subscribe('owner', { name: 'resend.email.received', delivery: { url: subPath, secret: agentSecret } });
     expect(seen).toEqual([[agentSecret, sourceSecret]]);
 
     // Deliveries too.
@@ -303,7 +303,7 @@ describe('Paths under a tunnel URL (one base URL for every subscription, as Herm
 describe('Retrying missed deliveries', () => {
   const AGENT_SECRET = generateWebhookSecret();
   const SOURCE_SECRET = generateWebhookSecret();
-  const BODY = '{"eventId":"evt_1","name":"email.received","data":{"subject":"hi"}}';
+  const BODY = '{"eventId":"evt_1","name":"resend.email.received","data":{"subject":"hi"}}';
 
   type Req = {
     id: string;

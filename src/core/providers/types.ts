@@ -15,7 +15,7 @@ export interface InboundRequest {
 export type JsonSchema = Record<string, unknown>;
 
 export interface ProviderEvent<Args = Record<string, unknown>, Summary extends Record<string, unknown> = Record<string, unknown>> {
-  /** MCP event name, e.g. "email.received". */
+  /** The provider's own event name, e.g. "email.received" (offered over MCP as `{instance id}.{name}`). */
   name: string;
   description: string;
   /** The provider's own event type. */

@@ -36,7 +36,7 @@ function setup({ verifyResult = { ok: true } as VerificationResult, publicHost =
 }
 
 const params = (over: Record<string, unknown> = {}) => ({
-  name: 'email.received',
+  name: 'resend.email.received',
   arguments: { from: 'Alice <Alice@Example.com>' },
   delivery: { mode: 'webhook', url: 'https://receiver.example.com/hook', secret: generateWebhookSecret() },
   ...over,
@@ -48,7 +48,7 @@ describe('SubscriptionService.subscribe', () => {
     const result = await service.subscribe('owner', params());
     expect(result).toEqual({ id: expect.stringMatching(/^sub_[0-9a-f]{32}$/), refreshBefore: '2026-11-04T12:00:00.000Z', cursor: null, truncated: false });
     expect(verifications).toEqual(['https://receiver.example.com/hook']);
-    expect(store.get(result.id)).toMatchObject({ principal: 'owner', name: 'email.received', arguments: { from: 'alice@example.com' } });
+    expect(store.get(result.id)).toMatchObject({ principal: 'owner', name: 'resend.email.received', arguments: { from: 'alice@example.com' } });
   });
 
   it('clamps a requested ttlMs to the allowed range', async () => {

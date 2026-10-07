@@ -10,7 +10,7 @@ const SECRET = `whsec_${Buffer.alloc(32, 7).toString('base64')}`;
 const input = (over: Partial<SubscriptionInput> = {}): SubscriptionInput => ({
   id: 'sub_0123456789abcdef0123456789abcdef',
   principal: 'owner',
-  name: 'email.received',
+  name: 'resend.email.received',
   arguments: { from: 'alice@example.com' },
   url: 'https://receiver.example.com/hook',
   secret: SECRET,
@@ -43,7 +43,7 @@ describe('EventGatewayStore', () => {
     const record = await store.put(input());
     const connection = gateway.connections.get(record.connectionId)!;
     expect(connection.name).toBe('mcp-sub-sub_0123456789abcdef0123456789abcdef');
-    expect(gateway.sources.get(connection.sourceId)).toMatchObject({ name: 'bridge-out-email_received', type: 'PUBLISH_API' });
+    expect(gateway.sources.get(connection.sourceId)).toMatchObject({ name: 'bridge-out-resend_email_received', type: 'PUBLISH_API' });
     expect(gateway.destinations.get(connection.destinationId)).toMatchObject({
       type: 'HTTP',
       config: { url: 'https://receiver.example.com/hook', auth_type: 'CUSTOM_SIGNATURE', auth: { key: SECRET_CARRIER_HEADER, signing_secret: SECRET } },
@@ -62,7 +62,7 @@ describe('EventGatewayStore', () => {
     expect(JSON.parse(description)).toEqual({
       v: 1,
       principal: 'owner',
-      event: 'email.received',
+      event: 'resend.email.received',
       arguments: { from: 'alice@example.com' },
       expiresAt: '2026-11-05T12:00:00.000Z',
       createdAt: '2026-10-05T12:00:00.000Z',

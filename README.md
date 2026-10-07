@@ -107,19 +107,21 @@ The MCP URL is a credential: anyone with it can use the bridge. Keep it private 
 
 ## Webhook providers
 
+Each provider in `bridge.config.ts` is an instance with an `id` (by default its type: `resend`, `github`). Its events are offered over MCP as `{id}.{event}`, where `event` is the provider's own name for it: `resend.email.received`, `github.issues`. So `events/list` says which provider each event comes from, and two instances can offer the same kind of event (two Resend accounts, two trading servers) under different ids. Renaming an `id` renames its events, so agents need to subscribe again.
+
 ### Resend
 
 Inbound email. Every Resend account has a receiving domain (`<id>.resend.app`; Emails > Receiving), so no custom domain is needed.
 
 - **Options:** `resend({ apiKey })`. The API key needs permission to create webhooks.
-- **Event:** `email.received`, with the sender, recipients, subject and Resend's email id. Read the full email with Resend's own API.
+- **Event:** `email.received` (offered as `resend.email.received`), with the sender, recipients, subject and Resend's email id. Read the full email with Resend's own API.
 - **Filters:** `from` (recommended: it limits who can wake the agent) and `to`.
 
 ### GitHub
 
-One MCP event per GitHub webhook type: `github.issues`, `github.pull_request`, `github.push`, and so on (26 types).
+One event per GitHub webhook type: `issues`, `pull_request`, `push`, and so on (26 types), offered as `github.issues`, `github.pull_request`, `github.push`.
 
-- **Events:** by default issues, issue comments, pull requests, reviews, pushes, releases and workflow runs. Choose with `events: ['github.issues', ...]`, or `['*']` for all.
+- **Events:** by default issues, issue comments, pull requests, reviews, pushes, releases and workflow runs. Choose with GitHub's names, `events: ['issues', 'push', ...]`, or `['*']` for all.
 - **Filters:** `repository`, `actions` (for example `["opened"]`) and `sender`.
 - **Summary:** repository, action, sender, title, number and URL for every type, plus a few fields for the common ones (labels, branches, merged, ref, commit count, workflow conclusion). Payloads aren't passed through; read details with GitHub's own tools.
 
@@ -132,7 +134,7 @@ Two ways to connect repositories:
 
 ### Generic webhooks
 
-Webhooks from any HTTP sender: a service you run yourself, or a provider the bridge has no built-in support for. For example, instead of an agent polling a trading server's orders every bar to see whether an order filled, the server sends a webhook when it fills, and the agent subscribes to `order.filled` for the symbols it trades:
+Webhooks from any HTTP sender: a service you run yourself, or a provider the bridge has no built-in support for. For example, instead of an agent polling a trading server's orders every bar to see whether an order filled, the server sends a webhook when it fills, and the agent subscribes to `fills.order.filled` for the symbols it trades:
 
 ```ts
 import { defineConfig, env } from '@hookdeck/mcp-events-bridge';
@@ -160,7 +162,7 @@ The server signs each request's raw body with HMAC-SHA256 and the shared secret,
   - `{ type: 'standard-webhooks', secret }`: [Standard Webhooks](https://www.standardwebhooks.com) signatures, usually with a `whsec_...` secret.
   - `{ type: 'basic-auth', username, password }` or `{ type: 'api-key', header, key }`: a shared credential sent with every request. Prefer a signature: Event Gateway keeps request headers, so these credentials are stored with each request, and anyone who sees one can replay it.
   There's no unverified option: anyone with the URL could otherwise wake your agents with whatever they send.
-- **`events`:** MCP event names, as a list or with a description each. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
+- **`events`:** the sender's event names (offered as `{id}.{name}`, e.g. `fills.order.filled`), as a list or with a description each. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
 - **`eventId`:** the sender's id for a delivery, from `{ header }` or `{ field }`. It becomes the event's `webhook-id`, and Event Gateway drops repeats within an hour. Default: Event Gateway's request id, which stays the same when Event Gateway retries but not when the sender does, so set it if your sender retries.
 - **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when the bridge received the request.
 - **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is ignored, and stays in Event Gateway), and the event at most 256 KiB.
@@ -222,7 +224,7 @@ In the Event Gateway dashboard, a running bridge looks like this:
 ![Event Gateway connections, grouped by source: bridge-out-email_received to one mcp-sub connection with filter, dedupe and retry rules; bridge-hookdeck-notifications to bridge-notifications-fly and bridge-notifications-dev; bridge-resend to bridge-resend-fly and bridge-resend-dev](docs/images/event-gateway-connections.png)
 
 - **`bridge-<provider>`** (here `bridge-resend`) is the provider's source. It feeds one inbound connection per deployment: `bridge-resend-local` (CLI, to a bridge on your machine) and `bridge-resend-fly` (HTTP, to the bridge on Fly.io; the screenshot predates the `local` name).
-- **`bridge-out-<event>`** is the topic source the bridge publishes each MCP event to. Each subscription is one connection from it, `mcp-sub-<id>`, with filter, dedupe and retry rules, to a destination at the subscriber's callback.
+- **`bridge-out-<event>`** (the MCP event name, slugged: `bridge-out-resend_email_received`; the screenshot predates `{id}.{event}` naming) is the topic source the bridge publishes each MCP event to. Each subscription is one connection from it, `mcp-sub-<id>`, with filter, dedupe and retry rules, to a destination at the subscriber's callback.
 - **`bridge-hookdeck-notifications`** receives Event Gateway's issue notifications and forwards them to each deployment, so the bridge hears about failing callbacks and reports them to subscribers.
 
 ## Configuration
@@ -275,8 +277,8 @@ Each `webhook()` instance's credentials, named as its `env()` references name th
 
 ## MCP surface
 
-- `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery.
-- `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`: past events, read from Event Gateway.
+- `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery. Event names are `{id}.{event}` (see [Webhook providers](#webhook-providers)).
+- `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (`events/list` is the catalog of events you can subscribe to). `get_event` takes the event's name as well as its id, since an id is the provider's own and two instances can share one.
 - `list_providers()`: configured providers and their subscriptions.
 - `create_tunnel_url` and `list_tunnel_urls`: public URLs for agents on the same machine as a local bridge (see below). Not offered by a deployed bridge.
 

@@ -93,6 +93,10 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
 
   const catalog = new Catalog(config.providers);
+  // Subscriptions to an event this bridge doesn't offer (a provider removed, an `id` renamed) get nothing; say so.
+  for (const subscription of store.list()) {
+    if (!catalog.get(subscription.name)) log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer`);
+  }
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
     store,
@@ -115,12 +119,11 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   });
   const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
   const providers = () =>
-    config.providers.map((p) => ({
-      id: p.id,
-      type: p.definition.type,
-      events: p.events,
-      subscriptions: store.list().filter((s) => p.events.includes(s.name)).length,
-    }));
+    config.providers.map((p) => {
+      // MCP names, as in events/list and events/subscribe.
+      const events = catalog.forProvider(p.id).map((e) => e.name);
+      return { id: p.id, type: p.definition.type, events, subscriptions: store.list().filter((s) => events.includes(s.name)).length };
+    });
 
   const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(

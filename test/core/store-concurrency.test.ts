@@ -57,7 +57,7 @@ function service(store: EventGatewayStore) {
 }
 
 const params = (secret: string, over: Record<string, unknown> = {}) => ({
-  name: 'email.received',
+  name: 'resend.email.received',
   delivery: { url: 'https://receiver.example.com/hook', secret },
   ...over,
 });
@@ -128,7 +128,7 @@ function input(id: string, from = ''): SubscriptionInput {
   return {
     id,
     principal: 'owner',
-    name: 'email.received',
+    name: 'resend.email.received',
     arguments: from ? { from } : {},
     url: 'https://receiver.example.com/hook',
     secret: generateWebhookSecret(),

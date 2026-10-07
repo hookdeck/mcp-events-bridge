@@ -39,7 +39,7 @@ export interface ProviderInstance {
   /** Instance id, unique in the config; names Event Gateway resources. Defaults to the provider type. */
   id: string;
   definition: ProviderDefinition<Record<string, unknown>>;
-  /** MCP event names to enable. */
+  /** The provider's event names to enable (offered over MCP as `{id}.{name}`). */
   events: string[];
   options: Record<string, unknown>;
 }

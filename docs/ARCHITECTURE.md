@@ -86,8 +86,10 @@ destination: bridge-<instance id>-<deployment> -> https://<bridge>/inbound/<inst
 Per MCP event name (a topic), created on first subscribe:
 
 ```text
-source:      bridge-out-<event name, slugged>     (PUBLISH_API: only Publish API requests accepted)
-             e.g. bridge-out-email_received: resource names allow only letters, digits, - and _
+source:      bridge-out-<MCP event name, slugged> (PUBLISH_API: only Publish API requests accepted)
+             e.g. bridge-out-resend_email_received: resource names allow only letters, digits, - and _
+             (two names can slug alike, e.g. a_b.c and a.b_c; they share a source harmlessly,
+             since each subscription's connection filters on X-MCP-Subscription-Id)
 ```
 
 Per subscription:
@@ -165,7 +167,7 @@ Nothing in MCP Events requires the MCP server to be the sender. A delivery is a 
 - **Failures happen outside the bridge.** A transformation error becomes a `TRANSFORMATION_FAILED` ignored event; nothing tells the subscriber. The bridge learns of it through Event Gateway issue notifications (see "Problem feedback from Event Gateway").
 - **Filter expressiveness.** As above: arguments must map to Hookdeck filters, with normalization done in the transformation (rule order: transformation, filter, dedupe, retry).
 - **Size.** The 256 KiB payload limit has to be enforced in the transformation.
-- **What stays the same:** `get_event` and `list_recent_events` already read from Event Gateway; the challenge is already sent by the bridge; expiry and unsubscribe already delete connections.
+- **What stays the same:** `get_event` and `list_events` already read from Event Gateway; the challenge is already sent by the bridge; expiry and unsubscribe already delete connections.
 
 To answer before committing to it: whether a destination can carry a per-subscription static header, whether a transformation can be shared across connections with per-connection values, and how transformation failures are surfaced through the API. (Event Gateway documents no limits on the number of connections.)
 
@@ -305,7 +307,7 @@ src/
     providers/          provider types + one file per built-in provider (resend.ts, github.ts)
     config.ts           defineConfig, defineProvider, env(), config validation
     relay.ts            inbound routes: map, match (each event's accepts()), sign, publish; issue notifications
-    catalog.ts          events/list from enabled providers
+    catalog.ts          events/list from enabled providers, named {instance id}.{event}
     subscriptions.ts    subscribe, refresh, unsubscribe, sweep; challenge; TTL; per-subscription EG resources
     sign.ts             Standard Webhooks signing
     callback.ts         parse and check callback URLs, build the challenge; CallbackTransport interface
@@ -317,7 +319,7 @@ src/
     mcp.ts              MCP server: tools + hand-registered events/* handlers
     setup.ts            `setup`: Event Gateway resources, provider webhooks, issue feedback
     inbound-plan.ts     the inbound connections a config implies; `hookdeck listen` arguments
-    event-history.ts    get_event and list_recent_events, from Event Gateway's requests
+    event-history.ts    get_event and list_events, from Event Gateway's requests
     callbacks.ts        tunnel URLs for local agents: create, sweep unused, plan listen, retry missed deliveries
     inbound-recovery.ts recover provider events a local bridge missed while its listen was down
   host/
@@ -378,7 +380,7 @@ export default defineConfig({
       id: 'github-hookdeck',                      // instance id; defaults to the provider type
       token: env('GITHUB_TOKEN'),
       scope: { org: 'hookdeck' },
-      events: ['github.issues', 'github.pull_request'],   // subscribers filter by action, e.g. ['opened']
+      events: ['issues', 'pull_request'],   // offered as github-hookdeck.issues, ...; subscribers filter by action, e.g. ['opened']
     }),
     acmeCrm({ webhookSecret: env('ACME_WEBHOOK_SECRET'), events: ['contact.created'] }),
   ],
@@ -409,7 +411,7 @@ No database. Event Gateway is the store, so the bridge is stateless and needs no
 - **Subscriptions:** one connection each, `mcp-sub-<id>`, from the topic source to an HTTP destination at the callback URL:
   - **connection description:** readable JSON metadata, so the operator can see it in the dashboard: `{"v":1,"principal":…,"event":…,"arguments":…,"expiresAt":…,"createdAt":…,"updatedAt":…}`, plus `delivery` while it isn't healthy. At most 500 characters; subscribe rejects arguments that don't fit.
   - **destination auth:** the signing secret, as `CUSTOM_SIGNATURE` config. This is Event Gateway's field for credentials: masked in the dashboard and in every listing, returned only by `GET /destinations/{id}?include=config.auth`. It's also where the secret will be used once Event Gateway can sign Standard Webhooks.
-- **Topics:** found by name, `bridge-out-<event name, slugged>`.
+- **Topics:** found by name, `bridge-out-<MCP event name, slugged>`.
 - **Provider instances:** found by name, `bridge-<instance id>` and `bridge-<instance id>-<deployment>`, with the provider's webhook id in the source description.
 
 At startup the bridge lists `mcp-sub-*` connections, reads each destination's secret, and builds an in-memory index; subscribe, unsubscribe, refresh and issue handling keep it current. That assumes one bridge instance per deployment, which fits single tenancy. A description edited into something unreadable is skipped and reported at startup.
@@ -442,7 +444,7 @@ const resend = defineProvider({
 });
 
 interface ProviderEvent<Args, Summary> {
-  name: string;                        // MCP event name: "email.received"
+  name: string;                        // the provider's event name: "email.received" (offered as "<instance id>.email.received")
   description: string;
   providerEvent: string;               // the provider's event type
   matches(req: InboundRequest): boolean;
@@ -488,7 +490,7 @@ Gaps, and where the config file leaves them:
 2. **No Event Gateway source type.** Solved: the generic `webhook()` provider uses a `WEBHOOK` source with HMAC, Standard Webhooks, Basic auth or API key verification, and `defineProvider` has `sourceConfig` for the verification config (setup keeps the source's config equal to it) and `missingCredentials` for credentials not set yet.
 3. **Where the provider key lives.** Solved: in the deployment's env, referenced from the config. `setup` and `--prune` run from the deployment and need it.
 4. **Thin webhooks.** Providers that send an id and expect you to fetch the rest put an API call in the relay. It fits the relay (a failure returns `5xx` and retries) but is untested.
-5. **More than one instance** of a provider. Solved: instance ids.
+5. **More than one instance** of a provider. Solved: instance ids, and MCP event names of the form `{instance id}.{event}`, so instances offering the same event don't clash.
 6. **Provider-specific setup arguments,** such as which GitHub repository or organization. Solved: typed `options`.
 7. **Manifests as code or data.** Solved for now: code, written in the deployment's own config when it isn't built in. A declarative format can still come later if most providers turn out to be header and JSON-path lookups.
 
@@ -496,7 +498,7 @@ Gaps, and where the config file leaves them:
 
 GitHub has about 70 webhook event types, most with several actions, and payloads of up to hundreds of KB, so it isn't mapped event by event:
 
-- **One MCP event per GitHub event type:** `github.issues`, `github.pull_request`, `github.push`, `github.workflow_run`, and so on (26 types). The action is a subscribe filter, not part of the name.
+- **One event per GitHub event type:** `issues`, `pull_request`, `push`, `workflow_run`, and so on (26 types), offered as `github.issues` and so on with the default instance id. The action is a subscribe filter, not part of the name.
 - **A generic summary for every type,** from the fields all GitHub payloads share: `event`, `action`, `repository` and `sender` (lower-cased), and the main object's `title`, `number` and `url`. The most-used types add a few fields: labels and state for issues, merged and branches for pull requests, ref, commit count and head commit for pushes, conclusion for workflow runs. Text is capped at 500 characters.
 - **Arguments on every type:** `repository`, `actions` and `sender`.
 - **The config chooses the types:** `github({ events: [...] })`; the default is issues, issue comments, pull requests, reviews, pushes, releases and workflow runs, and `['*']` enables all. The webhook is registered for exactly those types.
@@ -507,7 +509,7 @@ GitHub has about 70 webhook event types, most with several actions, and payloads
 - **Changing the list:** setup keeps a fingerprint of the repositories and the enabled events in the source description. When either changes, it updates the webhooks and reuses the source's secret, so deliveries in flight still verify. Removing a repository from the list leaves its webhook in place; delete it in the repository's settings, or its events keep arriving (subscribers filtering by repository won't see them).
 - **Event id:** `X-GitHub-Delivery`, also the inbound dedupe field. **Occurred-at:** the main object's latest timestamp, else the push's head commit, else the time received. The `ping` sent when a webhook is created matches no event and is ignored.
 
-Still open from "Adding a provider": several instances of the same provider share event names, so two GitHub instances in one deployment would clash in the catalog (gap 5). One instance with a repository list or an organization, filtered by `repository`, covers the common case.
+Several GitHub instances (for example one per organization) can be configured side by side: their events are named by instance id (`github-hookdeck.issues`, `github-acme.issues`), so they don't clash. One instance with a repository list or an organization, filtered by `repository`, still covers the common case.
 
 ### Generic provider: webhooks
 
@@ -522,7 +524,7 @@ For senders with no Event Gateway source type: a service you run yourself (the m
 - **Occurred-at:** a body field (ISO 8601, or Unix seconds or milliseconds); else the time received, as GitHub's last fallback.
 - **Data:** the JSON body as sent, optionally narrowed to top-level `fields`; a non-object JSON body is wrapped as `{ body }`. The relay's 256 KiB envelope limit applies, and a non-JSON body is ignored with `200` (a `4xx` would only make Event Gateway retry it); the request stays in Event Gateway.
 - **Arguments:** equality filters on declared top-level `filters` (string, number or boolean, compared as strings), as a strict JSON Schema object, so an agent subscribes with `{ "symbol": "AAPL" }`. Filters must be among `fields` when both are set.
-- **History:** `list_recent_events` maps stored requests too: the event history adds `x-hookdeck-requestid` and `x-hookdeck-verified` (from the request's `verified`) to each stored request's headers, as delivery would. `get_event` finds events by a header id only.
+- **History:** `list_events` maps stored requests too: the event history adds `x-hookdeck-requestid` and `x-hookdeck-verified` (from the request's `verified`) to each stored request's headers, as delivery would. `get_event` finds events by a header id only.
 
 The config edit in `providers add webhook --write-config` splices the entry into the `providers` array at positions from the parsed AST, so the rest of the file keeps its formatting, and adds the `webhook` and `env` imports through magicast (a small library for programmatic config edits, on Babel's parser; loaded only by this command). The result is re-parsed and checked, then written through a temporary file and a rename. It refuses, and prints the entry instead, when the default export isn't `defineConfig({...})` or an object literal, `providers` isn't an array literal or contains a spread (providers enabled conditionally, as in this repo's own config), or the import paths can't be inferred.
 
@@ -530,7 +532,7 @@ The config edit in `providers add webhook --write-config` splices the entry into
 
 Handlers registered by hand:
 
-- `events/list`: the catalog from configured providers.
+- `events/list`: the catalog from configured providers. Each event is named `{instance id}.{event}`, where `event` is the provider's own name for it (`resend.email.received`, `github.issues`, `fills.order.filled`): the catalog says which provider an event comes from, and instances can't clash.
 - `events/subscribe`: validate, check the callback, send the challenge, create the subscription's Event Gateway resources, store, return `id` and `refreshBefore`.
 - `events/unsubscribe`.
 
@@ -538,7 +540,7 @@ Tools:
 
 - `list_providers()`: configured instances, their events, and how many subscriptions each has.
 - `create_tunnel_url(agent, name, port?, path?)` and `list_tunnel_urls(agent)`: tunnel URLs for local agents, on a bridge with CLI inbound (see "A local agent receiving events"). Results carry the URL, port and path, never secrets.
-- `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`, read from Event Gateway. These also work around openai/codex#50714, where dot runs don't receive event data.
+- `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (not the catalog of event kinds, which is `events/list`). These also work around openai/codex#50714, where dot runs don't receive event data.
 - Later, if a client needs it, poll mode: `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. Advertise `"poll"` in each event's `delivery` once built. If a host supports neither MCP Events nor `events/poll`, expose the same implementation as `poll_events` and `wait_for_event` tools.
 
 There are no setup tools: providers change through the config file.
@@ -813,6 +815,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **7 Oct, tunnel URLs per subscription.** One MCP Events source per subscription with a shared CLI destination per agent; the agent routes by `X-MCP-Subscription-Id`. Chosen over one source per agent for separate history and controls, accepting a `listen` restart per new subscription until hookdeck-cli#467.
 - **7 Oct, dual signing.** The bridge signs deliveries to a tunnel URL with its source's secret and the agent's, rather than updating the source's secret (61 seconds to take effect) or passing secrets through tools.
 - **7 Oct, retry, not replay.** Missed deliveries are re-sent by the bridge with a fresh signature; cursor replay is a separate, later feature.
+- **7 Oct, event names.** MCP events are named `{instance id}.{provider event name}` (#15). Chosen over merging same-named events across instances with an `instance` argument: simpler, no schema merging, and the catalog shows each provider. Breaking, and accepted, with no migration: 0.1.0 was an early demo release, as far as we know used only by this project. Resend's `email.received` became `resend.email.received`, configs use the provider's own event names (`issues`, not `github.issues`), and 0.1.0 subscriptions aren't carried over (the client subscribes again; the bridge logs subscriptions to events it doesn't offer). The name identifies the instance (ids have no dots), so subscriptions match on name alone. `get_event` takes the name as well as the id, since an event id is the provider's own and two instances can share one; `list_recent_events` became `list_events`.
 - **7 Oct, deployment names.** `deployment` is optional: `BRIDGE_DEPLOYMENT`, else `local` (CLI inbound) or `public` (HTTP inbound). It was `dev` in the examples, which read as "not for real use" once a bridge on a laptop became the setup for local agents.
 - **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions.
 - **7 Oct, local scope.** One bridge per machine, with one owner and its own Hookdeck project, running alongside the agent. The bridge runs `listen` and catches up by itself; the agent-facing tool becomes `create_tunnel_url`. Poll, push and cursor replay aren't local requirements and move to later (supersedes the 5 Oct poll fallback for local agents).
@@ -843,7 +846,7 @@ Searched on 5 Oct 2026. No open-source project turned up that turns third-party 
 | --- | --- | --- |
 | [Smithery triggers](https://smithery.ai/docs/build/triggers) (preview) | A vendor-prefixed MCP Events profile (`ai.smithery/events/*`). Smithery passes subscribe through to the MCP server, which registers the upstream webhook and delivers signed events straight to the consumer | Closest on protocol. Leaves provider ingestion, signing and retries to each server author, which is what the bridge does. Complementary: the bridge could act as a Smithery trigger server |
 | [Composio triggers](https://docs.composio.dev/docs/using-triggers) | Hosted. Provider webhooks (or polling) per connected account, fanned out to trigger instances and delivered to a subscriber URL with a rotatable secret | Closest on function, with its own envelope rather than MCP Events. Its trigger instance per connected account is the bridge's provider instance |
-| [Pipedream Connect triggers](https://pipedream.com/docs/connect/components/triggers) | Hosted. Deploy a trigger with a `webhook_url` and get a signing key; or pull recent events from an API | Same shape as subscribe-with-callback plus `list_recent_events`. Not MCP Events |
+| [Pipedream Connect triggers](https://pipedream.com/docs/connect/components/triggers) | Hosted. Deploy a trigger with a `webhook_url` and get a signing key; or pull recent events from an API | Same shape as subscribe-with-callback plus `list_events`. Not MCP Events |
 | Zapier SDK triggers ([docs](https://docs.zapier.com/sdk/index.md)) | Experimental: subscribe to app events in code, with Zapier holding subscription state and webhook reliability | Same idea, closed, not MCP Events |
 | [mcp-webhook-events](https://pypi.org/project/mcp-webhook-events/0.2.0/) | Python library for an MCP server to emit MCP Events about its own app | First-party emitting; the bridge is the third-party case |
 | [Hook0 MCP](https://www.hook0.com/webhooks-for-ai-agents) | MCP tools to manage the webhooks you send | Outbound management, a different direction |

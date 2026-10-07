@@ -132,7 +132,7 @@ export class SubscriptionService {
 
     const href = url.href;
     // The key uses the caller's exact arguments, so unsubscribe with the same arguments finds it.
-    const id = deriveSubscriptionId(principal, href, event.name, rawArgs);
+    const id = deriveSubscriptionId(principal, href, key.name, rawArgs);
     const now = this.now();
 
     // Endpoint verification, cached per (principal, url). A bridge callback URL is always verified: the edge answers
@@ -166,7 +166,7 @@ export class SubscriptionService {
         return {
           id,
           principal,
-          name: event.name,
+          name: key.name,
           arguments: args,
           url: href,
           secret,

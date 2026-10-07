@@ -3,8 +3,9 @@ import { z } from 'zod';
 import type { InboundRequest, ProviderDefinition, ProviderEvent } from './types.js';
 
 /*
- * GitHub. One MCP event per GitHub webhook event type (`github.issues`,
- * `github.pull_request`, ...), with the action as a subscribe filter. Every
+ * GitHub. One event per GitHub webhook event type (`issues`, `pull_request`,
+ * ...; offered as `github.issues` and so on, with the default instance id),
+ * with the action as a subscribe filter. Every
  * type gets a generic summary from the fields all GitHub payloads share
  * (action, repository, sender, and the main object's title, number and URL);
  * the most-used types add a few specific fields. Payloads themselves can be
@@ -74,9 +75,7 @@ const EVENT_TYPES: Record<string, string> = {
   watch: 'Someone started watching the repository.',
 };
 
-export const DEFAULT_GITHUB_EVENTS = ['issues', 'issue_comment', 'pull_request', 'pull_request_review', 'push', 'release', 'workflow_run'].map(
-  (type) => `github.${type}`,
-);
+export const DEFAULT_GITHUB_EVENTS = ['issues', 'issue_comment', 'pull_request', 'pull_request_review', 'push', 'release', 'workflow_run'];
 
 /** The payload key holding each type's main object, where it isn't the type name itself. */
 const OBJECT_KEY: Record<string, string> = {
@@ -199,7 +198,7 @@ type GithubArguments = z.infer<typeof githubArguments>;
 
 function githubEvent(type: string, description: string): ProviderEvent<GithubArguments, GithubSummary> {
   return {
-    name: `github.${type}`,
+    name: type,
     description: `GitHub ${type}: ${description} Carries a summary (repository, action, sender, title, number, URL); read the full object with GitHub's own tools. Filter by repository, actions or sender.`,
     providerEvent: type,
     matches: (req: InboundRequest) => req.headers['x-github-event'] === type,

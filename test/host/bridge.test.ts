@@ -5,6 +5,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
+import { MemoryStore } from '../../src/core/memory-store.js';
+import { generateWebhookSecret } from '../../src/core/secret.js';
+import { healthyDelivery } from '../../src/core/store.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createNodeCallbackTransport } from '../../src/host/callback-transport.js';
 import { createBridgeServer, redactPath } from '../../src/host/server.js';
@@ -31,7 +34,7 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((r) => r.close()));
 });
 
-async function startBridge({ inbound = 'cli' as 'cli' | 'http' } = {}) {
+async function startBridge({ inbound = 'cli' as 'cli' | 'http', store }: { inbound?: 'cli' | 'http'; store?: MemoryStore } = {}) {
   const gateway = new FakeEventGateway();
   const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', providers: [resend({ apiKey: 'x' })] }), {
     HOOKDECK_API_KEY: 'k',
@@ -41,6 +44,7 @@ async function startBridge({ inbound = 'cli' as 'cli' | 'http' } = {}) {
   const logs: string[] = [];
   const bridge = await createBridgeServer(config, {
     hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    ...(store && { store }),
     // The subscriber's receiver is local; stand in for Event Gateway's challenge answer.
     subscriptionOverrides: { verify: async () => ({ ok: true }), transport: createNodeCallbackTransport({ allowNonPublic: true }) },
     log: (m) => logs.push(m),
@@ -54,7 +58,7 @@ async function startSubscriber(port: number, args: Record<string, unknown> = {})
   const subscriber = new Subscriber({
     serverUrl: `http://127.0.0.1:${port}/mcp/${MCP_SECRET}`,
     token: '',
-    eventName: 'email.received',
+    eventName: 'resend.email.received',
     arguments: args,
     callbackUrl: 'https://receiver.example.com/hook',
     log: () => {},
@@ -98,7 +102,51 @@ describe('bridge server', () => {
     expect((await postInbound(port)).status).toBe(200);
     await deliverPublished(gateway, subscriber);
     expect(subscriber.events).toHaveLength(1);
-    expect(subscriber.events[0]).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'email.received', data: { fromAddress: 'sender@example.com' } });
+    expect(subscriber.events[0]).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'resend.email.received', data: { fromAddress: 'sender@example.com' } });
+  });
+
+  it('lists providers with their MCP event names and how many subscriptions each has', async () => {
+    const { port } = await startBridge();
+    await startSubscriber(port);
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      const result = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
+      expect(result.structuredContent?.providers).toEqual([{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('get_event and list_events need a name the bridge offers', async () => {
+    const { port } = await startBridge();
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    type Result = { isError?: boolean; content?: Array<{ text?: string }> };
+    const call = async (name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as Result;
+    try {
+      // The name is required: an event id is the provider's own, so it doesn't say which instance to search.
+      expect((await call('get_event', { eventId: 'msg_1' })).isError).toBe(true);
+      const unknown = await call('get_event', { name: 'email.received', eventId: 'msg_1' });
+      expect(unknown).toMatchObject({ isError: true });
+      expect(unknown.content?.[0]?.text).toContain('Unknown event name email.received');
+      const listed = await call('list_events', { name: 'email.received' });
+      expect(listed).toMatchObject({ isError: true });
+      expect(listed.content?.[0]?.text).toContain('Unknown event name email.received');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("logs a subscription to an event the bridge doesn't offer", async () => {
+    const store = new MemoryStore();
+    await store.put({
+      id: 'sub_old', principal: 'owner', name: 'email.received', arguments: {}, url: 'https://receiver.example.com/hook',
+      secret: generateWebhookSecret(), previousSecret: null, previousSecretExpiresAt: null, delivery: healthyDelivery(),
+      expiresAt: '2099-01-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+    const { logs } = await startBridge({ store });
+    expect(logs).toContain('subscription sub_old is for "email.received", which this bridge doesn\'t offer');
   });
 
   it('applies the from filter', async () => {

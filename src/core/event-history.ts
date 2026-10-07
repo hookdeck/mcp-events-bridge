@@ -5,7 +5,7 @@ import { providerSourceName } from './names.js';
 
 /*
  * Past events, read from Event Gateway: every provider request is kept there,
- * so the bridge stores none. Used by get_event and list_recent_events.
+ * so the bridge stores none. Used by get_event and list_events.
  */
 
 export interface PastEvent {
@@ -43,29 +43,47 @@ export class EventHistory {
     const entry = this.deps.catalog.forProvider(providerId).find((e) => e.event.matches(req));
     if (!entry) return undefined;
     try {
-      return { eventId: entry.event.eventId(req), name: entry.event.name, timestamp: entry.event.occurredAt(req), data: entry.event.summarize(req) };
+      return { eventId: entry.event.eventId(req), name: entry.name, timestamp: entry.event.occurredAt(req), data: entry.event.summarize(req) };
     } catch {
       return undefined;
     }
   }
 
-  async get(eventId: string): Promise<PastEvent | undefined> {
-    for (const provider of this.deps.providers) {
-      const header = provider.definition.eventIdHeader;
-      const sourceId = await this.sourceId(provider.id);
-      if (!header || !sourceId) continue;
-      const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, headers: { [header]: eventId }, includeData: true, limit: 5 });
-      for (const request of page.models) {
-        const event = this.toEvent(provider.id, request);
-        if (event?.eventId === eventId) return event;
-      }
+  /**
+   * Whether `get` can look up this event: the name is offered, and its provider has an event-id header to search
+   * Event Gateway's requests by (a generic webhook with `eventId: { field }` or the default request id has none).
+   */
+  lookup(name: string): 'ok' | 'unknown' | 'no-id-header' {
+    const entry = this.deps.catalog.get(name);
+    if (!entry) return 'unknown';
+    const provider = this.deps.providers.find((p) => p.id === entry.providerId);
+    return provider?.definition.eventIdHeader ? 'ok' : 'no-id-header';
+  }
+
+  /**
+   * An event by its MCP name and id. The name says which provider instance to search: an event id is the provider's
+   * own (a Resend svix-id, a sender's delivery id), so two instances can both have one.
+   */
+  async get(name: string, eventId: string): Promise<PastEvent | undefined> {
+    const entry = this.deps.catalog.get(name);
+    const provider = entry && this.deps.providers.find((p) => p.id === entry.providerId);
+    const header = provider?.definition.eventIdHeader;
+    const sourceId = provider && (await this.sourceId(provider.id));
+    if (!provider || !header || !sourceId) return undefined;
+    const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, headers: { [header]: eventId }, includeData: true, limit: 5 });
+    for (const request of page.models) {
+      const event = this.toEvent(provider.id, request);
+      if (event?.name === name && event.eventId === eventId) return event;
     }
     return undefined;
   }
 
   async recent({ name, since, limit = 20 }: { name?: string; since?: string; limit?: number } = {}): Promise<PastEvent[]> {
     const events: PastEvent[] = [];
-    for (const provider of this.deps.providers) {
+    // A name is one instance's event: search only that instance's source.
+    const instance = name === undefined ? undefined : this.deps.catalog.get(name)?.providerId;
+    if (name !== undefined && !instance) return events;
+    for (const provider of this.deps.providers.filter((p) => instance === undefined || p.id === instance)) {
       const sourceId = await this.sourceId(provider.id);
       if (!sourceId) continue;
       const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, created_at_gte: since, includeData: true, limit: Math.min(limit * 2, 100) });
