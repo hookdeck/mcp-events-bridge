@@ -45,7 +45,7 @@ async function setup(configFile: string | undefined) {
     console.log(`\nGenerated an MCP secret. Set it before running serve, and keep it private (the URL is a credential):`);
     console.log(`  BRIDGE_MCP_SECRET=${report.mcp.secret}   (in .env, or: fly secrets set BRIDGE_MCP_SECRET=...)`);
   }
-  console.log(`\nMCP URL for ChatGPT (Developer mode, "No Authentication"):\n  ${report.mcp.url}`);
+  console.log(`\nMCP URL:\n  ${report.mcp.url}`);
 }
 
 async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {
