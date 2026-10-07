@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
-import { runSetup } from '../../src/core/setup.js';
+import { missingCredentialsError, runSetup } from '../../src/core/setup.js';
 import { github, resend, webhook } from '../../src/providers.js';
 import { FakeGithub } from '../support/fake-github.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
@@ -139,6 +139,9 @@ describe('bridge setup', () => {
       expect(report.providers[0]).toMatchObject({ id: 'fills', sourceUrl: source()!.url, webhook: 'pending', waitingFor: ['FILLS_WEBHOOK_SECRET'] });
       expect(report.providers[0]!.hint).toContain(source()!.url);
       expect(report.providers[0]!.hint).toMatch(/Waiting for FILLS_WEBHOOK_SECRET/);
+      // A missing secret ends setup with an error naming it, not a quiet success.
+      expect(missingCredentialsError(report)).toMatch(/fills: set FILLS_WEBHOOK_SECRET; delivery is held/);
+      expect(missingCredentialsError({ providers: [{ ...report.providers[0]!, waitingFor: undefined }] })).toBeUndefined();
     });
 
     it('once the secret is set: applies it to the same source and connects it; re-running changes nothing', async () => {

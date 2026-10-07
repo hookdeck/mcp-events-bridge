@@ -7,7 +7,7 @@ import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
 import { providerSourceName } from './core/names.js';
 import { webhook, type WebhookOptions } from './core/providers/webhook.js';
-import { ensureSource, mcpUrl, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
+import { ensureSource, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
@@ -77,6 +77,12 @@ async function setup(configFile: string | undefined) {
     console.log(`  BRIDGE_MCP_SECRET=${report.mcp.secret}   (in .env, or: fly secrets set BRIDGE_MCP_SECRET=...)`);
   }
   console.log(`\nMCP URL:\n  ${report.mcp.url}`);
+
+  const incomplete = missingCredentialsError(report);
+  if (incomplete) {
+    console.error(`\n${incomplete}`);
+    process.exitCode = 1;
+  }
 }
 
 async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {

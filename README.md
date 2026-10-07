@@ -179,7 +179,7 @@ Credentials are `env()` references. The sender usually gives you its secret only
 3. **Put the secret in `.env`:** `FILLS_WEBHOOK_SECRET=...`.
 4. **Run `npx mcp-events-bridge setup`.** It sets the secret on the source and connects the source to the bridge. A new or changed secret can take up to about a minute to take effect at Event Gateway; the bridge ignores any request Event Gateway didn't verify in the meantime.
 
-Until the secret is set, delivery is held: `setup` creates no connection from the source to the bridge, so requests that arrive are kept in Event Gateway but never delivered, and `serve` refuses to start, naming the variable to set.
+Until the secret is set, delivery is held: `setup` creates no connection from the source to the bridge, so requests that arrive are kept in Event Gateway but never delivered. `setup` still sets up everything else, then exits with an error naming the variable (so a deploy script or CI notices), and `serve` refuses to start.
 
 ### Adding a webhook provider
 

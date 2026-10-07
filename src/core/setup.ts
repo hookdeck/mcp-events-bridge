@@ -40,6 +40,18 @@ export interface SetupReport {
   mcp: { secret: string; generated: boolean; url: string };
 }
 
+/**
+ * The error setup ends with when a provider's credentials aren't set yet, or undefined when none are missing.
+ * Setup still does everything it can first (including creating the waiting provider's source, so its URL can be
+ * registered), but a missing secret is a failure, not a quiet success: delivery for that provider is held.
+ */
+export function missingCredentialsError(report: Pick<SetupReport, 'providers'>): string | undefined {
+  const waiting = report.providers.filter((p) => p.waitingFor?.length);
+  if (!waiting.length) return undefined;
+  const lines = waiting.map((p) => `  ${p.id}: set ${p.waitingFor!.join(', ')}; delivery is held until then`);
+  return `Setup isn't complete:\n${lines.join('\n')}\nSet the variable (for example in .env) and run setup again.`;
+}
+
 export interface SetupDeps {
   config: ResolvedConfig;
   hookdeck: HookdeckClient;
