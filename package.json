@@ -44,7 +44,9 @@
   },
   "files": [
     "dist",
+    "skills",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "publishConfig": {

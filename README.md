@@ -19,9 +19,9 @@ The bridge closes that gap:
 - **Every event verified, delivered and recorded.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.
 
-It's for developers who want agents (ChatGPT today, local agents next) to react to events from the services they already use.
+It's for developers who want agents (ChatGPT, and agents on the same machine as the bridge) to react to events from the services they already use.
 
-**Status:** 0.1, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next.
+**Status:** 0.2, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
 
 ## How it works
 
@@ -32,6 +32,16 @@ It's for developers who want agents (ChatGPT today, local agents next) to react 
 - **The Hookdeck CLI** forwards provider events to a bridge on your laptop, and MCP Events to [local agents](#local-agents), so neither needs a public URL.
 
 The design, its trade-offs and how it maps to the spec are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Set up with a coding agent
+
+The [`mcp-events-bridge` skill](skills/mcp-events-bridge/SKILL.md) walks a coding agent (Claude Code, Cursor, Codex and others that support [Agent Skills](https://agentskills.io)) through setup, adding providers, connecting an agent and troubleshooting, with a success signal for each step:
+
+```sh
+npx skills add hookdeck/mcp-events-bridge
+```
+
+Then ask the agent to set up the bridge. It asks you for the credentials. The skill is also in the npm package, under `skills/`.
 
 ## Quick start
 
@@ -141,7 +151,6 @@ import { defineConfig, env } from '@hookdeck/mcp-events-bridge';
 import { webhook } from '@hookdeck/mcp-events-bridge/providers';
 
 export default defineConfig({
-  deployment: process.env.BRIDGE_DEPLOYMENT ?? 'dev',
   providers: [
     webhook({
       id: 'fills',                       // names the Event Gateway source: bridge-fills
@@ -291,7 +300,15 @@ An agent on a laptop has no public URL to receive webhooks on. Run the bridge on
 
 That's all the agent does. The bridge runs `hookdeck listen` for your port, and restarts it to cover each new URL. Deliveries missed while `listen` was down (the laptop slept, or during a restart) wait in Event Gateway, and the bridge sends them again when it reconnects, with the same `webhook-id` and a fresh signature, so standard verification (including its 5-minute window) passes. Delivery is at least once: dedupe by `webhook-id`. Provider events that reach Event Gateway while the bridge itself is stopped are recovered the same way when it starts again.
 
-If your agent builds every callback URL from one base URL plus a path, create one tunnel URL with path `/` and use it as the base: the URL covers the paths under it. A tunnel URL only accepts deliveries signed by the bridge, and one that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it. No local agent supports MCP Events yet, so this is tested with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
+If your agent builds every callback URL from one base URL plus a path, create one tunnel URL with path `/` and use it as the base: the URL covers the paths under it. A tunnel URL only accepts deliveries signed by the bridge, and one that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it.
+
+What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in [`skills/mcp-events-bridge/references/receiving-deliveries.md`](skills/mcp-events-bridge/references/receiving-deliveries.md). `npm run e2e` tests this path with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
+
+### Hermes Agent (experimental)
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) works with a local bridge through a tunnel URL: it subscribes, and each event wakes it in its own session. Released Hermes doesn't support MCP Events; support is in a draft pull request that may or may not be merged, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908), which includes fixes from running it against this bridge.
+
+[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. Hermes keeps the bridge's MCP URL in its `.env` as a named emitter, so the URL's secret stays out of the model's context and Hermes's logs.
 
 ## Security and limitations
 
@@ -300,6 +317,19 @@ If your agent builds every callback URL from one base URL plus a path, create on
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook delivery only.** Poll and push delivery, and replay cursors, may come later if clients need them. Local agents receive webhooks through the Hookdeck CLI (above).
 - **Retries reuse the first signature.** The spec asks for a fresh signature on each attempt. Retries are kept inside the 5-minute window receivers check, until Event Gateway signs deliveries itself.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `setup` exits 1: "Setup isn't complete", then `<id>: set <VAR>` | A generic webhook's secret isn't set; everything else was set up | Register the printed URL with the sender, put the secret in `.env`, run `setup` again |
+| `serve`: "Event Gateway isn't set up for deployment ..." | `setup` hasn't run with this deployment name and inbound mode | Run `setup` with the same `BRIDGE_DEPLOYMENT` and `BRIDGE_INBOUND` |
+| `serve` logs `subscription ... is for "...", which this bridge doesn't offer` | The provider was removed, its `id` renamed, or the subscription is from 0.1.0 (before `{id}.{event}` names) | The agent subscribes again, to a name from `events/list` |
+| `events/subscribe` fails with "Unknown event" | An old or wrong name | Use a name from `events/list` |
+| A generic webhook sender gets 401 | Wrong signature, header, encoding or secret | Match the provider's `verification`; a new secret can take about a minute to apply |
+| `serve` logs `0/0 published` | No subscription matches the event's name or filters | Check the subscription's name and arguments with `list_providers` |
+| An event takes a minute or two | `hookdeck listen` occasionally takes ~30s to connect, and Event Gateway occasionally queues a CLI delivery | Wait: the bridge re-sends missed deliveries itself |
+| The same event twice | Two bridges in one Hookdeck project, or a retry | One Hookdeck project per bridge; receivers dedupe by `webhook-id` |
 
 ## Development
 

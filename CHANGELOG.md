@@ -1,0 +1,31 @@
+# Changelog
+
+## 0.2.0 (unreleased)
+
+### Breaking
+
+0.2.0 breaks compatibility with 0.1.0 deliberately, with no migration paths: 0.1.0 was an early demo release, as far as we know used only by this project.
+
+- **Event names are `{instance id}.{event}`** ([#15](https://github.com/hookdeck/mcp-events-bridge/issues/15)): the provider instance's `id`, then the provider's own name for the event. `email.received` is now `resend.email.received`; GitHub's names are unchanged with the default `id` (`github.issues`), and an instance with another `id` offers `<id>.issues`. Two instances can now offer the same event.
+- **No migration from 0.1.0.** Subscriptions to renamed events get nothing (`serve` logs each subscription to an event it doesn't offer): agents, ChatGPT included, subscribe again with a name from `events/list`. Configs take the provider's own event names: `events: ['issues']`, not `['github.issues']`.
+- **`get_event(name, eventId)`:** `name` is required. An event id is the provider's own, so two instances can share one; both are in every delivery and in `list_events`.
+- **`list_recent_events` is `list_events`.** With a name, it searches only that instance.
+- **`list_providers`** returns each provider's events as MCP names (`resend.email.received`, not `email.received`).
+
+### Added
+
+- **Local agents** ([#12](https://github.com/hookdeck/mcp-events-bridge/pull/12)): a local bridge gives agents on the same machine public tunnel URLs (`create_tunnel_url`, `list_tunnel_urls`), runs and supervises `hookdeck listen` for them, and re-sends deliveries they missed while `listen` was down. A tunnel URL covers the paths under it, for agents that build callback URLs from one base URL.
+- **Inbound recovery:** a local bridge retries provider events that reached Event Gateway while it was stopped, and restarts its own `hookdeck listen` if it stops.
+- **Generic webhooks** ([#14](https://github.com/hookdeck/mcp-events-bridge/pull/14)): `webhook({ id, verification, events, ... })` relays webhooks from any HTTP sender, verified by Event Gateway with HMAC, Standard Webhooks, Basic auth or an API key. `mcp-events-bridge providers add webhook <id>` creates the source, prints its URL and the config entry, and adds the secret's variable to `.env` (`--write-config` edits `bridge.config.ts`).
+- **Agent skill:** [`skills/mcp-events-bridge`](skills/mcp-events-bridge/SKILL.md) (`npx skills add hookdeck/mcp-events-bridge`), also in the npm package.
+- **Hermes Agent guide** (experimental): [`references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) runs Hermes's MCP Events pull request against a local bridge.
+
+### Changed
+
+- **`deployment` is optional.** It defaults to `BRIDGE_DEPLOYMENT`, then `local` with CLI inbound or `public` with HTTP inbound. A config that sets it, as 0.1.0's examples did, keeps its resource names.
+- **`setup` exits 1** when a webhook secret isn't set yet, after setting up everything else, and labels the MCP endpoint "MCP URL".
+- **Inbound bodies that aren't JSON** are answered `200` and ignored, so Event Gateway doesn't retry them.
+
+## 0.1.0 (2026-10-06)
+
+First release: Resend and GitHub providers, MCP Events webhook delivery through Hookdeck Event Gateway, `setup` and `serve`, and deployment to Fly.io.

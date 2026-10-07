@@ -16,8 +16,8 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
-| 6 | Local agents | Build | In progress: tunnel URLs, with the bridge running `listen` and catching up by itself, built (`E2E_LOCAL=1`, PR #12); next, a real agent (Hermes) locally |
-| 7 | Production readiness and reach | Build | Started: the GitHub provider, the generic webhook provider, the npm package (0.1.0) and the README done early |
+| 6 | Local agents | Build | In progress: tunnel URLs, with the bridge running `listen` and catching up by itself, built (`E2E_LOCAL=1`, PR #12); Hermes Agent's MCP Events pull request works end to end with the bridge, unpatched (7 Oct; [guide](../skills/mcp-events-bridge/references/hermes-agent.md), experimental); next, the Claude Code channel |
+| 7 | Production readiness and reach | Build | Started: the GitHub provider, the generic webhook provider, the npm package (0.1.0) and the README done early; for 0.2.0, `{id}.{event}` names (#17) and an agent skill (#16) |
 | Later | Depends on Event Gateway features or later decisions | | |
 
 ## Stage 1: Repo setup
@@ -95,14 +95,16 @@ In order:
    - `listen` is restarted with backoff if it exits, instead of stopping the bridge.
 
    The agent then needs no Hookdeck CLI or credentials: it asks for a URL and subscribes.
-3. **A real local agent.** No local agent harness supports MCP Events yet (searched 7 Oct; see "MCP Events clients" in `ARCHITECTURE.md`). The closest is Hermes Agent's draft webhook receiver, which doesn't yet send the spec's `events/subscribe` shape. Until one does, the mock agent stands in.
-   - [ ] Run Hermes Agent locally from its draft PR ([NousResearch/hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908)) with `mcp_events` enabled, pointed at a local bridge.
+3. **A real local agent.** No released local agent harness supports MCP Events (searched 7 Oct; see "MCP Events clients" in `ARCHITECTURE.md`). Hermes Agent's draft pull request does, with our fixes, and works with the bridge; the e2e still uses the mock agent.
+   - [x] Run Hermes Agent locally from its draft PR ([NousResearch/hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908)) with `mcp_events` enabled, pointed at a local bridge (7 Oct; first with a local patch, then unpatched, below).
    - [x] Confirm, by running it, the mismatches found by reading the code. Hermes's own client code against the bridge (7 Oct): every request is rejected as invalid JSON-RPC (`-32600`, its top-level `_meta`); with that fixed, subscribe and unsubscribe fail with `name is required`. `refreshBefore`, the delivery body's `name` and the challenge need a patched client to reach.
    - [x] Probe path forwarding on an `MCP_EVENTS` source: the challenge at a sub-path is answered, and a delivery's sub-path is forwarded (with destination path `/`, exactly). Hermes builds every callback URL from one public base URL plus `/mcp/events/webhook/<local id>`, so the bridge needs to recognize sub-paths of a tunnel URL as that tunnel's.
    - [x] The bridge recognizes paths under a tunnel URL (for Hermes's one base URL).
    - [x] Patch Hermes locally and run it end to end (7 Oct): Hermes Agent from the PR branch (Claude Haiku), asked in chat, subscribed through a tunnel URL (local path `/`); a real email woke its agent in an `mcp_events` session; it unsubscribed in the spec's shape. The patch fixes the protocol mismatches plus plugin bugs found on the way (the adapter didn't start, tool calls failed, deliveries were dropped as an unauthorized user, and loopback emitters were refused once a secret was set).
    - [x] Comment on the PR with the findings and a link to the fixes, offered as a PR against the author's branch ([posted 7 Oct](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6042749607)).
-   - [ ] If the author wants it, open the fixes as a PR against their branch.
+   - [x] ~~If the author wants it, open the fixes as a PR against their branch.~~ Not needed: the author cherry-picked the eight commits into the pull request, and added the challenge answer, `authorization_is_upstream` and audit URL redaction (7 Oct).
+   - [x] Retest the pull request's branch unpatched (`3cda1278a6`, 7 Oct): subscribe, a real email waking an agent session, and unsubscribe, with no allow-all-users setting; then again from a fresh install, following the [guide](../skills/mcp-events-bridge/references/hermes-agent.md) ([reply posted](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909)). The tested commit is also kept on `leggetter/hermes-agent` (`mcp-events-pr-132908-3cda127`).
+   - [x] Hermes's tools took the bridge's MCP URL, so its secret reached the model and Hermes's logs. We suggested named emitters; the author added them (`8813311330`). Retested 7 Oct with the URL only in Hermes's `.env`: subscribe and unsubscribe by name, a delivery waking a session, and the secret in no file under `HERMES_HOME` but `.env`. The guide uses them; the tested commit is kept on `leggetter/hermes-agent` (`mcp-events-pr-132908-8813311`).
 4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf and emits `notifications/claude/channel`.
 
 Decided 7 Oct: every source keeps its own bridge-generated secret, and a tunnel URL also covers the paths under it. Agents that take a URL per subscription get one source each; a client that builds every callback from one base URL plus a path (Hermes) uses one tunnel URL as that base, so its subscriptions share one source.
