@@ -471,7 +471,7 @@ Resend, first manifest (settled in stage 2; see `SPIKES.md` and `test/fixtures/r
 
 ## Adding a provider
 
-Two built-in providers exist (Resend and GitHub), both with an Event Gateway source type; a custom provider without one is still untested.
+Three built-in providers exist: Resend and GitHub, each with an Event Gateway source type, and generic webhooks, on a `WEBHOOK` source with verification configured (see "Generic provider: webhooks").
 
 | Step | What it is | Deploy needed? |
 | --- | --- | --- |
@@ -484,8 +484,8 @@ Nothing else in the deployment changes per provider. The inbound route is generi
 
 Gaps, and where the config file leaves them:
 
-1. **No webhook-creation API.** Many providers only set up webhooks in their dashboard. Partly solved: the provider's signing secret comes from an `env()` option, and `bridge setup` sets it on the source and prints the source URL to paste into the provider's dashboard. The manual paste remains.
-2. **No Event Gateway source type.** The source would be a generic `WEBHOOK` source with HMAC verification configured. Open: `defineProvider` needs a field for that verification config.
+1. **No webhook-creation API.** Many providers only set up webhooks in their dashboard. Solved as far as it can be: `mcp-events-bridge providers add webhook <id>` creates the source and prints its URL before the secret exists (most providers show the secret only after the URL is registered), holds delivery until the secret is set, and adds the config entry and the empty `.env` variable; `bridge setup` then sets the secret on the source and connects it. The manual paste into the provider's dashboard remains.
+2. **No Event Gateway source type.** Solved: the generic `webhook()` provider uses a `WEBHOOK` source with HMAC, Standard Webhooks, Basic auth or API key verification, and `defineProvider` has `sourceConfig` for the verification config (setup keeps the source's config equal to it) and `missingCredentials` for credentials not set yet.
 3. **Where the provider key lives.** Solved: in the deployment's env, referenced from the config. `setup` and `--prune` run from the deployment and need it.
 4. **Thin webhooks.** Providers that send an id and expect you to fetch the rest put an API call in the relay. It fits the relay (a failure returns `5xx` and retries) but is untested.
 5. **More than one instance** of a provider. Solved: instance ids.
@@ -508,6 +508,23 @@ GitHub has about 70 webhook event types, most with several actions, and payloads
 - **Event id:** `X-GitHub-Delivery`, also the inbound dedupe field. **Occurred-at:** the main object's latest timestamp, else the push's head commit, else the time received. The `ping` sent when a webhook is created matches no event and is ignored.
 
 Still open from "Adding a provider": several instances of the same provider share event names, so two GitHub instances in one deployment would clash in the catalog (gap 5). One instance with a repository list or an organization, filtered by `repository`, covers the common case.
+
+### Generic provider: webhooks
+
+For senders with no Event Gateway source type: a service you run yourself (the motivating case: trading agents polling an orders tool every bar to see whether an order filled, which would rather subscribe to a fill), or a provider without built-in support. Everything is static config in `bridge.config.ts`; the provider is `webhook({...})`, which builds a provider definition per instance, since its events come from the config.
+
+- **Source:** `bridge-<id>`, type `WEBHOOK`, with the verification Event Gateway supports for generic sources: `HMAC` (`algorithm` `sha1`, `sha256` or `sha512`; `encoding` `hex`, `base64` or `base64url`; a header), `STANDARD_WEBHOOKS`, `BASIC_AUTH` and `API_KEY` (a header). MD5 isn't offered. Verification is required: an unverified source would let anyone with the URL wake agents with content they choose, and agents act on event content.
+- **Credentials:** `env()` references, resolved inside the `verification` object (`resolveConfig` now resolves nested references). Setup writes the source config only when the type or a field differs, so re-running doesn't churn the secret.
+- **URL before secret:** most senders show their secret only after the URL is registered. The instance's `env()` references are made optional, and `missingCredentials` reports the unset ones: setup then creates the source (no verification) and prints its URL, but creates no inbound connection, `setup` then exits with an error naming the variable (after setting up everything else), and `serve` fails closed. Requests that arrive meanwhile are kept by Event Gateway, rejected as `NO_CONNECTION`, and never delivered on their own. `mcp-events-bridge providers add webhook <id>` does this from flags, and writes the `.env` variable and (with `--write-config`) the config entry.
+- **Only verified requests:** each event's `matches` requires `x-hookdeck-verified: true`, which Event Gateway sets on delivery and overwrites if the sender sent it. That covers the windows where the source accepted requests unverified: before the secret was set (a request kept then can be retried by hand once the connection exists, and is delivered) and while a new secret reaches Event Gateway's edge.
+- **Events:** one or more MCP event names. With one and no `eventType`, every request is that event. Otherwise `eventType` (a header or a body dot path) is read, and each event's `value` (default: its name) picks it; other values are ignored.
+- **Event id:** a header or body path, which is also the inbound dedupe field (`headers.<name>` or `body.<path>`) and, for a header, `eventIdHeader` for `get_event`. Default: `x-hookdeck-requestid`, Event Gateway's request id, which is stable across Event Gateway's retries of the inbound event but not across the sender's own retries (each is a new request), so there's no inbound dedupe rule then. A missing configured id throws, so the inbound event fails visibly. Event Gateway treats a missing dedupe field as an empty string, so requests that lack the header would dedupe against each other; they fail in the bridge anyway.
+- **Occurred-at:** a body field (ISO 8601, or Unix seconds or milliseconds); else the time received, as GitHub's last fallback.
+- **Data:** the JSON body as sent, optionally narrowed to top-level `fields`; a non-object JSON body is wrapped as `{ body }`. The relay's 256 KiB envelope limit applies, and a non-JSON body is ignored with `200` (a `4xx` would only make Event Gateway retry it); the request stays in Event Gateway.
+- **Arguments:** equality filters on declared top-level `filters` (string, number or boolean, compared as strings), as a strict JSON Schema object, so an agent subscribes with `{ "symbol": "AAPL" }`. Filters must be among `fields` when both are set.
+- **History:** `list_recent_events` maps stored requests too: the event history adds `x-hookdeck-requestid` and `x-hookdeck-verified` (from the request's `verified`) to each stored request's headers, as delivery would. `get_event` finds events by a header id only.
+
+The config edit in `providers add webhook --write-config` splices the entry into the `providers` array at positions from the parsed AST, so the rest of the file keeps its formatting, and adds the `webhook` and `env` imports through magicast (a small library for programmatic config edits, on Babel's parser; loaded only by this command). The result is re-parsed and checked, then written through a temporary file and a rename. It refuses, and prints the entry instead, when the default export isn't `defineConfig({...})` or an object literal, `providers` isn't an array literal or contains a spread (providers enabled conditionally, as in this repo's own config), or the import paths can't be inferred.
 
 ## MCP surface
 
@@ -695,6 +712,22 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **Connection upsert and existing sources** (stage 5, found live): naming an existing source inline in `PUT /connections` (`source: { name }`) updates it, resetting its type to `WEBHOOK` and replacing its config, which dropped a `RESEND` source's signing secret. Bind an existing source with `source_id` instead. `bridge setup` does, and re-registers the provider webhook if a source has lost its secret.
 
+**Generic `WEBHOOK` source verification** (7 Oct 2026, verified live with `spike-*` sources; [sources](https://hookdeck.com/docs/sources#add-source-authentication), [authentication](https://hookdeck.com/docs/authentication)):
+
+- Config is `config: { auth_type, auth }` on `PUT /sources`. The generic types (from the OpenAPI schema at `/2026-09-01/openapi`): `HMAC` with `auth: { algorithm: sha1|sha256|sha512|md5, encoding: base64|base64url|hex, header_key, webhook_secret_key }`, `BASIC_AUTH` with `{ username, password }`, `API_KEY` with `{ header_key, api_key }` (header only in the schema), and `STANDARD_WEBHOOKS` with `{ webhook_secret_key }`.
+- A correctly signed request is stored `verified: true` and delivered. A wrong or missing signature or credential is stored `verified: false`, `rejection_cause: VERIFICATION_FAILED`, with no events. The sender gets `401` for HMAC (sha256 tried), Basic auth and API key, as the docs say, but `200` for Standard Webhooks.
+- HMAC accepted a `sha256=` prefix on the header value, and upper-case hex. Header names are matched case-insensitively.
+- `GET /sources/{id}` leaves `auth` out (only `auth_type`); `?include=config.auth` returns it. `PUT /sources` without `config` keeps the existing auth.
+- Request headers are stored as sent, so Basic auth's `Authorization` and an API key header are kept with every request (signatures too, which are harmless).
+- `x-hookdeck-verified` on delivery: `true` from an HMAC source for a verified request, `false` from a source without verification even when the sender sent `x-hookdeck-verified: true` (Event Gateway overwrites it).
+- Applying a secret to an existing source took effect within about a second in one test (the next unsigned request got `401`); another test saw a secret change take about 61 seconds.
+
+**Holding a source's delivery** (7 Oct 2026, verified live):
+
+- No connection on the source: the sender gets `200`, and the request is stored and rejected as `NO_CONNECTION`.
+- A disabled connection (`PUT /connections/{id}/disable`): the sender gets `200`, and the request is stored with an ignored event, cause `DISABLED`. After `enable`, a manual retry of that request (`POST /requests/{id}/retry`) was delivered. A `PUT /connections` upsert of a disabled connection enables it again.
+- A paused connection (`PUT /connections/{id}/pause`): the event is created in `HOLD` and delivered on `unpause`, so pausing doesn't hold unverified requests back for good.
+
 **Destination auth as credential storage** (stage 5, verified live): a `CUSTOM_SIGNATURE` destination stores `auth.signing_secret`; the value is masked (`auth: {}`) in create, get and list responses, and returned only by `GET /destinations/{id}?include=config.auth` (listings don't return it even with `include`). Event Gateway adds the configured header with an HMAC of the body to each delivery.
 
 **Retry rules** (stage 3, [docs](https://hookdeck.com/docs/retries)): `response_status_codes` takes codes, ranges (`500-599`), comparisons (`>=500`) and negations (`!410`), evaluated last match wins. A list of negations alone (`["!410", "!413"]`) matches every other status, `2xx` included, so a successful attempt is retried again until the count runs out; use `[">=300", "!410", "!413"]`. Unset, any non-`2xx` is retried. The CLI's `--rule-retry-response-status-codes` accepts integers only.
@@ -783,12 +816,13 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **7 Oct, deployment names.** `deployment` is optional: `BRIDGE_DEPLOYMENT`, else `local` (CLI inbound) or `public` (HTTP inbound). It was `dev` in the examples, which read as "not for real use" once a bridge on a laptop became the setup for local agents.
 - **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions.
 - **7 Oct, local scope.** One bridge per machine, with one owner and its own Hookdeck project, running alongside the agent. The bridge runs `listen` and catches up by itself; the agent-facing tool becomes `create_tunnel_url`. Poll, push and cursor replay aren't local requirements and move to later (supersedes the 5 Oct poll fallback for local agents).
+- **7 Oct, generic webhooks.** A built-in `webhook()` provider on a `WEBHOOK` source with required verification (HMAC, Standard Webhooks, Basic auth or API key), static mapping config, and equality filters on declared fields. Until its secret is set, the source exists without an inbound connection (not a disabled or paused one: an upsert re-enables a disabled connection, and a paused one delivers its held events), and the bridge relays only requests marked `x-hookdeck-verified: true`. `providers add webhook <id>` creates the source and the config entry; it edits `bridge.config.ts` only on request, and only shapes it can edit safely.
 
 ## Open questions
 
 - [ ] Standard Webhooks destination auth in Event Gateway: not planned yet. Decides when the re-sign gap closes and publish-once can happen. Needs per-destination secret rotation as well as signing.
 - [ ] Delivering straight from the provider source: the research questions in "Evolution".
-- [ ] Adding a provider: gaps 2 and 4 in "Adding a provider", and the manual paste in gap 1. Pick a third provider that tests them.
+- [ ] Adding a provider: gap 4 (thin webhooks) in "Adding a provider". Gaps 1 and 2 are solved by the generic webhook provider and `providers add webhook`; the manual paste in gap 1 remains.
 - [ ] Deployments sharing a Hookdeck project: `local` and `fly` share the provider source (each gets its own inbound connection, so each email goes to both) and the subscription connections, which every running bridge loads. Decided for now: one Hookdeck project per bridge, documented in the README. An optional namespace is [#13](https://github.com/hookdeck/mcp-events-bridge/issues/13).
 - [x] Tunnel URLs: one source per subscription, or one per agent with a path per subscription? Both: one per subscription by default, and paths under a tunnel URL for clients that use one base URL (Hermes). Every source keeps its own bridge-generated secret (7 Oct).
 - [ ] A real local agent: Hermes Agent's receiver is the closest, once it follows the spec's subscribe shape. Lean: tell the PR's author what the bridge saw, with the maintainer's agreement.

@@ -4,7 +4,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
 import { Catalog } from '../core/catalog.js';
-import type { ResolvedConfig } from '../core/config.js';
+import { assertCredentials, type ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
 import { HookdeckClient } from '../core/hookdeck.js';
@@ -71,6 +71,7 @@ export const redactPath = (pathname: string) => pathname.replace(/^\/mcp\/[^/]+/
 
 export async function createBridgeServer(config: ResolvedConfig, options: BridgeServerOptions = {}): Promise<BridgeServer> {
   const log = options.log ?? ((message: string) => console.log(`[bridge] ${message}`));
+  assertCredentials(config);
   if (!config.auth.mcpSecret) throw new Error('BRIDGE_MCP_SECRET is not set; run `mcp-events-bridge setup` to generate one');
   const mcpSecret = config.auth.mcpSecret;
 

@@ -74,6 +74,20 @@ export interface ProviderDefinition<Options = Record<string, unknown>> {
    * Setup keeps the source's secret equal to it.
    */
   configuredSecret?(options: Options): string | undefined;
+  /**
+   * The Event Gateway source `config` (`auth_type` and `auth`) for a source
+   * that verifies requests itself, such as a generic `WEBHOOK` source with
+   * HMAC. Setup keeps the source's config equal to it, writing only when it
+   * differs. A provider with `sourceConfig` doesn't use `register`.
+   */
+  sourceConfig?(options: Options): Record<string, unknown>;
+  /**
+   * Credentials that aren't set yet, named as the user sets them (for example
+   * an environment variable). While any are missing, setup creates the source
+   * (so its URL can be registered with the sender) but no inbound connection,
+   * and `serve` refuses to start.
+   */
+  missingCredentials?(options: Options): string[];
   /** What the user still has to do after setup (for example add webhooks by hand), printed by `bridge setup`. */
   setupHint?(ctx: { sourceUrl: string; providerEvents: string[]; options: Options }): string | undefined;
   /**

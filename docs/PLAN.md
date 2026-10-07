@@ -17,7 +17,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
 | 6 | Local agents | Build | In progress: tunnel URLs, with the bridge running `listen` and catching up by itself, built (`E2E_LOCAL=1`, PR #12); next, a real agent (Hermes) locally |
-| 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
+| 7 | Production readiness and reach | Build | Started: the GitHub provider, the generic webhook provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
 ## Stage 1: Repo setup
@@ -115,7 +115,7 @@ Done when: the mock agent, given only a tunnel URL, receives an email; adding a 
 - Bring your own identity provider (auth tier 3).
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
-- Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` 0.1.0, compiled to `dist/`; and the README, restructured around it.
+- Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` 0.1.0, compiled to `dist/`; the README, restructured around it; and the generic webhook provider, for any HTTP sender with HMAC, Standard Webhooks, Basic auth or API key verification, with `providers add webhook <id>` to create its source before the secret exists (see "Generic provider: webhooks" in `ARCHITECTURE.md`).
 - A release workflow: publish from GitHub Actions with npm trusted publishing (provenance), instead of by hand.
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.

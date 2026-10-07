@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself; next is testing a real agent (Hermes) locally (see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself; next is testing a real agent (Hermes) locally (see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
 
 ## What the maintainer sets up first
 
@@ -15,6 +15,7 @@ You can't do these. Each is needed before the step that uses it.
 | The bridge | A dedicated Hookdeck project for this work (not a production project), its Project API key and signing secret | `HOOKDECK_API_KEY`, `HOOKDECK_SIGNING_SECRET` |
 | Resend provider | A Resend account and an API key that can create webhooks. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address) | `RESEND_API_KEY` |
 | GitHub provider (optional) | A fine-grained token with the Webhooks permission on the repositories, or a webhook secret for manual mode | `GITHUB_REPOS`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` |
+| Generic webhook provider (optional) | A secret for the README's `fills` example, which this repo's config enables and `E2E_WEBHOOK=1` uses (any random value) | `FILLS_WEBHOOK_SECRET` |
 | The e2e tests | A verified Resend sending domain, and a key that can send email | `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` |
 | The Hermes Agent test (optional) | An Anthropic API key with a spending limit, for the model Hermes runs | `HERMES_ANTHROPIC_API_KEY`, `HERMES_MODEL` |
 | ChatGPT | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |

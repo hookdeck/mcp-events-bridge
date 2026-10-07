@@ -25,6 +25,13 @@ export function env(name: string, { optional = false }: { optional?: boolean } =
 const isEnvRef = (value: unknown): value is EnvRef =>
   typeof value === 'object' && value !== null && (value as EnvRef).kind === 'env' && typeof (value as EnvRef).name === 'string';
 
+/** Plain objects only, so class instances and functions in a custom provider's options pass through untouched. */
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null) return false;
+  const proto = Object.getPrototypeOf(value) as unknown;
+  return proto === Object.prototype || proto === null;
+};
+
 type MaybeEnv<T> = T | EnvRef;
 type WithEnv<T> = { [K in keyof T]: NonNullable<T[K]> extends string ? MaybeEnv<T[K]> : T[K] };
 
@@ -131,6 +138,13 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     if (!ref.optional) missing.push(ref.name);
     return null;
   };
+  // Provider options can nest env() references (for example the generic webhook provider's verification secret).
+  const resolveOption = (value: unknown): unknown => {
+    if (isEnvRef(value)) return read(value);
+    if (Array.isArray(value)) return value.map(resolveOption);
+    if (isPlainObject(value)) return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, resolveOption(inner)]));
+    return value;
+  };
 
   const ids = config.providers.map((p) => p.id);
   // Ids name Event Gateway resources and the inbound route, /inbound/<id>; `hookdeck` is the notifications route.
@@ -157,7 +171,7 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     },
     providers: config.providers.map((provider) => ({
       ...provider,
-      options: Object.fromEntries(Object.entries(provider.options).map(([key, value]) => [key, isEnvRef(value) ? read(value) : value])),
+      options: resolveOption(provider.options) as Record<string, unknown>,
     })),
     auth: { mode: 'secret-url', mcpSecret: read(config.auth?.mcpSecret, env('BRIDGE_MCP_SECRET', { optional: true })) },
     subscriptions: { ...DEFAULT_SUBSCRIPTION_SETTINGS, ...config.subscriptions },
@@ -169,4 +183,18 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     throw new ConfigError('http inbound needs an https public URL: set BRIDGE_PUBLIC_URL, or run on Fly.io');
   }
   return resolved;
+}
+
+/**
+ * Fails closed when a provider instance's credentials aren't set (for example a generic webhook's secret, which
+ * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` instead
+ * holds that instance's delivery until they're set.
+ */
+export function assertCredentials(config: ResolvedConfig): void {
+  const missing = config.providers.flatMap((p) => (p.definition.missingCredentials?.(p.options) ?? []).map((name) => `${name} (provider ${p.id})`));
+  if (missing.length) {
+    throw new ConfigError(
+      `Not set: ${missing.join(', ')}. Set it in .env (or as a secret where the bridge runs), then run \`mcp-events-bridge setup\` to apply it to the Event Gateway source before serving.`,
+    );
+  }
 }

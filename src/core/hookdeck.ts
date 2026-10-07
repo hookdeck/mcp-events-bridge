@@ -358,9 +358,9 @@ export class HookdeckClient {
     return this.api<Page<Source>>('/sources', { query: { name: query.name, limit: query.limit ?? 100 } });
   }
 
-  /** One source; with `includeAuth`, its auth config (a provider's signing secret) is returned. */
+  /** One source; with `includeAuth`, its auth config (a signing secret or other credentials) is returned. Without it, `auth` is left out (verified live). */
   getSource(id: string, { includeAuth = false }: { includeAuth?: boolean } = {}) {
-    return this.api<Source & { config?: { auth?: Record<string, unknown> | null } | null }>(`/sources/${encodeURIComponent(id)}`, {
+    return this.api<Source & { config?: { auth_type?: string | null; auth?: Record<string, unknown> | null } | null }>(`/sources/${encodeURIComponent(id)}`, {
       query: { include: includeAuth ? 'config.auth' : undefined },
     });
   }

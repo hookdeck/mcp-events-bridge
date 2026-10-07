@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
-import { runSetup } from '../../src/core/setup.js';
-import { github, resend } from '../../src/providers.js';
+import { missingCredentialsError, runSetup } from '../../src/core/setup.js';
+import { github, resend, webhook } from '../../src/providers.js';
 import { FakeGithub } from '../support/fake-github.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
@@ -104,6 +104,73 @@ describe('bridge setup', () => {
     expect((await run('second-secret-0123456789')).providers[0]!.webhook).toBe('configured');
     expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'second-secret-0123456789' } });
     expect(gh.calls).toEqual([]);
+  });
+
+  describe('generic webhook', () => {
+    const fills = (secret = env('FILLS_WEBHOOK_SECRET')) =>
+      webhook({
+        id: 'fills',
+        verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret },
+        events: ['order.filled'],
+        eventId: { header: 'x-delivery-id' },
+      });
+
+    function webhookSetup() {
+      const gateway = new FakeEventGateway();
+      const calls: string[] = [];
+      const fetch = (async (input: URL | string, init?: RequestInit) => {
+        calls.push(`${init?.method ?? 'GET'} ${new URL(String(input)).pathname.replace(/^\/[0-9-]+/, '')}`);
+        return gateway.fetch(input, init);
+      }) as typeof globalThis.fetch;
+      const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch });
+      const run = (env_: Record<string, string>) =>
+        runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', providers: [fills()] }), { ...environment, ...env_ }), hookdeck, fetch: globalThis.fetch });
+      const source = () => [...gateway.sources.values()].find((s) => s.name === 'bridge-fills');
+      const connection = () => [...gateway.connections.values()].find((c) => c.name === 'bridge-fills-dev');
+      return { gateway, calls, run, source, connection };
+    }
+
+    it('without the secret: creates the source and prints its URL, but holds delivery (no inbound connection)', async () => {
+      const { run, source, connection } = webhookSetup();
+      const report = await run({});
+      expect(source()).toMatchObject({ type: 'WEBHOOK' });
+      expect(source()!.config).toBeUndefined();
+      expect(connection()).toBeUndefined();
+      expect(report.providers[0]).toMatchObject({ id: 'fills', sourceUrl: source()!.url, webhook: 'pending', waitingFor: ['FILLS_WEBHOOK_SECRET'] });
+      expect(report.providers[0]!.hint).toContain(source()!.url);
+      expect(report.providers[0]!.hint).toMatch(/Waiting for FILLS_WEBHOOK_SECRET/);
+      // A missing secret ends setup with an error naming it, not a quiet success.
+      expect(missingCredentialsError(report)).toMatch(/fills: set FILLS_WEBHOOK_SECRET; delivery is held/);
+      expect(missingCredentialsError({ providers: [{ ...report.providers[0]!, waitingFor: undefined }] })).toBeUndefined();
+    });
+
+    it('once the secret is set: applies it to the same source and connects it; re-running changes nothing', async () => {
+      const { run, source, connection, calls } = webhookSetup();
+      const url = (await run({})).providers[0]!.sourceUrl;
+
+      const applied = await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' });
+      expect(applied.providers[0]).toMatchObject({ sourceUrl: url, webhook: 'configured' });
+      expect(applied.providers[0]!.hint).not.toContain('secret-one');
+      expect(source()!.config).toEqual({ auth_type: 'HMAC', auth: { algorithm: 'sha256', encoding: 'hex', header_key: 'x-signature', webhook_secret_key: 'secret-one-0123456789' } });
+      expect(connection()!.rules).toEqual([
+        { type: 'deduplicate', include_fields: ['headers.x-delivery-id'], window: 3_600_000 },
+        expect.objectContaining({ type: 'retry' }),
+      ]);
+
+      calls.length = 0;
+      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).providers[0]!.webhook).toBe('existing');
+      expect(calls.filter((c) => c === 'PUT /sources')).toEqual([]);
+
+      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-two-0123456789' })).providers[0]!.webhook).toBe('configured');
+      expect(source()!.config).toMatchObject({ auth: { webhook_secret_key: 'secret-two-0123456789' } });
+    });
+
+    it('with the secret from the start: creates the source with verification already on', async () => {
+      const { run, source, calls } = webhookSetup();
+      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).providers[0]!.webhook).toBe('configured');
+      expect(calls.filter((c) => c === 'PUT /sources')).toHaveLength(1);
+      expect(source()!.config).toMatchObject({ auth_type: 'HMAC' });
+    });
   });
 
   it('uses an HTTP destination with Hookdeck signatures for http inbound', async () => {

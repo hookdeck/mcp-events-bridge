@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, defineConfig, env, resolveConfig } from '../../src/core/config.js';
+import { ConfigError, defineConfig, defineProvider, env, resolveConfig } from '../../src/core/config.js';
 import { resend } from '../../src/providers.js';
 
 const base = { HOOKDECK_API_KEY: 'hk', HOOKDECK_SIGNING_SECRET: 'hs', RESEND_API_KEY: 're_1' };
@@ -55,6 +55,16 @@ describe('resolveConfig', () => {
       expect(() => resolveConfig(config({ providers: [resend({ id, apiKey: 'a' })] }), base)).toThrow(/Provider id/);
     }
     expect(() => resolveConfig(config({ hookdeck: { signingSecret: '' } }), base)).toThrow(/must not be empty/);
+  });
+
+  it('resolves env() references nested in provider options, and leaves other values alone', () => {
+    const custom = defineProvider({ type: 'custom', displayName: 'Custom', sourceType: 'WEBHOOK', events: [] });
+    const when = new Date(0);
+    const instance = custom({ auth: { secret: env('CUSTOM_SECRET'), user: 'u' }, list: [env('CUSTOM_SECRET')], when } as Record<string, unknown>);
+    const resolved = resolveConfig(config({ providers: [instance] }), { ...base, CUSTOM_SECRET: 'shh' });
+    expect(resolved.providers[0]!.options).toEqual({ auth: { secret: 'shh', user: 'u' }, list: ['shh'], when });
+    expect(resolved.providers[0]!.options.when).toBe(when);
+    expect(() => resolveConfig(config({ providers: [instance] }), base)).toThrow(/CUSTOM_SECRET/);
   });
 
   it('reads BRIDGE_MCP_SECRET when set', () => {
