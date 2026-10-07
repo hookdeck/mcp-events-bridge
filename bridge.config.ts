@@ -11,9 +11,8 @@ const githubProviders = githubRepos.length
     ? [github({ webhookSecret: env('GITHUB_WEBHOOK_SECRET') })]
     : [];
 
+// The deployment name defaults to `local` here (CLI inbound) and comes from BRIDGE_DEPLOYMENT=fly on Fly.io (fly.toml).
 export default defineConfig({
-  // Names this deployment's Event Gateway resources: `dev` locally, `fly` on Fly.io (set in fly.toml).
-  deployment: process.env.BRIDGE_DEPLOYMENT ?? 'dev',
   providers: [
     resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] }),
     ...githubProviders,

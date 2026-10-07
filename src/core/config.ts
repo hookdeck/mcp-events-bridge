@@ -4,7 +4,6 @@ import type { ProviderDefinition } from './providers/types.js';
  * The typed config file, bridge.config.ts:
  *
  *   export default defineConfig({
- *     deployment: 'dev',
  *     providers: [resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] })],
  *   });
  *
@@ -61,8 +60,12 @@ export function defineProvider<Options extends Record<string, unknown>>(definiti
 }
 
 export interface BridgeConfig {
-  /** Names Event Gateway resources and the CLI device; for example "prod" or a machine name. */
-  deployment: string;
+  /**
+   * Names this bridge's Event Gateway resources (its inbound connections, notifications connection and issue
+   * triggers) and its CLI devices, so bridges sharing a Hookdeck project stay apart. Default: BRIDGE_DEPLOYMENT,
+   * else `local` with CLI inbound (a bridge on your machine) and `public` with HTTP inbound (a public URL).
+   */
+  deployment?: string;
   /** How provider events reach the bridge: `cli` (hookdeck listen) or `http` (public URL). Default: BRIDGE_INBOUND, else http on Fly.io, else cli. */
   inbound?: 'cli' | 'http';
   /** For http inbound. Default: BRIDGE_PUBLIC_URL, else https://$FLY_APP_NAME.fly.dev. */
@@ -129,7 +132,6 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     return null;
   };
 
-  if (!/^[A-Za-z0-9_-]+$/.test(config.deployment)) throw new ConfigError('deployment may contain only letters, digits, - and _');
   const ids = config.providers.map((p) => p.id);
   // Ids name Event Gateway resources and the inbound route, /inbound/<id>; `hookdeck` is the notifications route.
   const badId = ids.find((id) => !/^[A-Za-z0-9_-]+$/.test(id) || id === 'hookdeck');
@@ -139,11 +141,13 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
 
   const inboundEnv = environment.BRIDGE_INBOUND;
   const inbound = config.inbound ?? (inboundEnv === 'cli' || inboundEnv === 'http' ? inboundEnv : environment.FLY_APP_NAME ? 'http' : 'cli');
+  const deployment = config.deployment ?? (environment.BRIDGE_DEPLOYMENT || (inbound === 'cli' ? 'local' : 'public'));
+  if (!/^[A-Za-z0-9_-]+$/.test(deployment)) throw new ConfigError('deployment may contain only letters, digits, - and _');
   const flyUrl = environment.FLY_APP_NAME ? `https://${environment.FLY_APP_NAME}.fly.dev` : null;
   const publicUrl = (read(config.publicUrl, env('BRIDGE_PUBLIC_URL', { optional: true })) ?? flyUrl)?.replace(/\/$/, '') ?? null;
 
   const resolved: ResolvedConfig = {
-    deployment: config.deployment,
+    deployment,
     inbound,
     publicUrl,
     port: config.port ?? Number(environment.BRIDGE_PORT ?? environment.PORT ?? 8080),

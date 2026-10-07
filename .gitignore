@@ -17,3 +17,6 @@ dist/
 
 # Raw spike captures (may hold personal data); redacted fixtures are committed
 spikes/raw/
+
+# Claude Code agent worktrees (local only)
+.claude/worktrees/

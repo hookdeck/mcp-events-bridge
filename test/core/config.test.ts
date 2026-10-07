@@ -7,6 +7,15 @@ const config = (over: Partial<Parameters<typeof defineConfig>[0]> = {}) =>
   defineConfig({ deployment: 'dev', providers: [resend({ apiKey: env('RESEND_API_KEY') })], ...over });
 
 describe('resolveConfig', () => {
+  it('defaults the deployment name to local with CLI inbound and public with HTTP inbound, unless BRIDGE_DEPLOYMENT or the config says', () => {
+    const unnamed = (over: Partial<Parameters<typeof defineConfig>[0]> = {}) => defineConfig({ providers: [resend({ apiKey: env('RESEND_API_KEY') })], ...over });
+    expect(resolveConfig(unnamed(), base).deployment).toBe('local');
+    expect(resolveConfig(unnamed({ inbound: 'http', publicUrl: 'https://bridge.example.com' }), base).deployment).toBe('public');
+    expect(resolveConfig(unnamed(), { ...base, BRIDGE_DEPLOYMENT: 'fly' }).deployment).toBe('fly');
+    expect(resolveConfig(unnamed({ deployment: 'laptop' }), { ...base, BRIDGE_DEPLOYMENT: 'fly' }).deployment).toBe('laptop');
+    expect(() => resolveConfig(unnamed(), { ...base, BRIDGE_DEPLOYMENT: 'my.laptop' })).toThrow(/deployment may contain only/);
+  });
+
   it('resolves env() references and applies defaults', () => {
     const resolved = resolveConfig(config(), base);
     expect(resolved).toMatchObject({
