@@ -217,6 +217,18 @@ Set only what the providers in your `bridge.config.ts` need. The names are the o
 - `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery.
 - `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`: past events, read from Event Gateway.
 - `list_providers()`: configured providers and their subscriptions.
+- `create_callback_url`, `list_callback_urls` and `replay_missed_deliveries`: callback URLs for local agents (see below).
+
+## Local agents
+
+An agent on a laptop has no public URL to receive webhooks on. The bridge gives it one per subscription, through Event Gateway and the Hookdeck CLI:
+
+1. **Create a callback URL** with the `create_callback_url` tool (`agent`, a `name` for the subscription, and your local `port` and `path`). It returns the URL and the `hookdeck listen` command for your agent's callbacks.
+2. **Run the command.** `hookdeck listen` forwards deliveries to `http://localhost:<port><path>`. Restart it after creating another callback URL: a running `listen` only covers the sources it started with ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)).
+3. **Subscribe** with `events/subscribe`, using the callback URL and a `whsec_` secret your agent generates. Event Gateway answers the challenge. Deliveries arrive signed with your secret, all on your one local path; route them by `X-MCP-Subscription-Id`.
+4. **Catch up** after `listen` has been down (the laptop slept, or you restarted it) with `replay_missed_deliveries`: events waited in Event Gateway, and each is delivered once.
+
+When a subscription ends, the bridge deletes its callback URL. `listen` needs access to the bridge's Hookdeck project.
 
 ## Security and limitations
 

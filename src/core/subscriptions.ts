@@ -4,6 +4,7 @@ import type { SubscriptionSettings } from './config.js';
 import { callbackEndpointError, forbidden, internalError, invalidParams, notFound, unsupported, type CallbackFailureReason } from './errors.js';
 import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
+import type { CallbackRegistry } from './callbacks.js';
 import { SubscriptionTooLargeError, healthyDelivery, type SubscriptionRecord, type SubscriptionStore } from './store.js';
 
 /*
@@ -32,6 +33,8 @@ export interface SubscriptionServiceDeps {
   catalog: Catalog;
   transport: CallbackTransport;
   verify?: (transport: CallbackTransport, options: VerifyEndpointOptions) => Promise<VerificationResult>;
+  /** Callback URLs the bridge created for local agents: the challenge is also signed with the callback's secret, and a callback is released when its subscription ends. */
+  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'release'>;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -135,7 +138,14 @@ export class SubscriptionService {
     // Endpoint verification, cached per (principal, url).
     const vKey = verificationKey(principal, href);
     if ((this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
-      const result = await this.verify(transport, { url, secret, subscriptionId: id, timeoutMs: settings.verificationTimeoutMs });
+      const callbackSecret = await this.deps.callbacks?.signingSecret(href);
+      const result = await this.verify(transport, {
+        url,
+        secret,
+        ...(callbackSecret && { extraSecrets: [callbackSecret] }),
+        subscriptionId: id,
+        timeoutMs: settings.verificationTimeoutMs,
+      });
       if (!result.ok) {
         this.log(`verification failed for ${id}: ${result.reason}`);
         throw callbackEndpointError(result.reason);
@@ -205,8 +215,14 @@ export class SubscriptionService {
       this.log(`Event Gateway error deleting ${id}: ${(error as Error).message}`);
       throw internalError('Failed to remove delivery');
     }
+    await this.releaseCallback(url.href);
     this.log(`unsubscribed ${id}`);
     return {};
+  }
+
+  /** A bridge-created callback URL is deleted once no subscription uses it; failures are logged, not raised. */
+  private async releaseCallback(url: string) {
+    await this.deps.callbacks?.release(url).catch((error: Error) => this.log(`callback cleanup failed for ${redactUrl(url)}: ${error.message}`));
   }
 
   /** Deletes subscriptions whose grant has lapsed. */
@@ -217,6 +233,7 @@ export class SubscriptionService {
       try {
         // Re-checked in the store's queue: a refresh that lands during the sweep keeps the subscription.
         if (!(await this.deps.store.delete(record.id, { ifExpiredAt: now }))) continue;
+        await this.releaseCallback(record.url);
         removed.push(record.id);
         this.log(`expired ${record.id}`);
       } catch (error) {

@@ -4,6 +4,7 @@ import type { HookdeckClient } from './hookdeck.js';
 import { verifyHookdeckSignature } from './hookdeck-signature.js';
 import { topicSourceName } from './names.js';
 import type { InboundRequest } from './providers/types.js';
+import type { CallbackRegistry } from './callbacks.js';
 import { signStandardWebhook } from './sign.js';
 import type { SubscriptionRecord, SubscriptionStore } from './store.js';
 
@@ -32,6 +33,8 @@ export interface RelayDeps {
   catalog: Catalog;
   store: SubscriptionStore;
   hookdeck: HookdeckClient;
+  /** Deliveries to a bridge-created callback URL are also signed with the callback's secret, and a callback is released when its subscription is deleted. */
+  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'release'>;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -119,11 +122,14 @@ export class Relay {
     return { status: 200, body: { published: subscribers.length } };
   }
 
-  private publish(subscription: SubscriptionRecord, eventId: string, body: string, now: Date) {
+  private async publish(subscription: SubscriptionRecord, eventId: string, body: string, now: Date) {
     const secrets = [subscription.secret];
     if (subscription.previousSecret && subscription.previousSecretExpiresAt && Date.parse(subscription.previousSecretExpiresAt) > now.getTime()) {
       secrets.push(subscription.previousSecret);
     }
+    // A callback the bridge created for a local agent: its MCP Events source verifies this signature, the agent its own.
+    const callbackSecret = await this.deps.callbacks?.signingSecret(subscription.url);
+    if (callbackSecret) secrets.push(callbackSecret);
     const headers = {
       'content-type': 'application/json',
       // Signed at the real time of publishing; `now` (injectable) only drives expiry and grace windows.
@@ -162,6 +168,7 @@ export class Relay {
     const errorCode = issue.aggregation_keys?.error_code?.[0] as string | undefined;
     if (status === 410) {
       await this.deps.store.delete(subscription.id);
+      await this.deps.callbacks?.release(subscription.url).catch((error: Error) => this.log(`${subscription.id}: callback cleanup failed: ${error.message}`));
       this.log(`${subscription.id}: callback returned 410, subscription deleted`);
     } else {
       const now = this.now().toISOString();

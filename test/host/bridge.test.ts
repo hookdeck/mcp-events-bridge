@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createNodeCallbackTransport } from '../../src/host/callback-transport.js';
 import { createBridgeServer, redactPath } from '../../src/host/server.js';
 import { resend } from '../../src/providers.js';
@@ -106,6 +107,23 @@ describe('bridge server', () => {
     await postInbound(port);
     await deliverPublished(gateway, subscriber);
     expect(subscriber.events).toHaveLength(0);
+  });
+
+  it('creates callback URLs for local agents over MCP, without exposing any secret', async () => {
+    const { port, gateway } = await startBridge();
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      const result = (await client.callTool({ name: 'create_callback_url', arguments: { agent: 'laptop', name: 'email', port: 4000 } })) as {
+        structuredContent?: { url?: string; listen?: { commands?: string[] } };
+        content: Array<{ text?: string }>;
+      };
+      const source = [...gateway.sources.values()].find((s) => s.name === 'agent-laptop-email')!;
+      expect(result.structuredContent).toMatchObject({ url: source.url, listen: { commands: ['hookdeck listen 4000 agent-laptop-email'] } });
+      expect(JSON.stringify(result)).not.toContain('whsec_');
+    } finally {
+      await client.close();
+    }
   });
 
   it('refuses an oversized inbound body before reading it all', async () => {

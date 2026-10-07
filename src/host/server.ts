@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
+import { CallbackRegistry } from '../core/callbacks.js';
 import { Catalog } from '../core/catalog.js';
 import type { ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
@@ -68,16 +69,29 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const loaded = await store.load();
   log(`loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}`);
 
+  const callbacks = new CallbackRegistry({ hookdeck, inUse: (url) => store.list().some((s) => s.url === url), log });
+  const loadedCallbacks = await callbacks.load();
+  if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
+
   const catalog = new Catalog(config.providers);
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
     store,
     catalog,
     transport: createNodeCallbackTransport(),
+    callbacks,
     log,
     ...options.subscriptionOverrides,
   });
-  const relay = new Relay({ signingSecret: config.hookdeck.signingSecret, providerIds: config.providers.map((p) => p.id), catalog, store, hookdeck, log });
+  const relay = new Relay({
+    signingSecret: config.hookdeck.signingSecret,
+    providerIds: config.providers.map((p) => p.id),
+    catalog,
+    store,
+    hookdeck,
+    callbacks,
+    log,
+  });
   const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
   const providers = () =>
     config.providers.map((p) => ({
@@ -88,7 +102,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     }));
 
   const mcp = toNodeHandler(
-    createMcpHandler((ctx) => buildMcpServer({ subscriptions, catalog, history, providers, principal: ctx.authInfo?.clientId })),
+    createMcpHandler((ctx) => buildMcpServer({ subscriptions, catalog, history, providers, callbacks, principal: ctx.authInfo?.clientId })),
   );
 
   const json = (res: http.ServerResponse, status: number, body: unknown) => {

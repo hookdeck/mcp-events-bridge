@@ -8,6 +8,7 @@ import { generateWebhookSecret } from '../src/core/secret.js';
 import { NOTIFICATIONS_SOURCE } from '../src/core/setup.js';
 import { loadConfig } from '../src/host/load-config.js';
 import { createBridgeServer } from '../src/host/server.js';
+import { MockAgent } from '../test/support/mock-agent.js';
 import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
 
 /*
@@ -32,6 +33,11 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       branch e2e/bridge-<run> at the default branch's head
  *                                                       and deletes it after. Uses GITHUB_TOKEN (contents and
  *                                                       webhooks access)
+ *   E2E_LOCAL=1 ...                                     also: a mock local agent (an agent host with its own
+ *                                                       MCP Events support) receiving through bridge callback
+ *                                                       URLs and `hookdeck listen`: delivery, a second
+ *                                                       subscription added with a listen restart, offline
+ *                                                       catch-up with replay_missed_deliveries, and cleanup
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
  *                                                       delivery, a 410 deleting a subscription, and
@@ -49,6 +55,7 @@ const CLI_CONFIG = '.hookdeck/config.toml';
 const REMOTE = process.env.E2E_BRIDGE_URL?.replace(/\/$/, '');
 const EXTENDED = process.env.E2E_EXTENDED === '1';
 const GITHUB = process.env.E2E_GITHUB === '1';
+const LOCAL = process.env.E2E_LOCAL === '1';
 const CALLBACK: 'hookdeck' | 'tunnel' = process.env.E2E_CALLBACK === 'tunnel' ? 'tunnel' : 'hookdeck';
 
 const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
@@ -74,6 +81,8 @@ const subscribers: Subscriber[] = [];
 const callbackResources: Array<{ sourceId: string; connectionId?: string; destinationId?: string }> = [];
 let cleanupHookdeck: HookdeckClient | undefined;
 let stopBridge: (() => Promise<void>) | undefined;
+let localAgent: MockAgent | undefined;
+let localAgentDestinationId: string | undefined;
 
 async function sendEmail(from: string, subject: string) {
   const res = await fetch('https://api.resend.com/emails', {
@@ -107,6 +116,10 @@ async function mcpEventsCallback(hookdeck: HookdeckClient, run: string, name: st
 
 /** Runs `hookdeck listen` and resolves true once it prints "Connected", false on a timeout or if it can't start. */
 async function spawnListen(args: string[]): Promise<boolean> {
+  return startListen(args).connected;
+}
+
+function startListen(args: string[]): { child: ChildProcess; connected: Promise<boolean> } {
   const listen = spawn('hookdeck', args);
   children.push(listen);
   let output = '';
@@ -117,7 +130,7 @@ async function spawnListen(args: string[]): Promise<boolean> {
     console.log(`[e2e] hookdeck listen failed to start: ${error.message}`);
   });
   listen.stdout?.on('data', (chunk) => (output += chunk));
-  return Boolean(await until(() => failed || output.includes('Connected'), 30_000)) && !failed;
+  return { child: listen, connected: until(() => failed || output.includes('Connected'), 30_000).then((ok) => Boolean(ok) && !failed) };
 }
 
 /** A quick tunnel to a local port, once its DNS answers. */
@@ -274,6 +287,8 @@ async function main() {
   await wait(45_000);
   record('from filter drops other senders', main.events.length === before, `${main.events.length - before} extra event(s) after 45s`);
 
+  if (LOCAL) await localAgentChecks({ hookdeck, mcpUrl, run, from });
+
   if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: env('GITHUB_TOKEN'), sourceName: providerSourceName(github!.id), run });
 
   if (EXTENDED) {
@@ -290,6 +305,96 @@ async function main() {
   subscribers.splice(subscribers.indexOf(main), 1);
   const left = (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length;
   record('unsubscribe deletes the subscription connection', left === 0);
+}
+
+/**
+ * A mock local agent with its own MCP Events support, on a laptop: it asks the bridge for a callback URL per
+ * subscription, receives through `hookdeck listen` on one local port and path, and catches up with
+ * replay_missed_deliveries after `listen` has been down.
+ */
+async function localAgentChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string; run: string; from: string }) {
+  const agentName = `e2e_${ctx.run}`;
+  const agent = new MockAgent({ serverUrl: ctx.mcpUrl, agent: agentName, port: 4500, log: (m) => console.log(`[agent] ${m}`) });
+  localAgent = agent;
+  await agent.start();
+
+  let running: ChildProcess[] = [];
+  const startListens = async (commands: string[]) => {
+    const started = commands.map((command) =>
+      startListen([...command.split(' ').slice(1), '--output', 'compact', '--device-name', 'e2e-agent', '--hookdeck-config', CLI_CONFIG]),
+    );
+    running = started.map((s) => s.child);
+    return (await Promise.all(started.map((s) => s.connected))).every(Boolean);
+  };
+  const stopListens = async () => {
+    for (const child of running) child.kill('SIGINT');
+    running = [];
+    await wait(3000);
+  };
+  const count = (subscriptionId: string, subject: string) =>
+    agent.deliveries.filter((d) => d.subscriptionId === subscriptionId && (d.body.data as { subject?: string } | undefined)?.subject === subject).length;
+
+  // 1. A callback URL, `listen`, subscribe, and an email.
+  const first = await agent.createCallback('email_a');
+  const firstConnection = (await ctx.hookdeck.listConnections({ name: `agent-${agentName}-email_a` })).models[0];
+  localAgentDestinationId = firstConnection?.destination.id;
+  record('local agent: create_callback_url returns a URL and no secret', first.url.startsWith('https://') && !JSON.stringify(first).includes('whsec_'), first.listen.commands.join(' ; '));
+  record('local agent: hookdeck listen connected for its callback', await startListens(first.listen.commands));
+  const subA = await agent.subscribe(first.url, 'email.received', { from: ctx.from });
+  record("local agent: subscribe, with the challenge answered by the callback's source", subA.startsWith('sub_'), subA);
+  const s1 = `e2e ${ctx.run}: local agent`;
+  await sendEmail(ctx.from, s1);
+  const got1 = await until(() => count(subA, s1) > 0, 180_000);
+  const firstDelivery = agent.deliveries.find((d) => d.subscriptionId === subA);
+  record("local agent: delivered to the local port, verified with the agent's own secret", Boolean(got1) && agent.rejected.length === 0, got1 ? `on ${firstDelivery?.path}` : `timed out; rejected: ${JSON.stringify(agent.rejected)}`);
+
+  // 2. A second subscription: `listen` restarts to cover the new source, and an email sent meanwhile is replayed.
+  const second = await agent.createCallback('email_b');
+  await stopListens();
+  const s2 = `e2e ${ctx.run}: during restart`;
+  await sendEmail(ctx.from, s2);
+  await wait(20_000);
+  const restarted = await startListens(second.listen.commands);
+  const subB = await agent.subscribe(second.url, 'email.received', {});
+  await wait(2000);
+  const replayed = await agent.replay();
+  const got2 = await until(() => count(subA, s2) > 0, 120_000);
+  record('local agent: an email sent while listen restarted is replayed, not lost', restarted && Boolean(got2), JSON.stringify(replayed));
+
+  const s3 = `e2e ${ctx.run}: two subscriptions`;
+  await sendEmail(ctx.from, s3);
+  const got3 = await until(() => count(subA, s3) > 0 && count(subB, s3) > 0, 180_000);
+  const paths = [...new Set(agent.deliveries.filter((d) => d.subscriptionId === subB).map((d) => d.path))];
+  record('local agent: two subscriptions share one local path, routed by X-MCP-Subscription-Id', Boolean(got3) && count(subA, s3) === 1 && count(subB, s3) === 1, `paths ${paths.join(',')}`);
+
+  // 3. Offline: two emails while `listen` is down, then catch-up.
+  await stopListens();
+  const s4 = `e2e ${ctx.run}: offline 1`;
+  const s5 = `e2e ${ctx.run}: offline 2`;
+  await sendEmail(ctx.from, s4);
+  await sendEmail(ctx.from, s5);
+  await wait(25_000);
+  await startListens(second.listen.commands);
+  await wait(2000);
+  const caughtUp = await agent.replay();
+  const all = () => [subA, subB].every((id) => count(id, s4) >= 1 && count(id, s5) >= 1);
+  const got45 = await until(all, 180_000);
+  record('local agent: offline catch-up delivers each missed email once per subscription', Boolean(got45) && [subA, subB].every((id) => count(id, s4) === 1 && count(id, s5) === 1), JSON.stringify(caughtUp));
+  await wait(15_000);
+  const again = await agent.replay();
+  await wait(15_000);
+  record('local agent: replaying again delivers nothing twice', [subA, subB].every((id) => count(id, s4) === 1 && count(id, s5) === 1), JSON.stringify(again));
+
+  // 4. Unsubscribing deletes each callback's source and connection; the agent's destination stays until cleanup.
+  await agent.unsubscribe(subA);
+  await agent.unsubscribe(subB);
+  const released = await until(
+    async () => (await Promise.all(['email_a', 'email_b'].map((n) => ctx.hookdeck.listSources({ name: `agent-${agentName}-${n}` })))).every((r) => r.models.length === 0),
+    30_000,
+    3000,
+  );
+  record("local agent: unsubscribing deletes each callback's source and connection", Boolean(released));
+  await stopListens();
 }
 
 /**
@@ -427,6 +532,8 @@ main()
       if (r.destinationId) await cleanupHookdeck?.deleteDestination(r.destinationId).catch(() => {});
       await cleanupHookdeck?.deleteSource(r.sourceId).catch(() => {});
     }
+    await localAgent?.close().catch(() => {});
+    if (localAgentDestinationId) await cleanupHookdeck?.deleteDestination(localAgentDestinationId).catch(() => {});
     await stopBridge?.();
     const failed = checks.filter((c) => !c.ok).length;
     console.log(`\n${checks.length - failed}/${checks.length} checks passed`);
