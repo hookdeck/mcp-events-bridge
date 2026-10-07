@@ -18,8 +18,9 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *   Resend email (or a signed fill) -> Event Gateway (provider source) -> bridge
  *   -> Publish API -> Event Gateway (subscription connection) -> test subscriber
  *
- * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_*
- * (for email), and BRIDGE_MCP_SECRET. Each test subscriber's callback is its own Event
+ * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_API_KEY
+ * (this repo's config always includes Resend), RESEND_INBOUND_ADDRESS and
+ * RESEND_TEST_FROM for email, and BRIDGE_MCP_SECRET. Each test subscriber's callback is its own Event
  * Gateway MCP Events source, which answers the subscribe challenge and verifies
  * deliveries, and `hookdeck listen` forwards them to the subscriber. Subscribers
  * that test status codes (410, 500) use a cloudflared quick tunnel instead: an
@@ -72,7 +73,11 @@ const EXTENDED = process.env.E2E_EXTENDED === '1';
 const GITHUB = process.env.E2E_GITHUB === '1';
 const LOCAL = process.env.E2E_LOCAL === '1';
 const WEBHOOK = process.env.E2E_WEBHOOK === '1';
-const SOURCE: 'email' | 'webhook' = process.env.E2E_SOURCE === 'webhook' ? 'webhook' : 'email';
+const SOURCE = (process.env.E2E_SOURCE ?? 'email') as 'email' | 'webhook';
+// A typo mustn't fall back to sending real email.
+if (SOURCE !== 'email' && SOURCE !== 'webhook') throw new Error(`E2E_SOURCE must be email or webhook, not "${process.env.E2E_SOURCE}"`);
+/** What the checks send, for check names. */
+const NOUN = SOURCE === 'webhook' ? 'fill' : 'email';
 const CALLBACK: 'hookdeck' | 'tunnel' = process.env.E2E_CALLBACK === 'tunnel' ? 'tunnel' : 'hookdeck';
 
 const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
@@ -358,7 +363,7 @@ async function main() {
   const sentAt = Date.now();
   await events.send(tag);
   const received = await until(() => countTag(events, main, tag) > 0, 240_000);
-  record(`${SOURCE === 'webhook' ? 'fill' : 'email'} delivered to the subscriber`, Boolean(received), received ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
+  record(`${NOUN} delivered to the subscriber`, Boolean(received), received ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
   if (!received) return;
 
   // Event Gateway's header search can lag a new request by a few seconds; retry for up to a minute.
@@ -529,7 +534,7 @@ async function localAgentFlow(ctx: LocalContext, agent: MockAgent, agentName: st
   const missed45 = (await arrivedWhileOffline('email_a', [s4, s5])) && (await arrivedWhileOffline('email_b', [s4, s5]));
   await agentListenUp();
   const got45 = await until(() => [subA, subB].every((id) => count(id, s4) >= 1 && count(id, s5) >= 1), 180_000);
-  record('local agent: offline catch-up delivers each missed event to each subscription, with no tool call', missed45 && Boolean(got45), `arrived while offline: ${missed45}`);
+  record(`local agent: offline catch-up delivers each missed ${NOUN} to each subscription, with no tool call`, missed45 && Boolean(got45), `arrived while offline: ${missed45}`);
 
   // 5. The bridge's own inbound: an event that reaches Event Gateway while the bridge's `listen` is down is recovered.
   await runtime.supervisor.suspend(runtime.inboundKey);
@@ -683,7 +688,7 @@ async function extended(ctx: {
     await until(() => countSubject(second, subject) > 0, 120_000);
     await wait(15_000);
     record(
-      'after the inbound retry, each subscriber has the event once',
+      `after the inbound retry, each subscriber has the ${NOUN} once`,
       countSubject(main, subject) === 1 && countSubject(second, subject) === 1,
       `main ${countSubject(main, subject)}, second ${countSubject(second, subject)}`,
     );
