@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself; next is testing a real agent (Hermes) locally (see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
 
 ## What the maintainer sets up first
 
@@ -34,7 +34,8 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 - **Public repo.** Never put Hookdeck-internal details (private repo paths, internal PR numbers, security findings) in tracked files. They belong in `internal/`, which is gitignored.
 - **Local endpoints:** reach them through the Hookdeck CLI (`hookdeck listen`). Use an Event Gateway MCP Events source (`MCP_EVENTS`) for a subscriber's callback; it answers the challenge. Use a cloudflared quick tunnel only when the caller needs the local response synchronously (for example a receiver whose status code Event Gateway acts on).
 - **Docs and comments:** American English, no em dashes. Check Mermaid diagrams render before committing.
-- **Keep the docs true.** If what you learn contradicts `docs/ARCHITECTURE.md`, update it and say so in `docs/SPIKES.md` or your summary. Tick off open questions the work answers, and add new ones. Update the status table in `docs/PLAN.md` when a stage starts or finishes.
+- **Keep the docs true.** If what you learn contradicts `docs/ARCHITECTURE.md`, update it and say so in `docs/SPIKES.md` or your summary. Tick off open questions the work answers, and add new ones.
+- **Keep the skill and changelog in step.** A change users or agents see (a command, a log line, a tool's arguments, an event name) also updates `skills/mcp-events-bridge/` (the procedure and its references quote commands and log lines) and `CHANGELOG.md`. Update the status table in `docs/PLAN.md` when a stage starts or finishes.
 
 ## Spike stages
 
