@@ -1,8 +1,8 @@
 import http from 'node:http';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Webhook } from 'standardwebhooks';
 import * as z from 'zod';
 import { generateWebhookSecret } from '../../src/core/secret.js';
-import { matchSignatures, type SignedHeaders } from '../../src/core/sign.js';
 
 /*
  * A mock local agent: stands in for an agent host that supports MCP Events
@@ -10,7 +10,9 @@ import { matchSignatures, type SignedHeaders } from '../../src/core/sign.js';
  * subscription, subscribes with a secret it generates, and receives every
  * delivery on one local port and path, routing each by X-MCP-Subscription-Id
  * (which the spec requires so a receiver can pick the right secret) and
- * verifying it with that subscription's secret.
+ * verifying it with that subscription's secret, the way a standard verifier
+ * would: signature and a 5-minute timestamp window. It dedupes by webhook-id,
+ * as the spec asks (delivery is at least once), and counts duplicates.
  */
 
 const anyResult = z.record(z.string(), z.unknown());
@@ -31,6 +33,8 @@ export interface Callback {
 
 export class MockAgent {
   readonly deliveries: AgentDelivery[] = [];
+  /** Deliveries whose webhook-id this subscription had already received. */
+  readonly duplicates: AgentDelivery[] = [];
   /** Requests the receiver couldn't attribute or verify. */
   readonly rejected: Array<{ path: string; reason: string }> = [];
   private readonly client = new Client({ name: 'mock-agent', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
@@ -59,15 +63,17 @@ export class MockAgent {
           this.rejected.push({ path, reason: `unknown subscription ${subscriptionId ?? '(none)'}` });
           return res.writeHead(410).end();
         }
-        // No timestamp check: replayed deliveries keep their original signature time.
-        const headers = req.headers as unknown as SignedHeaders;
-        const verified = matchSignatures([secret], headers, body).some((m) => m.secretIndex === 0);
-        if (!verified) {
-          this.rejected.push({ path, reason: 'signature' });
+        try {
+          // A standard verifier: any matching v1 entry, and the timestamp within 5 minutes.
+          new Webhook(secret).verify(body, req.headers as Record<string, string>);
+        } catch (error) {
+          this.rejected.push({ path, reason: (error as Error).message });
           return res.writeHead(401).end();
         }
-        this.deliveries.push({ subscriptionId, eventId: String(req.headers['webhook-id']), path, verified, body: JSON.parse(body) as Record<string, unknown> });
-        this.log(`delivery ${req.headers['webhook-id']} for ${subscriptionId} on ${path}`);
+        const delivery: AgentDelivery = { subscriptionId, eventId: String(req.headers['webhook-id']), path, verified: true, body: JSON.parse(body) as Record<string, unknown> };
+        const seen = this.deliveries.some((d) => d.subscriptionId === subscriptionId && d.eventId === delivery.eventId);
+        (seen ? this.duplicates : this.deliveries).push(delivery);
+        this.log(`${seen ? 'duplicate' : 'delivery'} ${delivery.eventId} for ${subscriptionId} on ${path}`);
         res.writeHead(200).end();
       });
     });
@@ -89,8 +95,8 @@ export class MockAgent {
     return this.tool('list_callback_urls', { agent: this.options.agent, port: this.options.port });
   }
 
-  replay(): Promise<{ requestsRetried: number; eventsRetried: number; pending: number; upToDate: boolean }> {
-    return this.tool('replay_missed_deliveries', { agent: this.options.agent });
+  retryMissed(): Promise<{ resent: number; pending: number; rejectedByAgent: number; upToDate: boolean }> {
+    return this.tool('retry_missed_deliveries', { agent: this.options.agent });
   }
 
   /** events/subscribe with the callback URL and a secret this agent generates. Returns the subscription id. */

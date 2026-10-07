@@ -120,6 +120,8 @@ describe('bridge server', () => {
       };
       const source = [...gateway.sources.values()].find((s) => s.name === 'agent-laptop-email')!;
       expect(result.structuredContent).toMatchObject({ url: source.url, listen: { commands: ['hookdeck listen 4000 agent-laptop-email'] } });
+      const sourceSecret = (source.config as { auth: { webhook_secret_key: string } }).auth.webhook_secret_key;
+      expect(JSON.stringify(result)).not.toContain(sourceSecret);
       expect(JSON.stringify(result)).not.toContain('whsec_');
     } finally {
       await client.close();

@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
-import { CallbackRegistry } from '../core/callbacks.js';
+import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
 import { Catalog } from '../core/catalog.js';
 import type { ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
@@ -39,6 +39,7 @@ export interface BridgeServer {
   server: http.Server;
   subscriptions: SubscriptionService;
   store: SubscriptionStore;
+  callbacks: CallbackRegistry;
   listen(): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
 }
@@ -47,6 +48,7 @@ export interface BridgeServerOptions {
   hookdeck?: HookdeckClient;
   store?: SubscriptionStore;
   subscriptionOverrides?: Partial<Pick<SubscriptionServiceDeps, 'verify' | 'transport' | 'now'>>;
+  callbackSettings?: Partial<CallbackSettings>;
   log?: (message: string) => void;
 }
 
@@ -69,7 +71,14 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const loaded = await store.load();
   log(`loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}`);
 
-  const callbacks = new CallbackRegistry({ hookdeck, inUse: (url) => store.list().some((s) => s.url === url), log });
+  const callbacks = new CallbackRegistry({
+    hookdeck,
+    inUse: (url) => store.list().some((s) => s.url === url),
+    subscription: (id) => store.get(id),
+    onDeleted: (url) => subscriptions.forgetVerification(url),
+    settings: options.callbackSettings,
+    log,
+  });
   const loadedCallbacks = await callbacks.load();
   if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
 
@@ -142,7 +151,10 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     }
   });
 
-  const sweeper = setInterval(() => void subscriptions.sweep(), config.subscriptions.sweepIntervalMs);
+  const sweeper = setInterval(() => {
+    void subscriptions.sweep();
+    void callbacks.sweep();
+  }, config.subscriptions.sweepIntervalMs);
   sweeper.unref();
   const host = config.inbound === 'cli' ? '127.0.0.1' : '0.0.0.0';
 
@@ -150,6 +162,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     server,
     subscriptions,
     store,
+    callbacks,
     listen: () =>
       new Promise((resolve) => server.listen(config.port, host, () => resolve({ host, port: (server.address() as { port: number }).port }))),
     close: () =>

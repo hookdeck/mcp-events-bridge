@@ -37,7 +37,8 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       MCP Events support) receiving through bridge callback
  *                                                       URLs and `hookdeck listen`: delivery, a second
  *                                                       subscription added with a listen restart, offline
- *                                                       catch-up with replay_missed_deliveries, and cleanup
+ *                                                       catch-up with retry_missed_deliveries, and unused
+ *                                                       callbacks deleted (grace period 90s locally)
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
  *                                                       delivery, a 410 deleting a subscription, and
@@ -82,7 +83,9 @@ const callbackResources: Array<{ sourceId: string; connectionId?: string; destin
 let cleanupHookdeck: HookdeckClient | undefined;
 let stopBridge: (() => Promise<void>) | undefined;
 let localAgent: MockAgent | undefined;
+let localAgentName: string | undefined;
 let localAgentDestinationId: string | undefined;
+const localAgentCallbacks: string[] = [];
 
 async function sendEmail(from: string, subject: string) {
   const res = await fetch('https://api.resend.com/emails', {
@@ -180,7 +183,8 @@ async function main() {
         return super.publish(sourceName, headers, body);
       }
     })({ apiKey: config.hookdeck.apiKey });
-    const bridge = await createBridgeServer(config, { hookdeck: failing, log: (m) => console.log(`[bridge] ${m}`) });
+    // A short callback grace period, so the local agent checks can see unused callbacks deleted.
+    const bridge = await createBridgeServer(config, { hookdeck: failing, callbackSettings: { graceMs: 90_000 }, log: (m) => console.log(`[bridge] ${m}`) });
     const { port } = await bridge.listen();
     stopBridge = () => bridge.close();
     bridgeUrl = `http://127.0.0.1:${port}`;
@@ -309,15 +313,24 @@ async function main() {
 
 /**
  * A mock local agent with its own MCP Events support, on a laptop: it asks the bridge for a callback URL per
- * subscription, receives through `hookdeck listen` on one local port and path, and catches up with
- * replay_missed_deliveries after `listen` has been down.
+ * subscription, receives through `hookdeck listen` on one local port and path (verifying like a standard receiver,
+ * 5-minute timestamp window included), and catches up with retry_missed_deliveries after `listen` has been down.
+ * Failures are recorded, not thrown, so the rest of the run continues.
  */
 async function localAgentChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string; run: string; from: string }) {
   const agentName = `e2e_${ctx.run}`;
   const agent = new MockAgent({ serverUrl: ctx.mcpUrl, agent: agentName, port: 4500, log: (m) => console.log(`[agent] ${m}`) });
   localAgent = agent;
-  await agent.start();
+  localAgentName = agentName;
+  try {
+    await localAgentFlow(ctx, agent, agentName);
+  } catch (error) {
+    record('local agent checks', false, (error as Error).message);
+  }
+}
 
+async function localAgentFlow(ctx: { hookdeck: HookdeckClient; mcpUrl: string; run: string; from: string }, agent: MockAgent, agentName: string) {
+  await agent.start();
   let running: ChildProcess[] = [];
   const startListens = async (commands: string[]) => {
     const started = commands.map((command) =>
@@ -333,11 +346,38 @@ async function localAgentChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string;
   };
   const count = (subscriptionId: string, subject: string) =>
     agent.deliveries.filter((d) => d.subscriptionId === subscriptionId && (d.body.data as { subject?: string } | undefined)?.subject === subject).length;
+  const sourceId = async (name: string) => (await ctx.hookdeck.listSources({ name: `agent-${agentName}-${name}` })).models[0]?.id;
+  /** Waits until the callback source has stored a request for each subject: proof it arrived while `listen` was down. */
+  const arrivedWhileOffline = async (name: string, subjects: string[]) => {
+    const id = await sourceId(name);
+    if (!id) return false;
+    return Boolean(
+      await until(
+        async () => {
+          const found = (await ctx.hookdeck.listRequests({ source_id: id, includeData: true, limit: 50 })).models.map(requestSubject);
+          return subjects.every((subject) => found.includes(subject));
+        },
+        120_000,
+        5000,
+      ),
+    );
+  };
+  /** Calls retry_missed_deliveries until it reports nothing left to do. Returns the total re-sent. */
+  const retryUntilDone = async () => {
+    let resent = 0;
+    for (let i = 0; i < 10; i++) {
+      const report = await agent.retryMissed();
+      resent += report.resent;
+      if (report.upToDate) break;
+      await wait(10_000);
+    }
+    return resent;
+  };
 
   // 1. A callback URL, `listen`, subscribe, and an email.
   const first = await agent.createCallback('email_a');
-  const firstConnection = (await ctx.hookdeck.listConnections({ name: `agent-${agentName}-email_a` })).models[0];
-  localAgentDestinationId = firstConnection?.destination.id;
+  localAgentCallbacks.push('email_a');
+  localAgentDestinationId = (await ctx.hookdeck.listConnections({ name: `agent-${agentName}-email_a` })).models[0]?.destination.id;
   record('local agent: create_callback_url returns a URL and no secret', first.url.startsWith('https://') && !JSON.stringify(first).includes('whsec_'), first.listen.commands.join(' ; '));
   record('local agent: hookdeck listen connected for its callback', await startListens(first.listen.commands));
   const subA = await agent.subscribe(first.url, 'email.received', { from: ctx.from });
@@ -345,56 +385,53 @@ async function localAgentChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string;
   const s1 = `e2e ${ctx.run}: local agent`;
   await sendEmail(ctx.from, s1);
   const got1 = await until(() => count(subA, s1) > 0, 180_000);
-  const firstDelivery = agent.deliveries.find((d) => d.subscriptionId === subA);
-  record("local agent: delivered to the local port, verified with the agent's own secret", Boolean(got1) && agent.rejected.length === 0, got1 ? `on ${firstDelivery?.path}` : `timed out; rejected: ${JSON.stringify(agent.rejected)}`);
+  record("local agent: delivered to the local port, verified like a standard receiver", Boolean(got1) && agent.rejected.length === 0, got1 ? `on ${agent.deliveries[0]?.path}` : `timed out; rejected: ${JSON.stringify(agent.rejected)}`);
 
-  // 2. A second subscription: `listen` restarts to cover the new source, and an email sent meanwhile is replayed.
-  const second = await agent.createCallback('email_b');
+  // 2. A second subscription: `listen` restarts to cover the new source, and an email sent meanwhile is retried.
   await stopListens();
   const s2 = `e2e ${ctx.run}: during restart`;
   await sendEmail(ctx.from, s2);
-  await wait(20_000);
+  const missed2 = await arrivedWhileOffline('email_a', [s2]);
+  // Created just before it's used, so the short grace period in this run can't delete it first.
+  const second = await agent.createCallback('email_b');
+  localAgentCallbacks.push('email_b');
   const restarted = await startListens(second.listen.commands);
   const subB = await agent.subscribe(second.url, 'email.received', {});
   await wait(2000);
-  const replayed = await agent.replay();
+  const resent2 = await retryUntilDone();
   const got2 = await until(() => count(subA, s2) > 0, 120_000);
-  record('local agent: an email sent while listen restarted is replayed, not lost', restarted && Boolean(got2), JSON.stringify(replayed));
+  record('local agent: an email sent while listen restarted is retried, not lost', missed2 && restarted && resent2 >= 1 && Boolean(got2), `arrived while offline: ${missed2}, re-sent: ${resent2}`);
 
   const s3 = `e2e ${ctx.run}: two subscriptions`;
   await sendEmail(ctx.from, s3);
   const got3 = await until(() => count(subA, s3) > 0 && count(subB, s3) > 0, 180_000);
-  const paths = [...new Set(agent.deliveries.filter((d) => d.subscriptionId === subB).map((d) => d.path))];
-  record('local agent: two subscriptions share one local path, routed by X-MCP-Subscription-Id', Boolean(got3) && count(subA, s3) === 1 && count(subB, s3) === 1, `paths ${paths.join(',')}`);
+  const paths = [...new Set(agent.deliveries.map((d) => d.path))];
+  record('local agent: two subscriptions share one local path, routed by X-MCP-Subscription-Id', Boolean(got3) && paths.length === 1 && paths[0] === '/events', `paths ${paths.join(',')}`);
 
-  // 3. Offline: two emails while `listen` is down, then catch-up.
+  // 3. Offline: two emails while `listen` is down, then catch-up with fresh signatures (old ones would fail the 5-minute window only after 5 minutes; the agent verifies the window either way).
   await stopListens();
   const s4 = `e2e ${ctx.run}: offline 1`;
   const s5 = `e2e ${ctx.run}: offline 2`;
   await sendEmail(ctx.from, s4);
   await sendEmail(ctx.from, s5);
-  await wait(25_000);
+  const missed45 = (await arrivedWhileOffline('email_a', [s4, s5])) && (await arrivedWhileOffline('email_b', [s4, s5]));
   await startListens(second.listen.commands);
   await wait(2000);
-  const caughtUp = await agent.replay();
-  const all = () => [subA, subB].every((id) => count(id, s4) >= 1 && count(id, s5) >= 1);
-  const got45 = await until(all, 180_000);
-  record('local agent: offline catch-up delivers each missed email once per subscription', Boolean(got45) && [subA, subB].every((id) => count(id, s4) === 1 && count(id, s5) === 1), JSON.stringify(caughtUp));
+  const resent45 = await retryUntilDone();
+  const got45 = await until(() => [subA, subB].every((id) => count(id, s4) >= 1 && count(id, s5) >= 1), 180_000);
+  record('local agent: offline catch-up delivers each missed email to each subscription', missed45 && resent45 >= 4 && Boolean(got45), `arrived while offline: ${missed45}, re-sent: ${resent45}`);
   await wait(15_000);
-  const again = await agent.replay();
-  await wait(15_000);
-  record('local agent: replaying again delivers nothing twice', [subA, subB].every((id) => count(id, s4) === 1 && count(id, s5) === 1), JSON.stringify(again));
+  const again = await agent.retryMissed();
+  await wait(10_000);
+  record('local agent: retrying again sends nothing, and no duplicates arrived', again.resent === 0 && agent.duplicates.length === 0 && agent.rejected.length === 0, JSON.stringify({ again, duplicates: agent.duplicates.length, rejected: agent.rejected.length }));
 
-  // 4. Unsubscribing deletes each callback's source and connection; the agent's destination stays until cleanup.
+  // 4. After unsubscribing, the bridge deletes unused callbacks once the grace period (90s in this run) has passed.
   await agent.unsubscribe(subA);
   await agent.unsubscribe(subB);
-  const released = await until(
-    async () => (await Promise.all(['email_a', 'email_b'].map((n) => ctx.hookdeck.listSources({ name: `agent-${agentName}-${n}` })))).every((r) => r.models.length === 0),
-    30_000,
-    3000,
-  );
-  record("local agent: unsubscribing deletes each callback's source and connection", Boolean(released));
   await stopListens();
+  if (REMOTE) return; // a deployed bridge's grace period is an hour
+  const deleted = await until(async () => !(await sourceId('email_a')) && !(await sourceId('email_b')), 300_000, 10_000);
+  record('local agent: unused callbacks are deleted after the grace period', Boolean(deleted));
 }
 
 /**
@@ -533,7 +570,20 @@ main()
       await cleanupHookdeck?.deleteSource(r.sourceId).catch(() => {});
     }
     await localAgent?.close().catch(() => {});
-    if (localAgentDestinationId) await cleanupHookdeck?.deleteDestination(localAgentDestinationId).catch(() => {});
+    // Whatever the local agent checks left: callbacks by name, then the agent's destination.
+    if (localAgentName && cleanupHookdeck) {
+      let destinationId: string | undefined;
+      for (const name of localAgentCallbacks) {
+        const resource = `agent-${localAgentName}-${name}`;
+        for (const c of (await cleanupHookdeck.listConnections({ name: resource }).catch(() => ({ models: [] }))).models) {
+          destinationId = c.destination.id;
+          await cleanupHookdeck.deleteConnection(c.id).catch(() => {});
+        }
+        for (const src of (await cleanupHookdeck.listSources({ name: resource }).catch(() => ({ models: [] }))).models) await cleanupHookdeck.deleteSource(src.id).catch(() => {});
+      }
+      const agentDestination = destinationId ?? localAgentDestinationId;
+      if (agentDestination) await cleanupHookdeck.deleteDestination(agentDestination).catch(() => {});
+    }
     await stopBridge?.();
     const failed = checks.filter((c) => !c.ok).length;
     console.log(`\n${checks.length - failed}/${checks.length} checks passed`);

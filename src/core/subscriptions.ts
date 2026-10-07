@@ -33,8 +33,8 @@ export interface SubscriptionServiceDeps {
   catalog: Catalog;
   transport: CallbackTransport;
   verify?: (transport: CallbackTransport, options: VerifyEndpointOptions) => Promise<VerificationResult>;
-  /** Callback URLs the bridge created for local agents: the challenge is also signed with the callback's secret, and a callback is released when its subscription ends. */
-  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'release'>;
+  /** Callback URLs the bridge created for local agents: the challenge is also signed with the callback's own secret. */
+  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'find'>;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -135,9 +135,11 @@ export class SubscriptionService {
     const id = deriveSubscriptionId(principal, href, event.name, rawArgs);
     const now = this.now();
 
-    // Endpoint verification, cached per (principal, url).
+    // Endpoint verification, cached per (principal, url). A bridge callback URL is always verified: the edge answers
+    // cheaply, and a callback deleted and recreated must not be skipped on the strength of an old result.
     const vKey = verificationKey(principal, href);
-    if ((this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
+    const isCallback = Boolean(this.deps.callbacks?.find(href));
+    if (isCallback || (this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
       const callbackSecret = await this.deps.callbacks?.signingSecret(href);
       const result = await this.verify(transport, {
         url,
@@ -215,14 +217,15 @@ export class SubscriptionService {
       this.log(`Event Gateway error deleting ${id}: ${(error as Error).message}`);
       throw internalError('Failed to remove delivery');
     }
-    await this.releaseCallback(url.href);
     this.log(`unsubscribed ${id}`);
     return {};
   }
 
-  /** A bridge-created callback URL is deleted once no subscription uses it; failures are logged, not raised. */
-  private async releaseCallback(url: string) {
-    await this.deps.callbacks?.release(url).catch((error: Error) => this.log(`callback cleanup failed for ${redactUrl(url)}: ${error.message}`));
+  /** Drops cached verification for a URL from every principal, e.g. when a bridge callback at it is deleted. */
+  forgetVerification(url: string) {
+    for (const key of [...this.verifiedUntil.keys()]) {
+      if ((JSON.parse(key) as [string, string])[1] === url) this.verifiedUntil.delete(key);
+    }
   }
 
   /** Deletes subscriptions whose grant has lapsed. */
@@ -233,7 +236,6 @@ export class SubscriptionService {
       try {
         // Re-checked in the store's queue: a refresh that lands during the sweep keeps the subscription.
         if (!(await this.deps.store.delete(record.id, { ifExpiredAt: now }))) continue;
-        await this.releaseCallback(record.url);
         removed.push(record.id);
         this.log(`expired ${record.id}`);
       } catch (error) {

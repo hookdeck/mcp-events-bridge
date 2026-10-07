@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Not yet: local agents (stage 6), the Claude Code shim, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider and the npm package). Stage 6 has started (callback URLs for local agents). Not yet: poll mode, the Claude Code shim, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`.
 
 ## What the maintainer sets up first
 
@@ -26,7 +26,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 
 - **Work on a branch** and commit in small steps.
 - **Events only.** Don't add tools that wrap provider APIs (sending email, reading email bodies). Vendors' own MCP servers do that.
-- **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-` or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
+- **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-`, `agent-` (the bridge's callback URLs for local agents) or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
 - **Provider resources:** the same for Resend webhooks. Delete spike webhooks when the spike is done.
 - **Conventions,** as in `hookdeck/mcp-events-outpost-demo`: TypeScript ESM, Node 22+, `tsx`, `vitest`, `zod` v4, `@modelcontextprotocol/server` / `node` / `client` v2, `standardwebhooks`.
 - **Public repo.** Never put Hookdeck-internal details (private repo paths, internal PR numbers, security findings) in tracked files. They belong in `internal/`, which is gitignored.

@@ -16,7 +16,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
-| 6 | Local agents | Build | Started: plan set (callback mode, then poll, then the Claude Code channel) |
+| 6 | Local agents | Build | In progress: callback URLs for local agents built (`E2E_LOCAL=1`); next poll mode, then the Claude Code channel |
 | 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
@@ -84,8 +84,8 @@ Local agents receive MCP Events through Event Gateway and the Hookdeck CLI: the 
 
 In order:
 
-1. **Webhook delivery to local agents (callback URLs).** For agents that support MCP Events themselves: the bridge's `create_callback_url` tool gives each subscription its own MCP Events source with a connection to the agent's shared CLI destination; the bridge signs the challenge and deliveries with both the source's secret and the agent's (client-supplied at subscribe), so no secret passes through a tool; `hookdeck listen` covers the agent's sources; and `replay_missed_deliveries` recovers events missed while offline or during a restart. A mock agent (an MCP client that subscribes in webhook mode and routes by `X-MCP-Subscription-Id`) proves it end to end (`E2E_LOCAL=1`).
-   - **Known limit:** a running `listen` only receives events for the connections it resolved at startup, so adding a subscription restarts `listen`, and recovery replays the requests that arrived during the restart (they're ignored as `CLI_DISCONNECTED`, not lost). Proposed CLI change: [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467), sessions that pick up newly matching sources. Restarting is behind one function, so the change only replaces that.
+1. **Webhook delivery to local agents (callback URLs).** For agents that support MCP Events themselves: the bridge's `create_callback_url` tool gives each subscription its own MCP Events source with a connection to the agent's shared CLI destination; the bridge signs the challenge and deliveries with both the source's secret and the agent's (client-supplied at subscribe), so no secret passes through a tool; `hookdeck listen` covers the agent's sources; and `retry_missed_deliveries` re-sends, freshly signed, events missed while offline or during a restart. A mock agent (an MCP client that subscribes in webhook mode and routes by `X-MCP-Subscription-Id`) proves it end to end (`E2E_LOCAL=1`).
+   - **Known limit:** a running `listen` only receives events for the connections it resolved at startup, so adding a subscription means restarting `listen` (the agent's job), and `retry_missed_deliveries` re-sends what arrived during the restart (ignored as `CLI_DISCONNECTED`, not lost). Proposed CLI change: [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467), sessions that pick up newly matching sources.
 2. **Poll mode** (`events/poll`) from Event Gateway's stored requests, with cursor replay; tools wrapping it for hosts without MCP Events support.
 3. **Push mode** (`events/stream`): undecided. Build it if a local host implements push only.
 4. **Claude Code channel.** An adapter for Claude Code until it supports MCP Events: a stdio MCP server declaring `claude/channel` that subscribes on Claude's behalf (managed mode) and emits `notifications/claude/channel`.

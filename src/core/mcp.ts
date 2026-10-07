@@ -1,6 +1,6 @@
 import { McpServer, type ServerCapabilities } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { CallbackNameError, type CallbackRecord, type CallbackRegistry } from './callbacks.js';
+import { CallbackInputError, DEFAULT_CALLBACK_PATH, type CallbackRecord, type CallbackRegistry } from './callbacks.js';
 import type { Catalog } from './catalog.js';
 import type { EventHistory } from './event-history.js';
 import type { SubscriptionService } from './subscriptions.js';
@@ -61,7 +61,7 @@ export function buildMcpServer(deps: {
     const describe = (record: CallbackRecord) => ({ name: record.name, url: record.url, path: record.path, source: record.sourceName });
     const listen = (name: string, p: number) => ({
       commands: callbacks.listenCommands(name, p),
-      note: 'hookdeck listen only receives sources that exist when it starts: restart it after creating a callback URL, then call replay_missed_deliveries.',
+      note: 'hookdeck listen only receives sources that exist when it starts: restart it after creating a callback URL, then call retry_missed_deliveries.',
     });
 
     server.registerTool(
@@ -70,12 +70,12 @@ export function buildMcpServer(deps: {
         description:
           'For an agent without a public URL (for example on a laptop): create a callback URL for one MCP Events webhook subscription. ' +
           'Hookdeck Event Gateway receives deliveries at the URL and `hookdeck listen` forwards them to your local port and path. ' +
-          'Then call events/subscribe with this URL and a whsec_ secret you generate; deliveries arrive signed with your secret. ' +
-          'Create one per subscription. The URL is deleted when its subscription ends.',
+          'Then call events/subscribe with this URL and a whsec_ secret you generate; deliveries arrive signed with your secret, all on one local path; route them by X-MCP-Subscription-Id. ' +
+          'Create one per subscription. A callback URL no subscription has used for an hour is deleted.',
         inputSchema: z.object({
           agent,
           name: z.string().describe('A name for this subscription (letters, digits, _), e.g. "email_from_alice".'),
-          path: z.string().default('/events').describe('Local path deliveries are forwarded to (shared by all your callbacks).'),
+          path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by your first callback (default ${DEFAULT_CALLBACK_PATH}) and shared by all of them.`),
           port,
         }),
       },
@@ -84,7 +84,7 @@ export function buildMcpServer(deps: {
           const record = await callbacks.create({ agent: name, name: callbackName, path });
           return json({ ...describe(record), listen: listen(name, p) });
         } catch (error) {
-          if (error instanceof CallbackNameError) return { content: [{ type: 'text', text: error.message }], isError: true };
+          if (error instanceof CallbackInputError) return { content: [{ type: 'text', text: error.message }], isError: true };
           throw error;
         }
       },
@@ -100,14 +100,14 @@ export function buildMcpServer(deps: {
     );
 
     server.registerTool(
-      'replay_missed_deliveries',
+      'retry_missed_deliveries',
       {
         description:
-          "Replay deliveries to an agent's callback URLs that it missed while `hookdeck listen` wasn't running. Call it once `listen` is connected again. " +
-          'Safe to call repeatedly: each delivery is replayed once.',
+          "Retry deliveries to an agent's callback URLs that it missed while `hookdeck listen` wasn't running, freshly signed (same webhook-id). " +
+          'Call it once `listen` is connected again, and again until upToDate is true. Delivery is at least once: dedupe by webhook-id.',
         inputSchema: z.object({ agent }),
       },
-      async ({ agent: name }) => json(await callbacks.replay(name)),
+      async ({ agent: name }) => json(await callbacks.retryMissed(name)),
     );
   }
 

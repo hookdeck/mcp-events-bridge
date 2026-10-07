@@ -33,8 +33,8 @@ export interface RelayDeps {
   catalog: Catalog;
   store: SubscriptionStore;
   hookdeck: HookdeckClient;
-  /** Deliveries to a bridge-created callback URL are also signed with the callback's secret, and a callback is released when its subscription is deleted. */
-  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'release'>;
+  /** Deliveries to a bridge-created callback URL are also signed with the callback's own secret. */
+  callbacks?: Pick<CallbackRegistry, 'signingSecret'>;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -168,7 +168,6 @@ export class Relay {
     const errorCode = issue.aggregation_keys?.error_code?.[0] as string | undefined;
     if (status === 410) {
       await this.deps.store.delete(subscription.id);
-      await this.deps.callbacks?.release(subscription.url).catch((error: Error) => this.log(`${subscription.id}: callback cleanup failed: ${error.message}`));
       this.log(`${subscription.id}: callback returned 410, subscription deleted`);
     } else {
       const now = this.now().toISOString();

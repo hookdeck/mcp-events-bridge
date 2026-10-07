@@ -217,18 +217,18 @@ Set only what the providers in your `bridge.config.ts` need. The names are the o
 - `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery.
 - `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`: past events, read from Event Gateway.
 - `list_providers()`: configured providers and their subscriptions.
-- `create_callback_url`, `list_callback_urls` and `replay_missed_deliveries`: callback URLs for local agents (see below).
+- `create_callback_url`, `list_callback_urls` and `retry_missed_deliveries`: callback URLs for local agents (see below).
 
 ## Local agents
 
 An agent on a laptop has no public URL to receive webhooks on. The bridge gives it one per subscription, through Event Gateway and the Hookdeck CLI:
 
-1. **Create a callback URL** with the `create_callback_url` tool (`agent`, a `name` for the subscription, and your local `port` and `path`). It returns the URL and the `hookdeck listen` command for your agent's callbacks.
-2. **Run the command.** `hookdeck listen` forwards deliveries to `http://localhost:<port><path>`. Restart it after creating another callback URL: a running `listen` only covers the sources it started with ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)).
+1. **Create a callback URL** with the `create_callback_url` tool: your `agent` name, a `name` for the subscription, and your local `port` (default 3000) and `path` (default `/events`; set by your first callback and shared by all of them). It returns the URL and the `hookdeck listen` commands that cover your agent's callbacks (10 sources per command).
+2. **Run the commands.** `hookdeck listen` forwards deliveries to `http://localhost:<port><path>`. Restart it after creating another callback URL: a running `listen` only covers the sources it started with ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)).
 3. **Subscribe** with `events/subscribe`, using the callback URL and a `whsec_` secret your agent generates. Event Gateway answers the challenge. Deliveries arrive signed with your secret, all on your one local path; route them by `X-MCP-Subscription-Id`.
-4. **Catch up** after `listen` has been down (the laptop slept, or you restarted it) with `replay_missed_deliveries`: events waited in Event Gateway, and each is delivered once.
+4. **Catch up** after `listen` has been down (the laptop slept, or you restarted it) with `retry_missed_deliveries`, until it reports `upToDate`. Events waited in Event Gateway; the bridge sends each missed one again with the same `webhook-id` and a fresh signature, so standard verification (including its 5-minute window) passes. Delivery is at least once: dedupe by `webhook-id`.
 
-When a subscription ends, the bridge deletes its callback URL. `listen` needs access to the bridge's Hookdeck project.
+A callback URL that no subscription has used for an hour is deleted. `listen` needs access to the bridge's Hookdeck project, and an agent name is a label, not an identity: any client of the bridge's owner can use it.
 
 ## Security and limitations
 
@@ -250,7 +250,7 @@ npm run build             # compiles to dist/, as published
 npm run bridge -- setup   # the CLI from source; this repo's bridge.config.ts imports from ./src
 ```
 
-`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_GITHUB=1` adds a real GitHub push; `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
+`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_GITHUB=1` adds a real GitHub push; `E2E_LOCAL=1` adds a mock local agent receiving through callback URLs and `hookdeck listen`, including offline catch-up; `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
 
 Issues and pull requests are welcome. [`AGENTS.md`](AGENTS.md) has the project's conventions, for people and coding agents alike.
 
