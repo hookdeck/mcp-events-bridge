@@ -16,7 +16,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 3 | Signed pass-through and retries | Spike | Done ([results](SPIKES.md#stage-3-signed-pass-through-and-retries)) |
 | 4 | Event Gateway topology and issue notifications | Spike | Done ([results](SPIKES.md#stage-4-event-gateway-topology-and-issue-notifications)) |
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
-| 6 | Local agents | Build | In progress: callback URLs built (`E2E_LOCAL=1`, PR #12); next, the bridge runs `listen` and catches up by itself |
+| 6 | Local agents | Build | In progress: tunnel URLs, with the bridge running `listen` and catching up by itself, built (`E2E_LOCAL=1`, PR #12); next, a real agent (Hermes) locally |
 | 7 | Production readiness and reach | Build | Started: the GitHub provider, the npm package (0.1.0) and the README done early |
 | Later | Depends on Event Gateway features or later decisions | | |
 
@@ -87,11 +87,12 @@ Poll, push and cursor replay aren't part of this stage. They serve clients that 
 In order:
 
 1. **Callback URLs (built, PR #12).** Each subscription gets its own MCP Events source with a connection to the agent's shared CLI destination. The bridge signs the challenge and deliveries with both the source's secret and the agent's (client-supplied at subscribe), so no secret passes through a tool. Missed deliveries are re-sent with a fresh signature, and unused URLs are deleted after an hour. A mock agent (an MCP client that subscribes in webhook mode and routes by `X-MCP-Subscription-Id`) proves it end to end: `E2E_LOCAL=1`, 16/16 on 7 Oct.
-2. **The bridge runs `listen` and catches up by itself (next).** Today the agent runs `hookdeck listen` and calls `retry_missed_deliveries`. Instead:
-   - `create_callback_url` becomes `create_tunnel_url` and returns only the URL;
+2. **The bridge runs `listen` and catches up by itself (built, PR #12).** Before, the agent ran `hookdeck listen` and called `retry_missed_deliveries`. Now:
+   - `create_callback_url` became `create_tunnel_url`, which returns only the URL, port and path;
    - the bridge starts and supervises the agent's `hookdeck listen` with its own CLI login, and restarts it when a URL is created (a running `listen` only covers the connections it started with, until [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467));
-   - the bridge retries missed deliveries after every (re)connect and on a timer, and `retry_missed_deliveries` leaves the MCP surface;
-   - the bridge also recovers its own inbound: provider events that arrived while the laptop slept wait in Event Gateway as `CLI_DISCONNECTED` on the bridge's inbound connection, and are retried when `listen` reconnects.
+   - the bridge retries missed deliveries after every (re)connect and on a timer, and `retry_missed_deliveries` left the MCP surface;
+   - the bridge also recovers its own inbound: provider events that arrived while the laptop slept wait in Event Gateway as `CLI_DISCONNECTED` on the bridge's inbound connection, and are retried when `listen` reconnects;
+   - `listen` is restarted with backoff if it exits, instead of stopping the bridge.
 
    The agent then needs no Hookdeck CLI or credentials: it asks for a URL and subscribes.
 3. **A real local agent.** No local agent harness supports MCP Events yet (searched 7 Oct; see "MCP Events clients" in `ARCHITECTURE.md`). The closest is Hermes Agent's draft webhook receiver, which doesn't yet send the spec's `events/subscribe` shape. Until one does, the mock agent stands in.

@@ -1,6 +1,6 @@
 import { McpServer, type ServerCapabilities } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { CallbackInputError, DEFAULT_CALLBACK_PATH, type CallbackRecord, type CallbackRegistry } from './callbacks.js';
+import { CallbackInputError, DEFAULT_AGENT_PORT, DEFAULT_CALLBACK_PATH, type CallbackRecord, type CallbackRegistry } from './callbacks.js';
 import type { Catalog } from './catalog.js';
 import type { EventHistory } from './event-history.js';
 import type { SubscriptionService } from './subscriptions.js';
@@ -16,6 +16,7 @@ export function buildMcpServer(deps: {
   catalog: Catalog;
   history: EventHistory;
   providers: () => Array<Record<string, unknown>>;
+  /** Set when the bridge runs `hookdeck listen` for local agents: adds the tunnel URL tools. */
   callbacks?: CallbackRegistry;
   principal?: string;
   version?: string;
@@ -57,32 +58,27 @@ export function buildMcpServer(deps: {
   const callbacks = deps.callbacks;
   if (callbacks) {
     const agent = z.string().describe('Your agent or machine name (letters, digits, _), e.g. "laptop". Names the shared Event Gateway destination.');
-    const port = z.number().int().min(1).max(65535).default(3000).describe('Local port your agent receives deliveries on.');
-    const describe = (record: CallbackRecord) => ({ name: record.name, url: record.url, path: record.path, source: record.sourceName });
-    const listen = (name: string, p: number) => ({
-      commands: callbacks.listenCommands(name, p),
-      note: 'hookdeck listen only receives sources that exist when it starts: restart it after creating a callback URL, then call retry_missed_deliveries.',
-    });
+    const describe = (record: CallbackRecord) => ({ name: record.name, url: record.url, port: record.port, path: record.path });
 
     server.registerTool(
-      'create_callback_url',
+      'create_tunnel_url',
       {
         description:
-          'For an agent without a public URL (for example on a laptop): create a callback URL for one MCP Events webhook subscription. ' +
-          'Hookdeck Event Gateway receives deliveries at the URL and `hookdeck listen` forwards them to your local port and path. ' +
-          'Then call events/subscribe with this URL and a whsec_ secret you generate; deliveries arrive signed with your secret, all on one local path; route them by X-MCP-Subscription-Id. ' +
-          'Create one per subscription. A callback URL no subscription has used for an hour is deleted.',
+          'For an agent on this machine without a public URL: create a public URL for one MCP Events webhook subscription, then call events/subscribe with it and a whsec_ secret you generate. ' +
+          'Hookdeck Event Gateway receives deliveries at the URL (it answers the subscribe challenge and only accepts deliveries signed by this bridge), and the bridge forwards them to http://localhost:<port><path> through the Hookdeck CLI. ' +
+          'Deliveries arrive signed with your secret, all on one local port and path; route them by X-MCP-Subscription-Id and dedupe by webhook-id. ' +
+          'Deliveries missed while your agent or the forwarding was down are sent again automatically, freshly signed. ' +
+          'Create one per subscription. A URL no subscription has used for an hour is deleted.',
         inputSchema: z.object({
           agent,
           name: z.string().describe('A name for this subscription (letters, digits, _), e.g. "email_from_alice".'),
-          path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by your first callback (default ${DEFAULT_CALLBACK_PATH}) and shared by all of them.`),
-          port,
+          port: z.number().int().min(1).max(65535).optional().describe(`Local port your agent receives deliveries on. Set by your first URL (default ${DEFAULT_AGENT_PORT}) and shared by all of them.`),
+          path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by your first URL (default ${DEFAULT_CALLBACK_PATH}) and shared by all of them.`),
         }),
       },
-      async ({ agent: name, name: callbackName, path, port: p }) => {
+      async ({ agent: name, name: urlName, port, path }) => {
         try {
-          const record = await callbacks.create({ agent: name, name: callbackName, path });
-          return json({ ...describe(record), listen: listen(name, p) });
+          return json(describe(await callbacks.create({ agent: name, name: urlName, port, path })));
         } catch (error) {
           if (error instanceof CallbackInputError) return { content: [{ type: 'text', text: error.message }], isError: true };
           throw error;
@@ -91,23 +87,9 @@ export function buildMcpServer(deps: {
     );
 
     server.registerTool(
-      'list_callback_urls',
-      {
-        description: "List an agent's callback URLs and the `hookdeck listen` commands that cover them.",
-        inputSchema: z.object({ agent, port }),
-      },
-      async ({ agent: name, port: p }) => json({ callbacks: callbacks.forAgent(name).map(describe), listen: listen(name, p) }),
-    );
-
-    server.registerTool(
-      'retry_missed_deliveries',
-      {
-        description:
-          "Retry deliveries to an agent's callback URLs that it missed while `hookdeck listen` wasn't running, freshly signed (same webhook-id). " +
-          'Call it once `listen` is connected again, and again until upToDate is true. Delivery is at least once: dedupe by webhook-id.',
-        inputSchema: z.object({ agent }),
-      },
-      async ({ agent: name }) => json(await callbacks.retryMissed(name)),
+      'list_tunnel_urls',
+      { description: "List an agent's tunnel URLs.", inputSchema: z.object({ agent }) },
+      async ({ agent: name }) => json({ tunnelUrls: callbacks.forAgent(name).map(describe) }),
     );
   }
 

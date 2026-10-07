@@ -40,6 +40,9 @@ export interface BridgeServer {
   subscriptions: SubscriptionService;
   store: SubscriptionStore;
   callbacks: CallbackRegistry;
+  hookdeck: HookdeckClient;
+  /** Inbound request ids the bridge retried itself (local recovery): the relay treats their delivery as a retry. */
+  recoveredRequests: Set<string>;
   listen(): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
 }
@@ -49,6 +52,11 @@ export interface BridgeServerOptions {
   store?: SubscriptionStore;
   subscriptionOverrides?: Partial<Pick<SubscriptionServiceDeps, 'verify' | 'transport' | 'now'>>;
   callbackSettings?: Partial<CallbackSettings>;
+  /**
+   * Offer the tunnel URL tools for local agents. Only a bridge on the agent's machine can run `hookdeck listen`
+   * for them (see host/local-runtime.ts). Default: on with CLI inbound, off with HTTP inbound.
+   */
+  localAgents?: boolean;
   log?: (message: string) => void;
 }
 
@@ -92,6 +100,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     log,
     ...options.subscriptionOverrides,
   });
+  const recoveredRequests = new Set<string>();
   const relay = new Relay({
     signingSecret: config.hookdeck.signingSecret,
     providerIds: config.providers.map((p) => p.id),
@@ -99,6 +108,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     store,
     hookdeck,
     callbacks,
+    recovered: (id) => recoveredRequests.has(id),
     log,
   });
   const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
@@ -110,8 +120,11 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
       subscriptions: store.list().filter((s) => p.events.includes(s.name)).length,
     }));
 
+  const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(
-    createMcpHandler((ctx) => buildMcpServer({ subscriptions, catalog, history, providers, callbacks, principal: ctx.authInfo?.clientId })),
+    createMcpHandler((ctx) =>
+      buildMcpServer({ subscriptions, catalog, history, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId }),
+    ),
   );
 
   const json = (res: http.ServerResponse, status: number, body: unknown) => {
@@ -163,6 +176,8 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     subscriptions,
     store,
     callbacks,
+    hookdeck,
+    recoveredRequests,
     listen: () =>
       new Promise((resolve) => server.listen(config.port, host, () => resolve({ host, port: (server.address() as { port: number }).port }))),
     close: () =>

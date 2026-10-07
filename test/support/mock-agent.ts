@@ -6,9 +6,10 @@ import { generateWebhookSecret } from '../../src/core/secret.js';
 
 /*
  * A mock local agent: stands in for an agent host that supports MCP Events
- * itself and runs on a laptop. It asks the bridge for a callback URL per
- * subscription, subscribes with a secret it generates, and receives every
- * delivery on one local port and path, routing each by X-MCP-Subscription-Id
+ * itself and runs on a laptop, next to the bridge. It asks the bridge for a
+ * tunnel URL per subscription, subscribes with a secret it generates, and
+ * receives every delivery on one local port and path (the bridge runs
+ * `hookdeck listen` for it), routing each by X-MCP-Subscription-Id
  * (which the spec requires so a receiver can pick the right secret) and
  * verifying it with that subscription's secret, the way a standard verifier
  * would: signature and a 5-minute timestamp window. It dedupes by webhook-id,
@@ -25,10 +26,11 @@ export interface AgentDelivery {
   body: Record<string, unknown>;
 }
 
-export interface Callback {
+export interface TunnelUrl {
   name: string;
   url: string;
-  listen: { commands: string[] };
+  port: number;
+  path: string;
 }
 
 export class MockAgent {
@@ -87,16 +89,12 @@ export class MockAgent {
     return result.structuredContent;
   }
 
-  createCallback(name: string): Promise<Callback> {
-    return this.tool<Callback>('create_callback_url', { agent: this.options.agent, name, port: this.options.port, path: this.options.path ?? '/events' });
+  createTunnel(name: string): Promise<TunnelUrl> {
+    return this.tool<TunnelUrl>('create_tunnel_url', { agent: this.options.agent, name, port: this.options.port, path: this.options.path ?? '/events' });
   }
 
-  listCallbacks(): Promise<{ callbacks: Array<{ name: string; url: string }>; listen: { commands: string[] } }> {
-    return this.tool('list_callback_urls', { agent: this.options.agent, port: this.options.port });
-  }
-
-  retryMissed(): Promise<{ resent: number; pending: number; rejectedByAgent: number; upToDate: boolean }> {
-    return this.tool('retry_missed_deliveries', { agent: this.options.agent });
+  listTunnels(): Promise<{ tunnelUrls: TunnelUrl[] }> {
+    return this.tool('list_tunnel_urls', { agent: this.options.agent });
   }
 
   /** events/subscribe with the callback URL and a secret this agent generates. Returns the subscription id. */

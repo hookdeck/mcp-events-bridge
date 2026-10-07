@@ -5,7 +5,8 @@ import { ConfigError } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
 import { mcpUrl, runSetup } from './core/setup.js';
-import { CliListenError, DEFAULT_CLI_CONFIG, startListen } from './host/cli-listen.js';
+import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
+import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { loadConfig } from './host/load-config.js';
 import { createBridgeServer } from './host/server.js';
 
@@ -20,8 +21,9 @@ const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen
 Commands:
   setup   Create or update the Event Gateway resources and provider webhooks in bridge.config.ts
   serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper. With CLI inbound it checks
-          the Event Gateway setup and runs \`hookdeck listen\` for every configured source
-          (--no-listen to run it yourself)
+          the Event Gateway setup, runs \`hookdeck listen\` for every configured source (--no-listen
+          to run it yourself) and for local agents' tunnel URLs, and recovers events missed while
+          \`listen\` was down
   doctor  Check the deployment (not built yet)`;
 
 async function setup(configFile: string | undefined) {
@@ -66,9 +68,9 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
   const { host, port } = await bridge.listen();
   console.log(`[bridge] listening on ${host}:${port} (${config.inbound} inbound, deployment "${config.deployment}")`);
 
-  let listen: Awaited<ReturnType<typeof startListen>> | undefined;
+  let runtime: LocalRuntime | undefined;
   const stop = async (code = 0) => {
-    listen?.stop();
+    await runtime?.stop();
     await bridge.close();
     process.exit(code);
   };
@@ -76,20 +78,22 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
   process.on('SIGTERM', () => void stop());
 
   if (config.inbound === 'cli') {
+    // A bridge on a laptop runs `hookdeck listen` for its own inbound (unless --no-listen) and for local agents.
+    const cliConfigPath = process.env.BRIDGE_HOOKDECK_CLI_CONFIG ?? DEFAULT_CLI_CONFIG;
+    try {
+      const version = loginCli(config.hookdeck.apiKey, cliConfigPath);
+      console.log(`[bridge] Hookdeck CLI ${version}`);
+    } catch (error) {
+      console.error(`[bridge] ${error instanceof CliListenError ? error.message : error}`);
+      return stop(1);
+    }
+    runtime = startLocalRuntime(bridge, config, port, { cliConfigPath, inbound: manageListen, agents: true });
     if (manageListen) {
-      try {
-        listen = await startListen(config, {
-          port,
-          onExit: (code) => {
-            console.error(`[bridge] hookdeck listen exited (${code}); stopping`);
-            void stop(1);
-          },
-        });
-        console.log('[bridge] hookdeck listen connected: forwarding provider events and issue notifications');
-      } catch (error) {
-        console.error(`[bridge] ${error instanceof CliListenError ? error.message : error}`);
+      if (!(await runtime.inboundReady)) {
+        console.error('[bridge] hookdeck listen did not connect within 30s');
         return stop(1);
       }
+      console.log('[bridge] hookdeck listen connected: forwarding provider events and issue notifications, and recovering any missed while it was down');
     } else {
       console.log(`[bridge] --no-listen: forward events yourself with: hookdeck ${listenArgs(config, port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     }

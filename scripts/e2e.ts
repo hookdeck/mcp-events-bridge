@@ -5,8 +5,8 @@ import { Tunnel, bin, install } from 'cloudflared';
 import { HookdeckClient } from '../src/core/hookdeck.js';
 import { providerConnectionName, providerSourceName, subscriptionResourceName } from '../src/core/names.js';
 import { generateWebhookSecret } from '../src/core/secret.js';
-import { NOTIFICATIONS_SOURCE } from '../src/core/setup.js';
 import { loadConfig } from '../src/host/load-config.js';
+import { startLocalRuntime, type LocalRuntime } from '../src/host/local-runtime.js';
 import { createBridgeServer } from '../src/host/server.js';
 import { MockAgent } from '../test/support/mock-agent.js';
 import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
@@ -33,12 +33,14 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       branch e2e/bridge-<run> at the default branch's head
  *                                                       and deletes it after. Uses GITHUB_TOKEN (contents and
  *                                                       webhooks access)
- *   E2E_LOCAL=1 ...                                     also: a mock local agent (an agent host with its own
- *                                                       MCP Events support) receiving through bridge callback
- *                                                       URLs and `hookdeck listen`: delivery, a second
- *                                                       subscription added with a listen restart, offline
- *                                                       catch-up with retry_missed_deliveries, and unused
- *                                                       callbacks deleted (grace period 90s locally)
+ *   E2E_LOCAL=1 ...                                     also (local bridge only): a mock local agent (an agent
+ *                                                       host with its own MCP Events support) receiving through
+ *                                                       tunnel URLs, with the bridge running `hookdeck listen`
+ *                                                       for it: delivery, catch-up after `listen` was down and
+ *                                                       a second subscription added, all with no tool call;
+ *                                                       the bridge recovering provider events that arrived while
+ *                                                       its own `listen` was down; and unused URLs deleted
+ *                                                       (grace period 90s locally)
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
  *                                                       delivery, a 410 deleting a subscription, and
@@ -86,6 +88,7 @@ let localAgent: MockAgent | undefined;
 let localAgentName: string | undefined;
 let localAgentDestinationId: string | undefined;
 const localAgentCallbacks: string[] = [];
+let localRuntime: LocalRuntime | undefined;
 
 async function sendEmail(from: string, subject: string) {
   const res = await fetch('https://api.resend.com/emails', {
@@ -183,20 +186,26 @@ async function main() {
         return super.publish(sourceName, headers, body);
       }
     })({ apiKey: config.hookdeck.apiKey });
-    // A short callback grace period, so the local agent checks can see unused callbacks deleted.
+    // A short grace period for unused tunnel URLs, so the local agent checks can see them deleted.
     const bridge = await createBridgeServer(config, { hookdeck: failing, callbackSettings: { graceMs: 90_000 }, log: (m) => console.log(`[bridge] ${m}`) });
     const { port } = await bridge.listen();
-    stopBridge = () => bridge.close();
     bridgeUrl = `http://127.0.0.1:${port}`;
 
-    const listens = [
-      [providerSourceName(provider.id), providerConnectionName(provider.id, config.deployment)],
-      [NOTIFICATIONS_SOURCE, `bridge-notifications-${config.deployment}`],
-      ...(GITHUB ? [[providerSourceName(github!.id), providerConnectionName(github!.id, config.deployment)]] : []),
-    ].map(([source, connection]) =>
-      spawnListen(['listen', String(port), source!, connection!, '--output', 'compact', '--device-name', 'e2e', '--hookdeck-config', CLI_CONFIG]),
-    );
-    record('hookdeck listen connected (provider events and notifications)', (await Promise.all(listens)).every(Boolean));
+    // What `serve` runs on a laptop: `hookdeck listen` for the inbound sources (with recovery) and for local agents.
+    localRuntime = startLocalRuntime(bridge, config, port, {
+      cliConfigPath: CLI_CONFIG,
+      inbound: true,
+      agents: true,
+      followUpMs: 10_000,
+      retryEveryMs: 60_000,
+      recoveryStateFile: '.hookdeck/e2e-inbound-recovery.json',
+    });
+    const runtime = localRuntime;
+    stopBridge = async () => {
+      await runtime.stop();
+      await bridge.close();
+    };
+    record('hookdeck listen connected (provider events and notifications)', await runtime.inboundReady);
   }
   const mcpUrl = `${bridgeUrl}/mcp/${config.auth.mcpSecret}`;
 
@@ -291,7 +300,12 @@ async function main() {
   await wait(45_000);
   record('from filter drops other senders', main.events.length === before, `${main.events.length - before} extra event(s) after 45s`);
 
-  if (LOCAL) await localAgentChecks({ hookdeck, mcpUrl, run, from });
+  if (LOCAL && localRuntime) {
+    const inboundConnection = providerConnectionName(provider.id, config.deployment);
+    await localAgentChecks({ hookdeck, mcpUrl, run, from, runtime: localRuntime, providerSourceId: source.id, inboundConnection, main });
+  } else if (LOCAL) {
+    record('local agent checks', false, 'E2E_LOCAL needs a local bridge: tunnel URLs are only offered by a bridge on the agent\'s machine');
+  }
 
   if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: env('GITHUB_TOKEN'), sourceName: providerSourceName(github!.id), run });
 
@@ -311,13 +325,24 @@ async function main() {
   record('unsubscribe deletes the subscription connection', left === 0);
 }
 
+type LocalContext = {
+  hookdeck: HookdeckClient;
+  mcpUrl: string;
+  run: string;
+  from: string;
+  runtime: LocalRuntime;
+  providerSourceId: string;
+  inboundConnection: string;
+  main: Subscriber;
+};
+
 /**
- * A mock local agent with its own MCP Events support, on a laptop: it asks the bridge for a callback URL per
- * subscription, receives through `hookdeck listen` on one local port and path (verifying like a standard receiver,
- * 5-minute timestamp window included), and catches up with retry_missed_deliveries after `listen` has been down.
- * Failures are recorded, not thrown, so the rest of the run continues.
+ * A mock local agent with its own MCP Events support, on a laptop next to the bridge: it asks for a tunnel URL per
+ * subscription and subscribes; the bridge runs `hookdeck listen` for it and catches it up after `listen` was down,
+ * with no tool call. The agent verifies like a standard receiver (5-minute timestamp window included) and counts
+ * duplicates. Also checks the bridge recovering its own inbound. Failures are recorded, not thrown.
  */
-async function localAgentChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string; run: string; from: string }) {
+async function localAgentChecks(ctx: LocalContext) {
   const agentName = `e2e_${ctx.run}`;
   const agent = new MockAgent({ serverUrl: ctx.mcpUrl, agent: agentName, port: 4500, log: (m) => console.log(`[agent] ${m}`) });
   localAgent = agent;
@@ -329,25 +354,25 @@ async function localAgentChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string;
   }
 }
 
-async function localAgentFlow(ctx: { hookdeck: HookdeckClient; mcpUrl: string; run: string; from: string }, agent: MockAgent, agentName: string) {
+async function localAgentFlow(ctx: LocalContext, agent: MockAgent, agentName: string) {
   await agent.start();
-  let running: ChildProcess[] = [];
-  const startListens = async (commands: string[]) => {
-    const started = commands.map((command) =>
-      startListen([...command.split(' ').slice(1), '--output', 'compact', '--device-name', 'e2e-agent', '--hookdeck-config', CLI_CONFIG]),
-    );
-    running = started.map((s) => s.child);
-    return (await Promise.all(started.map((s) => s.connected))).every(Boolean);
+  const { runtime } = ctx;
+  const keys = () => runtime.agentKeys(agentName);
+  // Connecting usually takes about a second, but has taken 30 (seen live): allow 90.
+  const agentListenConnected = async () =>
+    Boolean(await until(() => keys().length > 0 && keys().every((k) => runtime.supervisor.isConnected(k)), 90_000));
+  /** Stops the bridge's `listen` for the agent, as if the laptop slept. */
+  const agentListenDown = async () => {
+    for (const key of keys()) await runtime.supervisor.suspend(key);
   };
-  const stopListens = async () => {
-    for (const child of running) child.kill('SIGINT');
-    running = [];
-    await wait(3000);
+  const agentListenUp = async () => {
+    await Promise.all(keys().map((k) => runtime.supervisor.resume(k)));
+    return agentListenConnected();
   };
   const count = (subscriptionId: string, subject: string) =>
     agent.deliveries.filter((d) => d.subscriptionId === subscriptionId && (d.body.data as { subject?: string } | undefined)?.subject === subject).length;
   const sourceId = async (name: string) => (await ctx.hookdeck.listSources({ name: `agent-${agentName}-${name}` })).models[0]?.id;
-  /** Waits until the callback source has stored a request for each subject: proof it arrived while `listen` was down. */
+  /** Waits until the tunnel source has stored a request for each subject: proof it arrived while `listen` was down. */
   const arrivedWhileOffline = async (name: string, subjects: string[]) => {
     const id = await sourceId(name);
     if (!id) return false;
@@ -362,76 +387,89 @@ async function localAgentFlow(ctx: { hookdeck: HookdeckClient; mcpUrl: string; r
       ),
     );
   };
-  /** Calls retry_missed_deliveries until it reports nothing left to do. Returns the total re-sent. */
-  const retryUntilDone = async () => {
-    let resent = 0;
-    for (let i = 0; i < 10; i++) {
-      const report = await agent.retryMissed();
-      resent += report.resent;
-      if (report.upToDate) break;
-      await wait(10_000);
-    }
-    return resent;
-  };
 
-  // 1. A callback URL, `listen`, subscribe, and an email.
-  const first = await agent.createCallback('email_a');
+  // 1. A tunnel URL, then subscribe: the bridge starts `listen` for the agent's port by itself.
+  const first = await agent.createTunnel('email_a');
   localAgentCallbacks.push('email_a');
   localAgentDestinationId = (await ctx.hookdeck.listConnections({ name: `agent-${agentName}-email_a` })).models[0]?.destination.id;
-  record('local agent: create_callback_url returns a URL and no secret', first.url.startsWith('https://') && !JSON.stringify(first).includes('whsec_'), first.listen.commands.join(' ; '));
-  record('local agent: hookdeck listen connected for its callback', await startListens(first.listen.commands));
+  record(
+    'local agent: create_tunnel_url returns only a URL, port and path',
+    first.url.startsWith('https://') && first.port === 4500 && first.path === '/events' && !JSON.stringify(first).includes('whsec_') && !('listen' in first),
+    first.url,
+  );
+  record("local agent: the bridge runs hookdeck listen for the agent's port", await agentListenConnected(), keys().join(', '));
   const subA = await agent.subscribe(first.url, 'email.received', { from: ctx.from });
-  record("local agent: subscribe, with the challenge answered by the callback's source", subA.startsWith('sub_'), subA);
+  record("local agent: subscribe, with the challenge answered by the tunnel URL's source", subA.startsWith('sub_'), subA);
   const s1 = `e2e ${ctx.run}: local agent`;
   await sendEmail(ctx.from, s1);
   const got1 = await until(() => count(subA, s1) > 0, 180_000);
-  record("local agent: delivered to the local port, verified like a standard receiver", Boolean(got1) && agent.rejected.length === 0, got1 ? `on ${agent.deliveries[0]?.path}` : `timed out; rejected: ${JSON.stringify(agent.rejected)}`);
+  record('local agent: delivered to the local port, verified like a standard receiver', Boolean(got1) && agent.rejected.length === 0, got1 ? `on ${agent.deliveries[0]?.path}` : `timed out; rejected: ${JSON.stringify(agent.rejected)}`);
 
-  // 2. A second subscription: `listen` restarts to cover the new source, and an email sent meanwhile is retried.
-  await stopListens();
-  const s2 = `e2e ${ctx.run}: during restart`;
+  // 2. `listen` down (the laptop slept): an email waits in Event Gateway, and arrives when `listen` is back, with no tool call.
+  await agentListenDown();
+  const s2 = `e2e ${ctx.run}: while listen was down`;
   await sendEmail(ctx.from, s2);
   const missed2 = await arrivedWhileOffline('email_a', [s2]);
-  // Created just before it's used, so the short grace period in this run can't delete it first.
-  const second = await agent.createCallback('email_b');
-  localAgentCallbacks.push('email_b');
-  const restarted = await startListens(second.listen.commands);
-  const subB = await agent.subscribe(second.url, 'email.received', {});
-  await wait(2000);
-  const resent2 = await retryUntilDone();
-  const got2 = await until(() => count(subA, s2) > 0, 120_000);
-  record('local agent: an email sent while listen restarted is retried, not lost', missed2 && restarted && resent2 >= 1 && Boolean(got2), `arrived while offline: ${missed2}, re-sent: ${resent2}`);
+  const back = await agentListenUp();
+  const got2 = await until(() => count(subA, s2) > 0, 180_000);
+  record('local agent: an email sent while listen was down arrives when it is back, with no tool call', missed2 && back && Boolean(got2), `arrived while offline: ${missed2}`);
 
+  // 3. A second subscription: the bridge restarts `listen` to cover the new URL by itself.
+  const second = await agent.createTunnel('email_b');
+  localAgentCallbacks.push('email_b');
+  const subB = await agent.subscribe(second.url, 'email.received', {});
   const s3 = `e2e ${ctx.run}: two subscriptions`;
   await sendEmail(ctx.from, s3);
   const got3 = await until(() => count(subA, s3) > 0 && count(subB, s3) > 0, 180_000);
   const paths = [...new Set(agent.deliveries.map((d) => d.path))];
-  record('local agent: two subscriptions share one local path, routed by X-MCP-Subscription-Id', Boolean(got3) && paths.length === 1 && paths[0] === '/events', `paths ${paths.join(',')}`);
+  record(
+    'local agent: a second URL is covered by the bridge restarting listen; both subscriptions on one path, routed by X-MCP-Subscription-Id',
+    Boolean(got3) && paths.length === 1 && paths[0] === '/events',
+    `paths ${paths.join(',')}`,
+  );
 
-  // 3. Offline: two emails while `listen` is down, then catch-up with fresh signatures (old ones would fail the 5-minute window only after 5 minutes; the agent verifies the window either way).
-  await stopListens();
+  // 4. Offline with two subscriptions: two emails, then catch-up, freshly signed, with no tool call.
+  await agentListenDown();
   const s4 = `e2e ${ctx.run}: offline 1`;
   const s5 = `e2e ${ctx.run}: offline 2`;
   await sendEmail(ctx.from, s4);
   await sendEmail(ctx.from, s5);
   const missed45 = (await arrivedWhileOffline('email_a', [s4, s5])) && (await arrivedWhileOffline('email_b', [s4, s5]));
-  await startListens(second.listen.commands);
-  await wait(2000);
-  const resent45 = await retryUntilDone();
+  await agentListenUp();
   const got45 = await until(() => [subA, subB].every((id) => count(id, s4) >= 1 && count(id, s5) >= 1), 180_000);
-  record('local agent: offline catch-up delivers each missed email to each subscription', missed45 && resent45 >= 4 && Boolean(got45), `arrived while offline: ${missed45}, re-sent: ${resent45}`);
-  await wait(15_000);
-  const again = await agent.retryMissed();
-  await wait(10_000);
-  record('local agent: retrying again sends nothing, and no duplicates arrived', again.resent === 0 && agent.duplicates.length === 0 && agent.rejected.length === 0, JSON.stringify({ again, duplicates: agent.duplicates.length, rejected: agent.rejected.length }));
+  record('local agent: offline catch-up delivers each missed email to each subscription, with no tool call', missed45 && Boolean(got45), `arrived while offline: ${missed45}`);
 
-  // 4. After unsubscribing, the bridge deletes unused callbacks once the grace period (90s in this run) has passed.
+  // 5. The bridge's own inbound: an email that reaches Event Gateway while the bridge's `listen` is down is recovered.
+  await runtime.supervisor.suspend(runtime.inboundKey);
+  const s6 = `e2e ${ctx.run}: while the bridge was down`;
+  await sendEmail(ctx.from, s6);
+  const connectionId = (await ctx.hookdeck.listConnections({ name: ctx.inboundConnection })).models[0]?.id;
+  const waited = await until(
+    async () => {
+      const request = (await ctx.hookdeck.listRequests({ source_id: ctx.providerSourceId, includeData: true, limit: 20 })).models.find((r) => requestSubject(r) === s6);
+      if (!request) return undefined;
+      const ignored = (await ctx.hookdeck.listIgnoredEventsForRequest(request.id)).models;
+      const events = (await ctx.hookdeck.listEventsForRequest(request.id)).models;
+      const missedHere = ignored.some((i) => i.webhook_id === connectionId && i.cause === 'CLI_DISCONNECTED') || events.some((e) => e.webhook_id === connectionId && e.status === 'FAILED');
+      return missedHere ? request : undefined;
+    },
+    180_000,
+    5000,
+  );
+  await runtime.supervisor.resume(runtime.inboundKey);
+  const inboundBack = Boolean(await until(() => runtime.supervisor.isConnected(runtime.inboundKey), 90_000));
+  const got6 = await until(() => count(subA, s6) > 0 && count(subB, s6) > 0 && countSubject(ctx.main, s6) > 0, 240_000);
+  record("local bridge: a provider event that arrived while the bridge's listen was down is recovered", Boolean(waited) && inboundBack && Boolean(got6), `missed while down: ${Boolean(waited)}`);
+
+  await wait(20_000);
+  record('local agent: no duplicates and nothing rejected', agent.duplicates.length === 0 && agent.rejected.length === 0, JSON.stringify({ duplicates: agent.duplicates.length, rejected: agent.rejected }));
+
+  // 6. After unsubscribing, the bridge deletes unused URLs once the grace period (90s in this run) has passed, and stops their `listen`.
   await agent.unsubscribe(subA);
   await agent.unsubscribe(subB);
-  await stopListens();
-  if (REMOTE) return; // a deployed bridge's grace period is an hour
   const deleted = await until(async () => !(await sourceId('email_a')) && !(await sourceId('email_b')), 300_000, 10_000);
-  record('local agent: unused callbacks are deleted after the grace period', Boolean(deleted));
+  await wait(3000);
+  record('local agent: unused tunnel URLs are deleted after the grace period, and their listen stopped', Boolean(deleted) && keys().length === 0, `listen processes left: ${keys().length}`);
 }
 
 /**

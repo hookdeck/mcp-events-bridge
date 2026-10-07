@@ -64,7 +64,7 @@ Rules that make it correct:
 - **Partial failure produces duplicates.** If publishing to A succeeds and B fails, the inbound retry publishes to A again. Each subscription connection has a dedupe rule on `headers.webhook-id`, which is the provider's event id and stable across retries. Dedupe is best-effort with a window of at most 1 hour, so subscribers must still dedupe on `webhook-id`.
 - **The inbound retry rule finishes inside the dedupe window.** For example, linear retries that end within an hour.
 - **Publish to all matches in parallel,** so the inbound response stays well inside the destination timeout.
-- **On an inbound retry, skip subscriptions created after the event's `occurredAt`,** so a retry doesn't hand a new subscriber an old event. A first attempt (`x-hookdeck-attempt-count` of 1) goes to every current subscription, because provider timestamps can predate the action: editing an old GitHub release keeps its `published_at`.
+- **On an inbound retry, skip subscriptions created after the event's `occurredAt`,** so a retry doesn't hand a new subscriber an old event. A retry is Event Gateway's own (`x-hookdeck-attempt-count` above 1), a manual one (`x-hookdeck-attempt-trigger` other than `INITIAL`), or a request the bridge itself recovered after its `listen` was down (recognized by `x-hookdeck-requestid`, since that arrives as attempt 1 of a new event). A first attempt goes to every current subscription, because provider timestamps can predate the action: editing an old GitHub release keeps its `published_at`.
 - **Outbound retries carry the first signature.** Event Gateway passes the published headers through unchanged, so a retry has the original `webhook-timestamp`. The spec says each retry attempt MUST regenerate the timestamp and signature, so this doesn't conform (see "Spec conformance"). Keep each subscription connection's retries inside 5 minutes, the window inside which receivers SHOULD accept a timestamp, until Event Gateway can sign Standard Webhooks itself. Stage 3 confirms the pass-through behavior.
 - **The inbound connection also dedupes** on `headers.svix-id`, to drop fast provider retries before they reach the bridge. Best-effort, as above.
 
@@ -204,35 +204,35 @@ Local delivery goes through Event Gateway and the Hookdeck CLI, so a laptop gets
 
 **Scope (decided 7 Oct).** The bridge runs on the same machine as the agent: one bridge per machine, with one owner, in its own Hookdeck project (several bridges in one project would load and act on each other's resources; an optional namespace is [#13](https://github.com/hookdeck/mcp-events-bridge/issues/13)). Poll, push and cursor replay serve clients that can't receive webhooks wherever they run, so they're not part of local support (see "Clients that can't receive webhooks").
 
-**Status.** Built (PR #12): tunnel URLs (as `create_callback_url`), dual signing, the retry of missed deliveries (as a tool), and cleanup. Next (`PLAN.md`, stage 6, step 2): the bridge runs the agent's `listen` and catches up by itself, recovers its own inbound, and the tool becomes `create_tunnel_url`. Below, "next" marks what isn't built yet.
+**Status.** Built (PR #12): tunnel URLs, dual signing, the bridge running `listen` for agents and retrying their missed deliveries by itself, recovery of its own missed inbound, and cleanup. Not yet: a real local agent (`PLAN.md`, stage 6, step 3).
 
 ### A local agent receiving events
 
 A local agent subscribes like any other subscriber, with webhook delivery. The catch is that it has no public URL, and the challenge needs a synchronous answer. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore receive through Event Gateway's MCP Events source type (`MCP_EVENTS`, shipped 6 Oct 2026) and the Hookdeck CLI, and the bridge creates the public URLs for them.
 
-**Tunnel URLs from the bridge** (`create_callback_url`, renamed `create_tunnel_url` next; `src/core/callbacks.ts`). An agent asks for one per subscription, then subscribes with it as the callback URL:
+**Tunnel URLs from the bridge** (`create_tunnel_url`, `src/core/callbacks.ts`). An agent asks for one per subscription, then subscribes with it as the callback URL. The tool is offered only by a bridge with CLI inbound, the one on the agent's machine:
 
 ```text
-agent-<agent>            CLI destination, shared by the agent's URLs (its local path, e.g. /events)
+agent-<agent>            CLI destination, shared by the agent's URLs (its local port and path, e.g. 3000 and /events)
 agent-<agent>-<name>     MCP Events source + connection to that destination, one per URL
 ```
 
 - **One source per subscription** keeps each subscription's history, retries and pause controls separate. All of an agent's subscriptions share one CLI destination, so they arrive on one local path and the agent routes them by `X-MCP-Subscription-Id`, which the spec requires so a receiver can pick the right secret. The shared destination also lets a rate limit protect the agent as a whole. Open: one source per agent, with a path per subscription through Event Gateway's path forwarding, which receivers that route by path need (see "MCP Events clients").
 - **Two secrets, two signatures.** The source's secret is generated by the bridge when it creates the URL and never leaves it. The agent subscribes with its own secret, client-supplied as the spec says, through `events/subscribe`, never through a tool. The bridge signs the challenge and every delivery to a tunnel URL with both (Standard Webhooks allows several `v1,` entries): the source verifies its signature and answers the challenge, the agent verifies its own. So the source never needs updating, and the agent rotates its secret without touching Event Gateway. Updating a source's secret instead was tested and took about 61 seconds to reach ingestion. Because the source's secret is the bridge's, a source shared by several subscriptions wouldn't tie their secrets together either.
 - **Only the bridge's deliveries get through.** Unlike a general tunnel (cloudflared, ngrok), the source rejects anything not signed with its secret, so the URL can't be used to reach the agent's port.
-- **`hookdeck listen` covers the agent's sources.** A running `listen` only receives the connections it resolved at startup ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467) proposes sessions that pick up new sources). Today the tool returns the commands (at most 10 sources each), and the agent restarts `listen` after creating a URL and calls `retry_missed_deliveries`. Next: the bridge runs `listen` for the agent's port with its own CLI login (as it does for its inbound), restarts it after creating a URL, and retries what arrived in between, so the agent needs no Hookdeck CLI or credentials.
-- **One local path per agent.** It's the shared destination's path, so the first URL sets it (default `/events`) and a different one is refused. At most 50 URLs per agent.
+- **The bridge runs `hookdeck listen` for the agent** (`src/host/local-runtime.ts`): one process per agent port, at most 10 sources each, with the bridge's own CLI login, so the agent needs no Hookdeck CLI or credentials. A running `listen` only receives the connections it resolved at startup ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467) proposes sessions that pick up new sources), so the bridge restarts it when URLs are created or deleted (debounced, and the old process exits before the new one starts, so sessions never overlap), and retries what arrived in between. A process that exits is started again with backoff.
+- **One local port and path per agent.** The first URL sets them (default `3000` and `/events`; the path is the shared destination's) and different ones are refused. At most 50 URLs per agent.
 - **Status codes stop at the source.** The source acknowledges each delivery, so the agent's own response (a `410` to stop, a `5xx` to retry) never reaches the bridge's delivery. The agent unsubscribes instead.
 - **Cleanup.** The sweeper deletes a URL's source and connection once no subscription has used it for an hour, not the moment one ends: an agent changing a subscription's arguments unsubscribes and subscribes again on the same URL, and an agent may create a URL before subscribing. The agent's destination stays. Tunnel URLs are always verified at subscribe (never from the verification cache), and a deleted URL's cached verification is dropped, so a subscription can't be recreated on a deleted source.
 - **Identity.** An agent name is a label, not an identity: any client of the owner can create, list or retry for any agent name. That suits one bridge per machine.
 
-**Missed deliveries are retried, freshly signed.** With a CLI destination and no session connected, a request is kept with an ignored event of cause `CLI_DISCONNECTED`; within roughly 2 minutes of a drop, events are created and then fail without a response. Today the agent calls `retry_missed_deliveries` once `listen` is connected again. Next, the bridge runs the same job after every (re)connect ("Connected" on the CLI's output) and on a timer, to cover reconnects inside a running `listen`. The job lists each tunnel source's requests since a watermark (with their headers and body) and judges each event by its latest attempt:
+**Missed deliveries are retried, freshly signed.** With a CLI destination and no session connected, a request is kept with an ignored event of cause `CLI_DISCONNECTED`; within roughly 2 minutes of a drop, events are created and then fail without a response. The bridge runs the retry after every (re)connect (the CLI prints "Connected" at startup and after each websocket reconnect), every 5 minutes as a backstop, and again shortly (up to 10 times) while a run isn't up to date, but only while the agent's `listen` is connected: a re-send while it's down is only ignored again. Each run makes two listings since a watermark: the tunnel source's requests (with headers and body, for re-sending; the source feeds only this connection) and the connection's events (`GET /events?webhook_id=`). Ignored events are only looked up for a request that has some and no event. It judges each event by its latest attempt:
 
 - **Missed** (ignored as `CLI_DISCONNECTED`, or `FAILED` with no response): the bridge sends it again to the tunnel URL, with the same `webhook-id` and body and a fresh timestamp and signature (both secrets), plus `x-mcp-bridge-retry-of: <original request id>`. Event Gateway's own retry would resend the original timestamp, which a standard receiver rejects once it's over five minutes old.
 - **Rejected by the agent** (`FAILED` with a response status): not retried.
 - **Pending** (in flight, or not yet processed by Event Gateway) and **delivered**: left alone.
 
-The watermark (in the connection description) moves to two minutes before the run, only after a run that sent nothing and found nothing pending, so a run while `listen` is still offline, or racing Event Gateway's processing, loses nothing. Delivery is at least once; agents dedupe by `webhook-id`, as the spec asks.
+A new request takes a few seconds to appear in Event Gateway's listing, so a run straight after a re-send would see only the missed original and send it again (seen live on 7 Oct, when a timer run started 2 seconds after a reconnect run). So each re-send carries `x-mcp-bridge-resend-id`, and until a listing shows that re-send (or 3 minutes pass), its event counts as pending. The watermark (in the connection description) moves to two minutes before the run, only after a run that sent nothing and found nothing pending, so a run while `listen` is still offline, or racing Event Gateway's processing, loses nothing. Delivery is at least once; agents dedupe by `webhook-id`, as the spec asks.
 
 **Retry, not replay.** In the spec, a *retry* is the sender attempting the same event again (same `eventId` and `webhook-id`, a new request with its own timestamp), and *replay* is the client asking, with a cursor, for events from a past position. This job retries deliveries lost on the way to the laptop. Cursor replay, for any client and delivery mode, is separate and later.
 
@@ -243,8 +243,8 @@ The same code runs on a laptop if the inbound connection uses a CLI destination 
 Running it unattended on a laptop, as local agents need, brings back what the fleet demo solved:
 
 - **Fail closed on missing connections:** built (above).
-- **Supervising `listen`:** partly built. `serve` starts it with its own CLI login (`hookdeck ci` into a private config) and waits for "Connected", but stops the bridge if `listen` exits. Next: restart it instead.
-- **Recovering missed provider events:** next. While the laptop sleeps, provider requests wait on the bridge's inbound connection as `CLI_DISCONNECTED`. On reconnect the bridge retries them for its own connection (`POST /requests/{id}/retry` with `webhook_ids`), and the relay signs fresh deliveries as usual. Without this, events that arrive while a local bridge is down are never relayed.
+- **Supervising `listen`:** built. `serve` logs the CLI in with its own key (`hookdeck ci` into a private config), waits for the first "Connected", and restarts `listen` with backoff if it exits.
+- **Recovering missed provider events** (`src/core/inbound-recovery.ts`, ported from the fleet demo's `recover.ts`): built. While the laptop sleeps, provider requests wait on the bridge's inbound connection as `CLI_DISCONNECTED` (or, within about 2 minutes of the drop, as events that failed without a response). After every (re)connect, and on the same timer while connected, the bridge retries them for its own connection only (`POST /requests/{id}/retry` with `webhook_ids`, or `POST /events/{id}/retry` for a settled failed event), and the relay signs fresh deliveries as usual. Each run filters on the connection: one listing of its events (`GET /events?webhook_id=`), and the source's requests that have ignored events (`ignored_count[gt]=0`; Event Gateway has no listing of ignored events across requests), the only ones looked at one by one. Events still in flight are left alone, and nothing is retried again within 3 minutes, since its retry may not be listed yet. The watermark is kept in a small file next to the CLI config, so a bridge started again after a weekend checks from where it stopped (the first run looks back a day).
 
 A local agent on the same machine connects to the bridge's MCP endpoint on `127.0.0.1`. ChatGPT can't reach a local bridge's MCP endpoint without a public URL with synchronous responses, such as a cloudflared tunnel (see the README's quick start).
 
@@ -294,7 +294,7 @@ One service per deployment:
 - **One HTTP listener** (`BRIDGE_PORT`): `POST /inbound/<instance id>` (Hookdeck-signed only, bodies up to 10 MiB, else `413`; runs the relay; `200` or `5xx`) and the MCP endpoint at `/mcp/<secret>` (or `/mcp` with OAuth): Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. Deployed, it's public; on a laptop it binds to `127.0.0.1`.
 - **The subscription index:** in memory, loaded from Event Gateway at startup (see "Data model").
 - **The sweeper:** expires subscriptions and deletes their connections and destinations, and deletes tunnel URLs no subscription has used for an hour.
-- **With CLI inbound, `hookdeck listen`:** one process for the provider and notification sources. Next, also one per local agent port, supervised and restarted by the bridge (see "Local agents and the bridge on a laptop").
+- **With CLI inbound, `hookdeck listen`:** one process for the provider and notification sources, and one per local agent port, supervised and restarted by the bridge, with recovery after each reconnect (see "Local agents and the bridge on a laptop").
 
 ## Module layout
 
@@ -317,11 +317,13 @@ src/
     setup.ts            `setup`: Event Gateway resources, provider webhooks, issue feedback
     inbound-plan.ts     the inbound connections a config implies; `hookdeck listen` arguments
     event-history.ts    get_event and list_recent_events, from Event Gateway's requests
-    callbacks.ts        tunnel URLs for local agents: create, sweep unused, retry missed deliveries
+    callbacks.ts        tunnel URLs for local agents: create, sweep unused, plan listen, retry missed deliveries
+    inbound-recovery.ts recover provider events a local bridge missed while its listen was down
   host/
     callback-transport.ts  CallbackTransport over node:http(s) with a pinned, public-only DNS lookup
     server.ts           HTTP listener: inbound routes and the MCP endpoint (secret-URL check)
-    cli-listen.ts       runs and watches `hookdeck listen` for `serve`
+    cli-listen.ts       logs the CLI in; supervises `hookdeck listen` processes (restart, "Connected")
+    local-runtime.ts    a laptop bridge's listen processes: inbound with recovery, local agents with retries
     load-config.ts      finds and loads bridge.config.ts (TypeScript through tsx)
   cli.ts                serve | setup (planned: setup --prune, doctor)
 test/
@@ -352,8 +354,8 @@ From `hookdeck/hookdeck-demos/hookdeck/cli-fleet-fanout`:
 | --- | --- |
 | `shared/src/hookdeck.ts` | API client and its documented gotchas |
 | `per-machine/src/ensure-connection.ts` | Fail closed at boot (done: `serve` checks the inbound connections) |
-| `per-machine/src/recover.ts` | Recovering the bridge's own inbound after a disconnect (stage 6, next) |
-| `shared/src/machine.ts` | How `listen` is spawned and "Connected" detected (done in `host/cli-listen.ts`; restarts are next) |
+| `per-machine/src/recover.ts` | Recovering the bridge's own inbound after a disconnect (done: `core/inbound-recovery.ts`) |
+| `shared/src/machine.ts` | How `listen` is spawned and "Connected" detected (done: `host/cli-listen.ts`, with restarts) |
 
 Also: `hookdeck/claude-channel-plugin` for the channel shim, and `hookdeck/webhook-skills` for per-provider event lists and verification details.
 
@@ -517,7 +519,7 @@ Handlers registered by hand:
 Tools:
 
 - `list_providers()`: configured instances, their events, and how many subscriptions each has.
-- `create_callback_url(agent, name, path?, port?)`, `list_callback_urls(agent, port?)` and `retry_missed_deliveries(agent)`: tunnel URLs for local agents (see "A local agent receiving events"). Results carry URLs and `hookdeck listen` commands, never secrets. Next: `create_tunnel_url` returning only the URL, with `listen` and the retry run by the bridge and `retry_missed_deliveries` removed.
+- `create_tunnel_url(agent, name, port?, path?)` and `list_tunnel_urls(agent)`: tunnel URLs for local agents, on a bridge with CLI inbound (see "A local agent receiving events"). Results carry the URL, port and path, never secrets.
 - `get_event(eventId)` and `list_recent_events(name?, since?, limit?)`, read from Event Gateway. These also work around openai/codex#50714, where dot runs don't receive event data.
 - Later, if a client needs it, poll mode: `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. Advertise `"poll"` in each event's `delivery` once built. If a host supports neither MCP Events nor `events/poll`, expose the same implementation as `poll_events` and `wait_for_event` tools.
 
@@ -660,7 +662,8 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - `PUT /connections` upserts by name.
 - `GET /requests?source_id=…&created_at[gte]=…` lists inbound requests.
 - `GET /requests/{id}/events` and `GET /requests/{id}/ignored_events`. Don't use `GET /events?request_id=`: it's accepted and ignored, and returns unrelated events.
-- `POST /requests/{id}/retry` with `webhook_ids: [<connection id>]` limits the retry to one connection. The field isn't in the public API reference; it's what `hookdeck gateway request retry --connection-ids` sends.
+- `GET /events?webhook_id=<connection id>` does filter by connection, and `status` and `created_at[gte]` filter too; `GET /requests?ignored_count[gt]=0` (and `ignored_count=0`) filter by count. There's no listing of ignored events across requests (verified live, 7 Oct).
+- `POST /requests/{id}/retry` with `webhook_ids: [<connection id>]` limits the retry to one connection. The field isn't in the public API reference; it's what `hookdeck gateway request retry --connection-ids` sends. For a request ignored as `CLI_DISCONNECTED`, the retry creates a new event delivered as attempt 1 with `x-hookdeck-attempt-trigger: INITIAL`, and the request's ignored event goes away (`ignored_count` 0) (7 Oct).
 - `POST /events/{id}/retry` has no status guard, and a scheduled retry stays armed, so only retry events that have settled as `FAILED`.
 - A request retry creates new Hookdeck event IDs.
 
@@ -716,7 +719,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 - Non-interactive login into a private config: `hookdeck ci --api-key $HOOKDECK_API_KEY --hookdeck-config <path>`.
 - `hookdeck listen <port> <source> <connection> --output compact --device-name <name> --hookdeck-config <path>`, with the exact connection name. If that connection doesn't exist, `listen` creates a shared `cli-<source>` connection.
-- "Connected" on stdout means the session is up; that's the recovery trigger.
+- "Connected" on stdout means the session is up; that's the recovery trigger. It's printed again after every websocket reconnect inside a running process ("Connection lost, reconnecting..." before it), from the CLI's source (`renderer_simple.go`, used for `--output compact`).
 - A running `listen` session only covers the connections resolved at startup, even with `'*'`: a request to a CLI connection created later is ignored as `CLI_DISCONNECTED` until `listen` restarts (verified live and in the CLI's code, 7 Oct; [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)).
 - The CLI forwards each attempt to its local URL plus the destination's `cli_path`, with no filtering of its own.
 - Relevant `gateway connection upsert` flags: `--source-type`, `--source-webhook-secret`, `--destination-type`, `--destination-cli-path`, `--destination-url`, `--rule-filter-headers`, `--rule-retry-strategy`, `--rule-retry-count`, `--rule-retry-interval`, `--rule-retry-response-status-codes`. The last accepts integers only, so negated codes have to be set through the API (stage 3).
