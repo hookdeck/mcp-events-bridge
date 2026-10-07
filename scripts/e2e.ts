@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Tunnel, bin, install } from 'cloudflared';
@@ -41,6 +42,12 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       the bridge recovering provider events that arrived while
  *                                                       its own `listen` was down; and unused URLs deleted
  *                                                       (grace period 90s locally)
+ *   E2E_WEBHOOK=1 ...                                   also: the generic webhook provider. Needs the `fills`
+ *                                                       instance enabled (FILLS_WEBHOOK_SECRET; see bridge.config.ts)
+ *                                                       and setup run with it. Plays the trading server: a correctly
+ *                                                       signed fill reaches an order.filled subscriber with
+ *                                                       webhook-id = x-delivery-id; a wrongly signed fill and one
+ *                                                       for another symbol don't
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
  *                                                       delivery, a 410 deleting a subscription, and
@@ -59,6 +66,7 @@ const REMOTE = process.env.E2E_BRIDGE_URL?.replace(/\/$/, '');
 const EXTENDED = process.env.E2E_EXTENDED === '1';
 const GITHUB = process.env.E2E_GITHUB === '1';
 const LOCAL = process.env.E2E_LOCAL === '1';
+const WEBHOOK = process.env.E2E_WEBHOOK === '1';
 const CALLBACK: 'hookdeck' | 'tunnel' = process.env.E2E_CALLBACK === 'tunnel' ? 'tunnel' : 'hookdeck';
 
 const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
@@ -158,6 +166,8 @@ async function main() {
   const provider = config.providers.find((p) => p.definition.type === 'resend')!;
   const github = config.providers.find((p) => p.definition.type === 'github');
   if (GITHUB && !github) throw new Error('E2E_GITHUB=1 needs GitHub enabled in bridge.config.ts (GITHUB_REPOS or GITHUB_WEBHOOK_SECRET)');
+  const fills = config.providers.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
+  if (WEBHOOK && !fills) throw new Error('E2E_WEBHOOK=1 needs the fills webhook enabled in bridge.config.ts (FILLS_WEBHOOK_SECRET), and setup run with it');
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const from = env('RESEND_TEST_FROM');
   const run = Date.now().toString(36);
@@ -215,6 +225,7 @@ async function main() {
   const plan: Array<{ name: string; eventName?: string; arguments?: Record<string, unknown>; respondWith?: (e: McpEvent) => number }> = [
     { name: 'main' },
     ...(GITHUB ? [{ name: 'github', eventName: 'github.push', arguments: { repository: githubRepo } }] : []),
+    ...(WEBHOOK ? [{ name: 'webhook', eventName: 'order.filled', arguments: { symbol: 'AAPL' } }] : []),
     ...(EXTENDED && !REMOTE ? [{ name: 'second' }] : []),
     ...(EXTENDED ? [{ name: 'gone', respondWith: () => 410 }, { name: 'failing', respondWith: () => 500 }] : []),
   ];
@@ -308,6 +319,7 @@ async function main() {
   }
 
   if (GITHUB) await githubPush({ hookdeck, subscriber: subs.get('github')!, repo: githubRepo, token: env('GITHUB_TOKEN'), sourceName: providerSourceName(github!.id), run });
+  if (WEBHOOK) await webhookFills({ hookdeck, subscriber: subs.get('webhook'), sourceName: providerSourceName(fills!.id), secret: env('FILLS_WEBHOOK_SECRET'), run });
 
   if (EXTENDED) {
     await extended({
@@ -514,6 +526,43 @@ async function githubPush(ctx: { hookdeck: HookdeckClient; subscriber: Subscribe
     3000,
   );
   record('Event Gateway verified the GitHub signature', (request as { verified?: boolean } | undefined)?.verified === true, `verified: ${String((request as { verified?: boolean } | undefined)?.verified)}`);
+}
+
+/**
+ * The generic webhook provider, with this script as the trading server: fills POSTed to the `fills` source, signed
+ * as bridge.config.ts declares (HMAC-SHA256 of the raw body, hex, in x-signature).
+ */
+async function webhookFills(ctx: { hookdeck: HookdeckClient; subscriber: Subscriber | undefined; sourceName: string; secret: string; run: string }) {
+  const source = (await ctx.hookdeck.listSources({ name: ctx.sourceName })).models[0];
+  record('generic webhook source exists', Boolean(source && ctx.subscriber), ctx.sourceName);
+  if (!source || !ctx.subscriber) return;
+  const send = async (deliveryId: string, symbol: string, secret: string) => {
+    const body = JSON.stringify({ id: deliveryId, symbol, side: 'buy', quantity: 100, price: 187.5, filled_at: new Date().toISOString() });
+    const signature = createHmac('sha256', secret).update(body).digest('hex');
+    const res = await fetch(source.url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-signature': signature, 'x-delivery-id': deliveryId }, body });
+    return res.status;
+  };
+  const good = `e2e-${ctx.run}-fill`;
+  const bad = `e2e-${ctx.run}-forged`;
+  const other = `e2e-${ctx.run}-other-symbol`;
+  const sentAt = Date.now();
+  const statuses = [await send(good, 'AAPL', ctx.secret), await send(bad, 'AAPL', 'not-the-secret'), await send(other, 'MSFT', ctx.secret)];
+  const event = await until(() => ctx.subscriber!.events.find((e) => e.eventId === good), 120_000);
+  record('signed fill delivered to the order.filled subscriber', Boolean(event), event ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
+  record('webhook-id equals the sender\'s x-delivery-id, and data is the body', event?.data.symbol === 'AAPL' && event.data.id === good, JSON.stringify(event?.data ?? null));
+  await wait(30_000);
+  const leaked = ctx.subscriber.events.filter((e) => e.eventId === bad || e.eventId === other).map((e) => e.eventId);
+  record('wrongly signed fill and other symbol not delivered', leaked.length === 0, leaked.length ? leaked.join(', ') : `sender got ${statuses.join(', ')}`);
+  const rejected = await until(
+    async () => (await ctx.hookdeck.listRequests({ source_id: source.id, headers: { 'x-delivery-id': bad }, limit: 1 })).models[0],
+    60_000,
+    3000,
+  );
+  record(
+    'Event Gateway rejected the wrongly signed fill',
+    rejected?.rejection_cause === 'VERIFICATION_FAILED' && statuses[1] === 401,
+    `HTTP ${statuses[1]}, ${rejected?.rejection_cause ?? 'request not found'}`,
+  );
 }
 
 async function extended(ctx: {
