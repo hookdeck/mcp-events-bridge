@@ -106,6 +106,9 @@ describe('providers add webhook: config edit', () => {
     expect((empty as { code: string }).code).toContain("  providers: [\n    webhook({\n      id: 'fills',");
     expect((empty as { code: string }).code).toContain("import { defineConfig, env } from '@hookdeck/mcp-events-bridge';");
     expect((empty as { code: string }).code).toContain("import { webhook } from '@hookdeck/mcp-events-bridge/providers';");
+    // An added import declaration goes straight after the others, with no blank line between them.
+    const skillStart = await insertProvider(`import { defineConfig } from '@hookdeck/mcp-events-bridge';\n\nexport default defineConfig({\n  providers: [],\n});\n`, 'fills', snippet);
+    expect((skillStart as { code: string }).code).toMatch(/^import \{ defineConfig, env \} from '@hookdeck\/mcp-events-bridge';\nimport \{ webhook \} from '@hookdeck\/mcp-events-bridge\/providers';\n\nexport default/);
 
     const oneLine = await insertProvider(`import { defineConfig, env } from '@hookdeck/mcp-events-bridge';\nimport { resend } from '@hookdeck/mcp-events-bridge/providers';\nexport default defineConfig({ deployment: 'dev', providers: [resend({ apiKey: env('K') })] });\n`, 'fills', snippet);
     expect(oneLine.status).toBe('inserted');
