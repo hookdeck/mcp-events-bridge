@@ -25,7 +25,7 @@
 - **`deployment` is optional.** It defaults to `BRIDGE_DEPLOYMENT`, then `local` with CLI inbound or `public` with HTTP inbound. A config that sets it, as 0.1.0's examples did, keeps its resource names.
 - **`setup` exits 1** when a webhook secret isn't set yet, after setting up everything else, and labels the MCP endpoint "MCP URL".
 - **Inbound bodies that aren't JSON** are answered `200` and ignored, so Event Gateway doesn't retry them.
-- **`BRIDGE_MCP_SECRET` must be URL-safe** (letters, digits, `-`, `_`, `.`, `~`): it's part of the MCP URL, so `setup` and `serve` refuse anything else. A generated secret always is.
+- **`BRIDGE_MCP_SECRET` must be URL-safe** (letters, digits, `-`, `_`, `.`, `~`): it's part of the MCP URL, so `setup` and `serve` refuse anything else. Secrets `setup` generates, in 0.1.0 too, always are.
 - **`setup` prints a generated `BRIDGE_MCP_SECRET=` line on its own,** ready to paste into `.env`; the Fly.io hint is only shown for HTTP inbound.
 
 ### Fixed
