@@ -236,6 +236,8 @@ In the Event Gateway dashboard, a running bridge looks like this:
 - **`bridge-out-<event>`** (the MCP event name, slugged: `bridge-out-resend_email_received`; the screenshot predates `{id}.{event}` naming) is the topic source the bridge publishes each MCP event to. Each subscription is one connection from it, `mcp-sub-<id>`, with filter, dedupe and retry rules, to a destination at the subscriber's callback.
 - **`bridge-hookdeck-notifications`** receives Event Gateway's issue notifications and forwards them to each deployment, so the bridge hears about failing callbacks and reports them to subscribers.
 
+Locally (CLI inbound), `setup` also logs the Hookdeck CLI in to the bridge's project in `.hookdeck/config.toml` (gitignore it: it holds a key), so `hookdeck` commands run in the bridge's directory use that project rather than your global login.
+
 ## Configuration
 
 ### The bridge
@@ -251,7 +253,7 @@ Every deployment needs these, whichever providers it uses.
 | `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
 | `BRIDGE_PORT` | No | Listener port (default: `PORT`, else 8080) |
 | `BRIDGE_DEPLOYMENT` | No | Names this bridge's Event Gateway resources, so bridges sharing a project stay apart: its inbound connections become `bridge-<provider>-<deployment>`. Default: `local` with `cli` inbound, `public` with `http` inbound (`deployment` in `bridge.config.ts` takes precedence) |
-| `BRIDGE_HOOKDECK_CLI_CONFIG` | No | Where `serve` writes the Hookdeck CLI's config for `hookdeck listen` (default `.hookdeck/config.toml`); the inbound recovery watermark is kept next to it |
+| `BRIDGE_HOOKDECK_CLI_CONFIG` | No | Where `setup` and `serve` log the Hookdeck CLI in to the bridge's project, for `hookdeck listen` and any `hookdeck` command run in that directory (default `.hookdeck/config.toml`); the inbound recovery watermark is kept next to it |
 
 `defineConfig` also takes `inbound`, `publicUrl`, `port` and `hookdeck` directly, and `subscriptions` for subscription lifetimes. Run `npx mcp-events-bridge` for the commands and flags.
 
