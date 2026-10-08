@@ -118,7 +118,7 @@ Done when: the mock agent, given only a tunnel URL, receives an email; adding a 
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
 - Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` (0.1.0 on 6 Oct, 0.2.0 on 8 Oct), compiled to `dist/`; the README, restructured around it; and the generic webhook provider, for any HTTP sender with HMAC, Standard Webhooks, Basic auth or API key verification, with `providers add webhook <id>` to create its source before the secret exists (see "Generic provider: webhooks" in `ARCHITECTURE.md`).
-- A release workflow: publish from GitHub Actions with npm trusted publishing (provenance), instead of by hand.
+- A release workflow (added 8 Oct): publishing a GitHub Release publishes to npm from GitHub Actions, with npm trusted publishing and provenance (`.github/workflows/release.yml`), and a `test` workflow on pull requests and `main`. Maintainers follow the `mcp-events-bridge-release` skill.
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.
 

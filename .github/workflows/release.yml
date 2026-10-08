@@ -1,0 +1,60 @@
+name: release
+
+# Publishes to npm when a GitHub Release is published. Create the release with
+# `gh release create` (see .claude/skills/mcp-events-bridge-release): it writes
+# the notes and creates the tag in one step. A tag pushed by hand publishes nothing.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing (OIDC) and provenance
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+      - run: npm install -g npm@latest
+
+      # The version comes from the release PR, not from the tag: fail before
+      # publishing if they differ, since npm never lets a version be reused.
+      - name: Check the tag matches package.json
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Release tag $TAG doesn't match package.json version $VERSION. Bump package.json in a release PR first."
+            exit 1
+          fi
+          NPM_TAG=latest
+          if [[ "$VERSION" == *-* ]]; then
+            NPM_TAG=$(echo "$VERSION" | cut -d'-' -f2 | cut -d'.' -f1)
+          elif [ "$PRERELEASE" = "true" ]; then
+            echo "::error::$TAG is marked pre-release but has no pre-release suffix (e.g. v0.3.0-beta.1)."
+            exit 1
+          fi
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing $VERSION with npm tag $NPM_TAG"
+
+      - run: npm ci
+      # prepublishOnly runs typecheck and tests; prepack builds dist/.
+      - run: npm publish --provenance --access public --tag ${{ steps.version.outputs.npm_tag }}

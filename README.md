@@ -349,6 +349,8 @@ npm run bridge -- setup   # the CLI from source; this repo's bridge.config.ts im
 
 Issues and pull requests are welcome. [`AGENTS.md`](AGENTS.md) has the project's conventions, for people and coding agents alike.
 
+Releases are published to npm by GitHub Actions when a maintainer creates a GitHub Release, following the [release skill](.claude/skills/mcp-events-bridge-release/SKILL.md).
+
 ## License
 
 [MIT](LICENSE)
