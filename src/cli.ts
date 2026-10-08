@@ -11,7 +11,7 @@ import { ensureSource, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGA
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
-import { insertProvider, missingEnvLines, referencedEnv, webhookSnippet, writeAtomically } from './host/providers-add.js';
+import { EMPTY_CONFIG, insertProvider, missingEnvLines, referencedEnv, webhookSnippet, writeAtomically } from './host/providers-add.js';
 import { createBridgeServer } from './host/server.js';
 
 /*
@@ -53,7 +53,7 @@ Options:
   --filter <field>           top-level body field subscribers can filter on, repeatable
   --field <field>            pass only these top-level body fields, repeatable (default: the whole body)
   --env-file <file>          where to add the variables (default .env)
-  --write-config             add the entry to bridge.config.ts (default: print it to paste)
+  --write-config             add the entry to bridge.config.ts, creating it if needed (default: print it to paste)
   --config <file>            the config file (default bridge.config.ts)`;
 
 async function setup(configFile: string | undefined) {
@@ -86,7 +86,7 @@ async function setup(configFile: string | undefined) {
   if (report.mcp.generated) {
     const where = config.inbound === 'http' ? 'as a secret where the bridge runs (on Fly.io: fly secrets set)' : 'in .env';
     console.log(`\nGenerated an MCP secret. Set this line ${where} before running serve, and keep it private (the URL is a credential):`);
-    console.log(`  BRIDGE_MCP_SECRET=${report.mcp.secret}`);
+    console.log(`BRIDGE_MCP_SECRET=${report.mcp.secret}`);
   }
   console.log(`\nMCP URL:\n  ${report.mcp.url}`);
 
@@ -279,14 +279,16 @@ async function providers(argv: string[]) {
   };
   if (fromConfig) console.log(`\n${configFile ? path.basename(configFile) : 'The config'} already has the "${id}" entry.`);
   else if (!values['write-config']) printSnippet('Next:');
-  else if (!configFile) printSnippet('No config file found.');
   else {
-    const result = await insertProvider(fs.readFileSync(configFile, 'utf8'), id, snippet);
+    // No config file yet: start one, so a first webhook needs no hand-written file.
+    const target = configFile ?? path.resolve(CONFIG_FILES[0]!);
+    const exists = fs.existsSync(target);
+    const result = await insertProvider(exists ? fs.readFileSync(target, 'utf8') : EMPTY_CONFIG, id, snippet);
     if (result.status === 'inserted') {
-      writeAtomically(configFile, result.code);
-      console.log(`\nAdded the "${id}" entry to ${path.basename(configFile)}.`);
-    } else if (result.status === 'exists') console.log(`\n${path.basename(configFile)} already has the "${id}" entry.`);
-    else printSnippet(`Didn't edit ${path.basename(configFile)}: ${result.reason}.`);
+      writeAtomically(target, result.code);
+      console.log(`\n${exists ? 'Added' : `Created ${path.basename(target)} with`} the "${id}" entry${exists ? ` to ${path.basename(target)}` : ''}.`);
+    } else if (result.status === 'exists') console.log(`\n${path.basename(target)} already has the "${id}" entry.`);
+    else printSnippet(`Didn't edit ${path.basename(target)}: ${result.reason}.`);
   }
 
   console.log(

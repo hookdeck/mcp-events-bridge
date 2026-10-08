@@ -74,7 +74,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 - **Resend, GitHub:** add `resend({...})` or `github({...})` to `providers` (README "Webhook providers" has every option), add the variables to `.env`, run `setup` again. `setup` registers the provider's webhook itself.
 - **Any other sender (generic webhook), registered by hand:**
   1. `npx mcp-events-bridge providers add webhook <id> --event <sender's event name> [--event-id-header x-delivery-id] [--filter symbol]` (HMAC-SHA256, hex, in `x-signature` is the default; `providers add webhook --help` lists options: verification type, event type and id location, filters). It prints the source URL, adds `<ID>_WEBHOOK_SECRET=` to `.env`, and prints a `webhook({...})` entry.
-  2. Paste the entry into `providers` in `bridge.config.ts` (or rerun with `--write-config`; it refuses configs it can't edit safely and prints the entry instead).
+  2. Paste the entry into `providers` in `bridge.config.ts` (or rerun with `--write-config`; it creates `bridge.config.ts` if there isn't one, and refuses configs it can't edit safely and prints the entry instead).
   3. Register the printed URL with the sender. Put the secret it gives you (or one you generate, e.g. `openssl rand -hex 32`, for a server the user runs) in `.env`. For HMAC, the key is that string exactly as in `.env`, not hex- or base64-decoded.
   4. Run `setup` (exit 0 now; a new secret can take about a minute to take effect), then restart `serve`.
 

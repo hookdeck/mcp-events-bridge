@@ -582,7 +582,7 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 - `BRIDGE_INBOUND`: `http` (deployed; the default when `FLY_APP_NAME` is set) or `cli` (development; inbound through `hookdeck listen`).
 - `BRIDGE_PUBLIC_URL`: for `http` inbound, an optional override for the base URL Event Gateway delivers to. Unset, it comes from `FLY_APP_NAME` (`https://<app>.fly.dev`). `bridge setup` fails if `http` inbound has no `https` URL.
 - `BRIDGE_PORT`.
-- `BRIDGE_DEPLOYMENT`: names this bridge's inbound connections, notifications connection, issue triggers and CLI devices, so bridges sharing a project stay apart. Default: `local` with `cli` inbound, `public` with `http` inbound; `deployment` in `bridge.config.ts` takes precedence.
+- `BRIDGE_DEPLOYMENT`: names this bridge's inbound connections, notifications connection, issue triggers and CLI devices. It doesn't keep bridges sharing a project apart: they share the provider sources, the subscriptions and the tunnel URLs (a bridge runs `listen` for every agent in the project), and each bridge's issue triggers report every connection's issues, so one project per bridge ([#13](https://github.com/hookdeck/mcp-events-bridge/issues/13)). Default: `local` with `cli` inbound, `public` with `http` inbound; `deployment` in `bridge.config.ts` takes precedence.
 - `BRIDGE_MCP_SECRET`: the secret path segment of the MCP URL (see "Authentication").
 - Provider credentials, under whatever names the config references, for example `RESEND_API_KEY`.
 - Optional, stage 7: `CONTROL_PLANE_API_KEY` and `OPENAI_TUNNEL_ID`, for `tunnel-client` (Secure MCP Tunnel).
