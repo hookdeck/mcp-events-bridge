@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 (2026-10-08)
 
 ### Fixed
 
 - **`setup` prints the generated `BRIDGE_MCP_SECRET=` line unindented,** so copying it as printed doesn't add spaces to `.env`.
 - **`providers add webhook --write-config` creates `bridge.config.ts`** when there isn't one, instead of printing the entry.
 - **Docs:** `BRIDGE_DEPLOYMENT` doesn't keep bridges sharing a Hookdeck project apart (they share provider sources, subscriptions and tunnel URLs): give each bridge its own project ([#13](https://github.com/hookdeck/mcp-events-bridge/issues/13)). The tunnel URL reference shows the headers a hand-written MCP client sends.
+
+### Changed
+
+- **Published from GitHub Actions** with [npm provenance](https://docs.npmjs.com/generating-provenance-statements), when a GitHub Release is created.
 
 ## 0.2.0 (2026-10-08)
 
