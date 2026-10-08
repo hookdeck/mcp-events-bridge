@@ -39,7 +39,7 @@ export class EventHistory {
       'x-hookdeck-requestid': request.id,
       'x-hookdeck-verified': String(request.verified === true),
     };
-    const req = { headers, body: request.data.body };
+    const req = { headers, body: request.data.body, receivedAt: request.created_at };
     const entry = this.deps.catalog.forProvider(providerId).find((e) => e.event.matches(req));
     if (!entry) return undefined;
     try {

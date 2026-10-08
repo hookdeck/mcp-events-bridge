@@ -57,6 +57,8 @@ export interface BridgeServerOptions {
    * for them (see host/local-runtime.ts). Default: on with CLI inbound, off with HTTP inbound.
    */
   localAgents?: boolean;
+  /** Reported as the MCP server's version (`serverInfo.version`). */
+  version?: string;
   log?: (message: string) => void;
 }
 
@@ -128,7 +130,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(
     createMcpHandler((ctx) =>
-      buildMcpServer({ subscriptions, catalog, history, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId }),
+      buildMcpServer({ subscriptions, catalog, history, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
     ),
   );
 

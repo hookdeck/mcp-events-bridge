@@ -156,6 +156,8 @@ export async function insertProvider(source: string, id: string, snippet: string
   if (!have.has('webhook')) edited.imports.$append({ from: providersModule, imported: 'webhook' });
   if (!have.has('env')) edited.imports.$append({ from: main, imported: 'env' });
   code = generateCode(edited).code;
+  // magicast puts a blank line before an import declaration it adds; keep the imports together, as they were.
+  for (const line of code.split('\n').filter((l) => l.startsWith('import ') && !source.includes(l))) code = code.replace(`\n\n${line}`, `\n${line}`);
   if (source.endsWith('\n') && !code.endsWith('\n')) code += '\n';
 
   // 3. Check the result before anything is written.

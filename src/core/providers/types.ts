@@ -10,6 +10,8 @@ export interface InboundRequest {
   headers: Record<string, string>;
   /** The parsed JSON body. */
   body: unknown;
+  /** When Event Gateway received the request (ISO 8601). Set for requests read back from Event Gateway; unset for a delivery in progress. */
+  receivedAt?: string;
 }
 
 export type JsonSchema = Record<string, unknown>;

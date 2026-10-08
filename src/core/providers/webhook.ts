@@ -166,7 +166,7 @@ function buildDefinition(o: ParsedOptions, envNames: Record<string, string>): Pr
     .strict();
   const payloadSchema = {
     type: 'object',
-    description: `The webhook's ${fieldList}.`,
+    description: `Data is ${fieldList}.`,
     ...(o.fields?.length && { properties: Object.fromEntries(o.fields.map((f) => [f, {}])) }),
   };
 
@@ -194,7 +194,7 @@ function buildDefinition(o: ParsedOptions, envNames: Record<string, string>): Pr
         }
         return String(id);
       },
-      occurredAt: (req) => (o.occurredAt && toIso(readPath(req.body, o.occurredAt.field))) || new Date().toISOString(),
+      occurredAt: (req) => (o.occurredAt && toIso(readPath(req.body, o.occurredAt.field))) || req.receivedAt || new Date().toISOString(),
       summarize,
       inputSchema: z.toJSONSchema(argumentsSchema) as Record<string, unknown>,
       parseArguments: (args) => {

@@ -51,6 +51,20 @@ describe('EventHistory.recent', () => {
     expect(searched).toEqual(['src_bridge-broker_a']);
     expect(await history.recent({ name: 'nope.order.filled' })).toEqual([]);
   });
+
+  it('times an event without occurredAt by when Event Gateway received it, not when it was read back', async () => {
+    const config = resolveConfig(defineConfig({ providers: [broker('broker_a')] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+    const hookdeck = {
+      listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }),
+      listRequests: async () => ({
+        models: [{ id: 'req_1', created_at: '2026-10-08T10:32:08.100Z', verified: true, rejection_cause: null, data: { headers: { 'x-delivery-id': '1' }, body: { symbol: 'AAPL' } } }],
+      }),
+    } as unknown as HookdeckClient;
+    const history = new EventHistory({ hookdeck, catalog: new Catalog(config.providers), providers: config.providers });
+
+    expect((await history.recent({ name: 'broker_a.order.filled' }))[0]?.timestamp).toBe('2026-10-08T10:32:08.100Z');
+    expect((await history.get('broker_a.order.filled', '1'))?.timestamp).toBe('2026-10-08T10:32:08.100Z');
+  });
 });
 
 describe('EventHistory.lookup', () => {
