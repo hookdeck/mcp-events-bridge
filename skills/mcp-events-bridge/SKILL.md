@@ -56,7 +56,7 @@ Write `.env` with `HOOKDECK_API_KEY`, `HOOKDECK_SIGNING_SECRET` and the provider
 npx mcp-events-bridge setup
 ```
 
-- **Success:** a line per provider (`provider resend: source https://hkdk.events/..., connection bridge-resend-local, webhook registered`; on a re-run, `updated` or `existing`), then `MCP URL:`. Exit code 0.
+- **Success:** a line per provider (`provider resend: source https://hkdk.events/..., connection bridge-resend-local, webhook registered`; on a re-run, `updated` or `existing`), then `MCP URL:`. Exit code 0. With a local bridge it also logs the Hookdeck CLI in to the bridge's project in `.hookdeck/config.toml`, so `hookdeck` commands run in this directory use that project.
 - **First run:** it generates an MCP secret and prints a `BRIDGE_MCP_SECRET=...` line. Add that line to `.env` as printed. `setup` prints the full MCP URL, secret included, on every run: don't repeat it in your replies or write it anywhere but `.env`.
 - **Exit code 1 with "Setup isn't complete":** a webhook secret is missing (step 3, generic webhooks). Everything else was set up.
 

@@ -74,6 +74,14 @@ async function setup(configFile: string | undefined) {
     const waiting = new Set(report.providers.filter((p) => p.waitingFor?.length).map((p) => p.id));
     const ready = { ...config, providers: config.providers.filter((p) => !waiting.has(p.id)) };
     console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(ready, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
+    // Log the CLI in now rather than at the first `serve`, so `hookdeck` commands run here use the bridge's project from the start.
+    const cliConfigPath = process.env.BRIDGE_HOOKDECK_CLI_CONFIG ?? DEFAULT_CLI_CONFIG;
+    try {
+      loginCli(config.hookdeck.apiKey, cliConfigPath);
+      console.log(`  logged in to this project in ${cliConfigPath}: \`hookdeck\` commands run in this directory use it`);
+    } catch (error) {
+      console.warn(`  ${error instanceof CliListenError ? error.message : error}`);
+    }
   }
   if (report.mcp.generated) {
     const where = config.inbound === 'http' ? 'as a secret where the bridge runs (on Fly.io: fly secrets set)' : 'in .env';
