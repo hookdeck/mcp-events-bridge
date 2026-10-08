@@ -6,7 +6,7 @@ This is the design. The staged plan and its status are in [`PLAN.md`](PLAN.md), 
 
 ## What it does
 
-The bridge lets an agent subscribe to things that happen in apps whose vendors haven't shipped MCP Events. It turns a provider's ordinary webhooks into MCP Events.
+The bridge turns a service's ordinary webhooks into MCP Events, for services whose MCP servers don't implement MCP Events yet. In the bridge, each service is a provider.
 
 - **Hookdeck Event Gateway** receives and verifies the provider's webhooks, and delivers every MCP Event to every subscriber with retries and a record of each attempt.
 - **The bridge** is the MCP side: the event catalog, subscriptions, the challenge, and turning a provider webhook into signed MCP Events.
@@ -696,7 +696,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **Resource names and descriptions:** connection, source and destination names must match `^[A-Za-z0-9_-]+$` (no dots); descriptions are at most 500 characters. The mock destination type is `MOCK_API`. A connection listing includes each destination's `config.url` and `description`.
 
-**ChatGPT** (stage 5, 6 Oct): with the app created as "No Authentication" and the secret MCP URL, a Work chat request ("I'd like to know about all inbound emails") subscribed to `email.received` with `arguments: {}`, no `ttlMs`, and `cursor: null`. The callback was `https://connectors.api.openai.com/webhook/mcp-events/<id>`, and it answered the challenge. A Resend email was delivered with `200` on the first attempt, and the task showed the sender, recipient and subject.
+**ChatGPT** (stage 5, 6 Oct): with the plugin created as "No Authentication" and the secret MCP URL, a Work chat request ("I'd like to know about all inbound emails") subscribed to `email.received` with `arguments: {}`, no `ttlMs`, and `cursor: null`. The callback was `https://connectors.api.openai.com/webhook/mcp-events/<id>`, and it answered the challenge. A Resend email was delivered with `200` on the first attempt, and the task showed the sender, recipient and subject.
 
 **MCP Events source type** (6 Oct, probed in production): a `MCP_EVENTS` source takes `config.auth.webhook_secret_key` (a `whsec_` secret). The bridge's challenge, signed with that secret, was answered on the first try straight after the source was created, so no wait for the secret to reach the edge; a challenge signed with another secret got a 4xx, and (from the request counts) was recorded as a request rejected as `VERIFICATION_FAILED`. A passing challenge creates no request. Deliveries get HTTP 200 whether or not the signature matches; matching ones are `verified: true`, others are rejected as `VERIFICATION_FAILED`. On 7 Oct: changing an existing source's secret took **61 seconds** to reach the edge (the old secret kept working until then; a new source's works at once). A challenge or delivery signed with two `v1,` entries, one of them the source's secret, is accepted in either order; signed with the other secret only, it's rejected (401 for the challenge).
 
@@ -847,15 +847,15 @@ Searched on 5 Oct 2026. No open-source project turned up that turns third-party 
 | [Smithery triggers](https://smithery.ai/docs/build/triggers) (preview) | A vendor-prefixed MCP Events profile (`ai.smithery/events/*`). Smithery passes subscribe through to the MCP server, which registers the upstream webhook and delivers signed events straight to the consumer | Closest on protocol. Leaves provider ingestion, signing and retries to each server author, which is what the bridge does. Complementary: the bridge could act as a Smithery trigger server |
 | [Composio triggers](https://docs.composio.dev/docs/using-triggers) | Hosted. Provider webhooks (or polling) per connected account, fanned out to trigger instances and delivered to a subscriber URL with a rotatable secret | Closest on function, with its own envelope rather than MCP Events. Its trigger instance per connected account is the bridge's provider instance |
 | [Pipedream Connect triggers](https://pipedream.com/docs/connect/components/triggers) | Hosted. Deploy a trigger with a `webhook_url` and get a signing key; or pull recent events from an API | Same shape as subscribe-with-callback plus `list_events`. Not MCP Events |
-| Zapier SDK triggers ([docs](https://docs.zapier.com/sdk/index.md)) | Experimental: subscribe to app events in code, with Zapier holding subscription state and webhook reliability | Same idea, closed, not MCP Events |
-| [mcp-webhook-events](https://pypi.org/project/mcp-webhook-events/0.2.0/) | Python library for an MCP server to emit MCP Events about its own app | First-party emitting; the bridge is the third-party case |
+| Zapier SDK triggers ([docs](https://docs.zapier.com/sdk/index.md)) | Experimental: subscribe to events from services in code, with Zapier holding subscription state and webhook reliability | Same idea, closed, not MCP Events |
+| [mcp-webhook-events](https://pypi.org/project/mcp-webhook-events/0.2.0/) | Python library for an MCP server to emit MCP Events about its own service | First-party emitting; the bridge is the third-party case |
 | [Hook0 MCP](https://www.hook0.com/webhooks-for-ai-agents) | MCP tools to manage the webhooks you send | Outbound management, a different direction |
 | Webhook MCP servers ([Svix tutorial](https://www.svix.com/resources/tutorials/webhook-mcp-server/), [stripe-webhook-mcp](https://github.com/3598644/stripe-webhook-mcp)) | Capture webhooks and expose them as pull tools | Like the bridge's pull tools only; no subscriptions |
 | MCP gateways ([Microsoft mcp-gateway](https://github.com/microsoft/mcp-gateway), [agentgateway](https://github.com/agentgateway/agentgateway), [rShetty/relay](https://github.com/rShetty/relay)) | Proxies and routing for MCP tool calls | Not events. They make "gateway" and "relay" crowded names |
 
 What the hosted trigger platforms have that the bridge doesn't: years of per-provider trigger catalogs, polling for providers without webhooks (a possible answer to gap 1 in "Adding a provider"), and per-user connected accounts through OAuth.
 
-Naming: the product is a bridge (two protocols, plus the control plane); the relay is one component of it, and a transitional one. "Triggers" is the market's word for an agent subscribing to app events and suits user-facing copy.
+Naming: the product is a bridge (two protocols, plus the control plane); the relay is one component of it, and a transitional one. "Triggers" is the market's word for an agent subscribing to events from services and suits user-facing copy.
 
 ## References
 
