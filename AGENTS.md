@@ -27,6 +27,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 ## Ground rules
 
 - **Work on a branch** and commit in small steps.
+- **Use [Conventional Commits](https://www.conventionalcommits.org/)** for commit messages and pull request titles: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, with an optional scope (`feat(webhook): ...`). Mark a breaking change with `!` (`feat!: ...`) and a `BREAKING CHANGE:` footer.
 - **Events only.** Don't add tools that wrap provider APIs (sending email, reading email bodies). Vendors' own MCP servers do that.
 - **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-`, `agent-` (the bridge's callback URLs for local agents) or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
 - **Provider resources:** the same for Resend webhooks. Delete spike webhooks when the spike is done.
@@ -34,6 +35,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 - **Public repo.** Never put Hookdeck-internal details (private repo paths, internal PR numbers, security findings) in tracked files. They belong in `internal/`, which is gitignored.
 - **Local endpoints:** reach them through the Hookdeck CLI (`hookdeck listen`). Use an Event Gateway MCP Events source (`MCP_EVENTS`) for a subscriber's callback; it answers the challenge. Use a cloudflared quick tunnel only when the caller needs the local response synchronously (for example a receiver whose status code Event Gateway acts on).
 - **Docs and comments:** American English, no em dashes. Check Mermaid diagrams render before committing.
+- **Terminology:** don't write "app" or "apps". MCP Events is implemented by an **MCP server**; the product that sends webhooks is a **service** (Resend, GitHub), which the bridge models as a provider; what a user adds in ChatGPT is a **plugin**. Names keep their own wording: quote ChatGPT UI labels exactly, even when they say "App", and keep product names and hostnames such as GitHub App and `resend.app`. Avoid vague placeholders such as "things" or "behind an MCP server": name the event, server, or service.
 - **Keep the docs true.** If what you learn contradicts `docs/ARCHITECTURE.md`, update it and say so in `docs/SPIKES.md` or your summary. Tick off open questions the work answers, and add new ones.
 - **Keep the skill and changelog in step.** A change users or agents see (a command, a log line, a tool's arguments, an event name) also updates `skills/mcp-events-bridge/` (the procedure and its references quote commands and log lines) and `CHANGELOG.md`. Update the status table in `docs/PLAN.md` when a stage starts or finishes.
 
