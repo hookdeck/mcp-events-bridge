@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Not yet: the Claude Code channel, OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Poll and push modes are later, only if a client needs them.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Not yet: poll mode and a Claude Code plugin ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), next), OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Push mode is later, only if a client needs it.
 
 ## What the maintainer sets up first
 
@@ -39,6 +39,10 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 - **Keep the docs true.** If what you learn contradicts `docs/ARCHITECTURE.md`, update it and say so in `docs/SPIKES.md` or your summary. Tick off open questions the work answers, and add new ones.
 - **Keep the skill and changelog in step.** A change users or agents see (a command, a log line, a tool's arguments, an event name) also updates `skills/mcp-events-bridge/` (the procedure and its references quote commands and log lines) and `CHANGELOG.md`. Update the status table in `docs/PLAN.md` when a stage starts or finishes.
 
+## Releasing
+
+Follow the [`mcp-events-bridge-release`](.claude/skills/mcp-events-bridge-release/SKILL.md) skill, with the maintainer approving at each gate. A release is published by creating a GitHub Release (`gh release create`), which runs `.github/workflows/release.yml` to publish to npm. Never push a `v*` tag or run `npm publish` by hand.
+
 ## Spike stages
 
 Record each spike stage in `docs/SPIKES.md`, under a heading matching its name in `docs/PLAN.md`: what you ran, what you saw, and what it means for the design. Raw captures go in `spikes/raw/` (gitignored); commit only redacted fixtures, under `test/fixtures/`.
@@ -46,6 +50,7 @@ Record each spike stage in `docs/SPIKES.md`, under a heading matching its name i
 ## Ask the maintainer first
 
 - Creating a GitHub repo or pushing anywhere.
+- Creating a GitHub Release (it publishes to npm).
 - Anything that needs the ChatGPT or OpenAI Platform UI.
 - Sending email from a real mailbox (sending through Resend's API to the test address is fine).
 - Changing the public interface: MCP tools, manifest shape, event envelope.
