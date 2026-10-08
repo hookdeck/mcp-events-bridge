@@ -173,6 +173,14 @@ export async function insertProvider(source: string, id: string, snippet: string
   return { status: 'inserted', code };
 }
 
+/** A config with no providers, which `providers add webhook --write-config` starts from when there's no config file. */
+export const EMPTY_CONFIG = `import { defineConfig } from '@hookdeck/mcp-events-bridge';
+
+export default defineConfig({
+  providers: [],
+});
+`;
+
 /** Writes a file through a temporary file and a rename, so it's never left half-written. */
 export function writeAtomically(file: string, content: string) {
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
