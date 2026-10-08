@@ -22,7 +22,8 @@ export class EventHistory {
     private readonly deps: { hookdeck: HookdeckClient; catalog: Catalog; providers: ResolvedProvider[] },
   ) {}
 
-  private async sourceId(providerId: string): Promise<string | undefined> {
+  /** The provider instance's Event Gateway source id (`bridge-<id>`), looked up once. */
+  async sourceIdFor(providerId: string): Promise<string | undefined> {
     if (!this.sourceIds.has(providerId)) {
       const source = (await this.deps.hookdeck.listSources({ name: providerSourceName(providerId) })).models[0];
       if (source) this.sourceIds.set(providerId, source.id);
@@ -31,7 +32,7 @@ export class EventHistory {
   }
 
   /** Maps a stored request to its MCP event, or undefined if it isn't a verified, enabled event. */
-  private toEvent(providerId: string, request: HookdeckRequest): PastEvent | undefined {
+  toEvent(providerId: string, request: HookdeckRequest): PastEvent | undefined {
     if (!request.verified || request.rejection_cause || !request.data) return undefined;
     const headers: Record<string, string> = {
       ...Object.fromEntries(Object.entries(request.data.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)])),
@@ -68,7 +69,7 @@ export class EventHistory {
     const entry = this.deps.catalog.get(name);
     const provider = entry && this.deps.providers.find((p) => p.id === entry.providerId);
     const header = provider?.definition.eventIdHeader;
-    const sourceId = provider && (await this.sourceId(provider.id));
+    const sourceId = provider && (await this.sourceIdFor(provider.id));
     if (!provider || !header || !sourceId) return undefined;
     const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, headers: { [header]: eventId }, includeData: true, limit: 5 });
     for (const request of page.models) {
@@ -84,7 +85,7 @@ export class EventHistory {
     const instance = name === undefined ? undefined : this.deps.catalog.get(name)?.providerId;
     if (name !== undefined && !instance) return events;
     for (const provider of this.deps.providers.filter((p) => instance === undefined || p.id === instance)) {
-      const sourceId = await this.sourceId(provider.id);
+      const sourceId = await this.sourceIdFor(provider.id);
       if (!sourceId) continue;
       const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, created_at_gte: since, includeData: true, limit: Math.min(limit * 2, 100) });
       for (const request of page.models) {

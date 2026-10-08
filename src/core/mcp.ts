@@ -3,18 +3,24 @@ import * as z from 'zod';
 import { CallbackInputError, DEFAULT_AGENT_PORT, DEFAULT_CALLBACK_PATH, type CallbackRecord, type CallbackRegistry } from './callbacks.js';
 import type { Catalog } from './catalog.js';
 import type { EventHistory } from './event-history.js';
+import { MAX_EVENTS, type PollService } from './poll.js';
 import type { SubscriptionService } from './subscriptions.js';
 
 /**
  * Builds the MCP server for one request (the 2026-07-28 revision is stateless,
  * so the SDK asks for a fresh instance per request). The SDK has no MCP Events
- * support, so the `events` capability and the three `events/*` methods are
- * registered by hand, as in mcp-events-outpost-demo.
+ * support, so the capability and the `events/*` methods are registered by
+ * hand, as in mcp-events-outpost-demo.
  */
+
+const WAIT_DEFAULT_MS = 45_000;
+const WAIT_MAX_MS = 50_000;
 export function buildMcpServer(deps: {
   subscriptions: SubscriptionService;
   catalog: Catalog;
   history: EventHistory;
+  /** Poll mode: `events/poll` and the poll_events and wait_for_event tools. */
+  poll?: PollService;
   providers: () => Array<Record<string, unknown>>;
   /** Set when the bridge runs `hookdeck listen` for local agents: adds the tunnel URL tools. */
   callbacks?: CallbackRegistry;
@@ -22,8 +28,9 @@ export function buildMcpServer(deps: {
   version?: string;
 }): McpServer {
   const { subscriptions, catalog, history, principal } = deps;
-  // `events` is not in the SDK's ServerCapabilities type yet, hence the cast.
-  const capabilities = { events: {} } as ServerCapabilities;
+  // Neither is in the SDK's ServerCapabilities type yet, hence the cast. `events` is what ChatGPT and pi-mcp-events
+  // read; SEP-3415 moves it under `extensions`.
+  const capabilities = { events: {}, extensions: { 'io.modelcontextprotocol/events': {} } } as unknown as ServerCapabilities;
   const server = new McpServer({ name: 'mcp-events-bridge', version: deps.version ?? '0.0.0' }, { capabilities });
 
   const json = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> });
@@ -71,6 +78,65 @@ export function buildMcpServer(deps: {
     async () => json({ providers: deps.providers() }),
   );
 
+  const poll = deps.poll;
+  if (poll) {
+    const pollInput = {
+      name: z.string().describe('The event name, from events/list, such as fills.order.filled'),
+      arguments: z.record(z.string(), z.unknown()).optional().describe("Filters, as the event's inputSchema in events/list describes, e.g. { \"symbol\": \"AAPL\" }"),
+      cursor: z.string().nullable().optional().describe('The cursor from your last call. Omit (or null) to start from now: the first call returns no events, only a cursor.'),
+    };
+    // A ProtocolError (unknown name, bad arguments or cursor) becomes a tool error the model can read.
+    const asTool = async (run: () => Promise<unknown>) => {
+      try {
+        return json(await run());
+      } catch (caught) {
+        return error((caught as Error).message);
+      }
+    };
+
+    server.registerTool(
+      'poll_events',
+      {
+        description:
+          'Get events that happened since your cursor, for clients that can\'t subscribe with MCP Events (events/subscribe). Same as events/poll. ' +
+          'Call it first without a cursor to start from now, then call it again with the cursor it returned: at once when hasMore is true, otherwise after nextPollMs. ' +
+          'Events can repeat: dedupe by eventId. truncated: true means some events were skipped (maxAgeMs, or older than Event Gateway keeps). ' +
+          'To wait for the next event in one call instead, use wait_for_event. For past events, use list_events.',
+        inputSchema: z.object({
+          ...pollInput,
+          maxAgeMs: z.number().int().min(0).optional().describe('With a cursor, skip events older than this many milliseconds.'),
+          maxEvents: z.number().int().min(1).optional().describe(`At most this many events (default 50, at most ${MAX_EVENTS}).`),
+        }),
+      },
+      async (args) => asTool(() => poll.poll(args)),
+    );
+
+    server.registerTool(
+      'wait_for_event',
+      {
+        description:
+          `Wait for the next events after your cursor, returning as soon as there are some, or with none after timeoutMs (default ${WAIT_DEFAULT_MS / 1000} s, at most ${WAIT_MAX_MS / 1000} s). ` +
+          'Without a cursor, waits for events from now on. Call it again with the cursor it returns to keep waiting; dedupe by eventId. ' +
+          'Uses the same cursor as poll_events and events/poll.',
+        inputSchema: z.object({
+          ...pollInput,
+          timeoutMs: z.number().int().min(1000).max(WAIT_MAX_MS).optional().describe(`How long to wait, in milliseconds (default ${WAIT_DEFAULT_MS}).`),
+        }),
+      },
+      async ({ timeoutMs, ...args }, ctx) =>
+        asTool(() => {
+          const progressToken = ctx.mcpReq._meta?.progressToken;
+          const timeout = timeoutMs ?? WAIT_DEFAULT_MS;
+          return poll.wait(args, {
+            timeoutMs: timeout,
+            signal: ctx.mcpReq.signal,
+            // Progress keeps the client's idle timer from firing while the bridge waits.
+            onProgress: progressToken === undefined ? undefined : (elapsed) => void ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: elapsed, total: timeout, message: 'waiting for events' } }).catch(() => {}),
+          });
+        }),
+    );
+  }
+
   const callbacks = deps.callbacks;
   if (callbacks) {
     const agent = z.string().describe('Your agent or machine name (letters, digits, _), e.g. "laptop". Names the shared Event Gateway destination.');
@@ -114,6 +180,7 @@ export function buildMcpServer(deps: {
   server.server.setRequestHandler('events/subscribe', { params: anyParams }, async (params) => ({
     ...(await subscriptions.subscribe(principal, params)),
   }));
+  if (poll) server.server.setRequestHandler('events/poll', { params: anyParams }, async (params) => ({ ...(await poll.poll(params)) }));
   server.server.setRequestHandler('events/unsubscribe', { params: anyParams }, async (params) => subscriptions.unsubscribe(principal, params));
 
   return server;

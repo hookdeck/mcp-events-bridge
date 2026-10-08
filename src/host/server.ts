@@ -9,6 +9,7 @@ import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
 import { HookdeckClient } from '../core/hookdeck.js';
 import { buildMcpServer } from '../core/mcp.js';
+import { PollService, type PollServiceDeps } from '../core/poll.js';
 import { Relay } from '../core/relay.js';
 import type { SubscriptionStore } from '../core/store.js';
 import { SubscriptionService, type SubscriptionServiceDeps } from '../core/subscriptions.js';
@@ -51,6 +52,8 @@ export interface BridgeServerOptions {
   hookdeck?: HookdeckClient;
   store?: SubscriptionStore;
   subscriptionOverrides?: Partial<Pick<SubscriptionServiceDeps, 'verify' | 'transport' | 'now'>>;
+  /** Poll mode overrides, for tests (a shorter look-back, a clock). */
+  pollOverrides?: Partial<Pick<PollServiceDeps, 'lookbackMs' | 'now' | 'retentionMs'>>;
   callbackSettings?: Partial<CallbackSettings>;
   /**
    * Offer the tunnel URL tools for local agents. Only a bridge on the agent's machine can run `hookdeck listen`
@@ -120,6 +123,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     log,
   });
   const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
+  const poll = new PollService({ hookdeck, catalog, history, ...options.pollOverrides });
   const providers = () =>
     config.providers.map((p) => {
       // MCP names, as in events/list and events/subscribe.
@@ -130,7 +134,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(
     createMcpHandler((ctx) =>
-      buildMcpServer({ subscriptions, catalog, history, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
+      buildMcpServer({ subscriptions, catalog, history, poll, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
     ),
   );
 

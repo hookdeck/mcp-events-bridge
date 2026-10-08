@@ -45,7 +45,7 @@ export class Catalog {
     return [...this.byName.values()].map(({ name, event }) => ({
       name,
       description: event.description,
-      delivery: ['webhook'],
+      delivery: ['webhook', 'poll'],
       inputSchema: event.inputSchema,
       payloadSchema: event.payloadSchema,
     }));

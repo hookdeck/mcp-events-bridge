@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import * as z from 'zod';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
 import { MemoryStore } from '../../src/core/memory-store.js';
@@ -34,7 +35,7 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((r) => r.close()));
 });
 
-async function startBridge({ inbound = 'cli' as 'cli' | 'http', store }: { inbound?: 'cli' | 'http'; store?: MemoryStore } = {}) {
+async function startBridge({ inbound = 'cli' as 'cli' | 'http', store, pollNow }: { inbound?: 'cli' | 'http'; store?: MemoryStore; pollNow?: () => number } = {}) {
   const gateway = new FakeEventGateway();
   const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', providers: [resend({ apiKey: 'x' })] }), {
     HOOKDECK_API_KEY: 'k',
@@ -49,6 +50,7 @@ async function startBridge({ inbound = 'cli' as 'cli' | 'http', store }: { inbou
     subscriptionOverrides: { verify: async () => ({ ok: true }), transport: createNodeCallbackTransport({ allowNonPublic: true }) },
     log: (m) => logs.push(m),
     version: '9.9.9',
+    ...(pollNow && { pollOverrides: { now: pollNow } }),
   });
   const { port } = await bridge.listen();
   running.push(bridge);
@@ -215,5 +217,56 @@ describe('bridge server', () => {
     await subscriber.stop({ unsubscribe: true });
     expect(gateway.connections.size).toBe(0);
     expect(gateway.sources.size).toBe(0);
+  });
+});
+
+describe('poll mode over MCP', () => {
+  const anyResult = z.record(z.string(), z.unknown());
+
+  it('advertises poll, and answers events/poll and the poll tools from Event Gateway requests', async () => {
+    // The bridge's clock, moved on by hand so the shared listing (reused for 2 s) is fetched again.
+    let offset = 0;
+    const { gateway, port } = await startBridge({ pollNow: () => Date.now() + offset });
+    gateway.sources.set('src_resend', { id: 'src_resend', name: 'bridge-resend' });
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      const discover = await client.request({ method: 'server/discover', params: {} }, anyResult);
+      expect(discover.capabilities).toMatchObject({ events: {}, extensions: { 'io.modelcontextprotocol/events': {} } });
+      const list = await client.request({ method: 'events/list', params: {} } as never, anyResult);
+      expect((list.events as Array<{ delivery: string[] }>)[0]!.delivery).toEqual(['webhook', 'poll']);
+
+      const poll = (params: Record<string, unknown>) => client.request({ method: 'events/poll', params } as never, anyResult);
+      const first = await poll({ name: 'resend.email.received', arguments: {}, cursor: null });
+      // (The SDK client consumes resultType when it decodes a result; the poll tests check it's 'complete'.)
+      expect(first).toMatchObject({ events: [], truncated: false, hasMore: false });
+
+      gateway.requests.push({
+        id: 'req_1',
+        source_id: 'src_resend',
+        created_at: new Date(Date.now() + 1000).toISOString(),
+        verified: true,
+        rejection_cause: null,
+        events_count: 1,
+        ignored_count: 0,
+        data: { headers: fixture.headers, body: freshEmail() },
+      });
+      offset += 3000;
+      const next = await poll({ name: 'resend.email.received', arguments: {}, cursor: first.cursor });
+      expect(next.events).toMatchObject([{ eventId: fixture.headers['svix-id'], name: 'resend.email.received' }]);
+
+      // The tools, for hosts without MCP Events: the same cursor and result.
+      const tool = (await client.callTool({ name: 'poll_events', arguments: { name: 'resend.email.received', cursor: first.cursor } })) as { structuredContent?: { events: unknown[] } };
+      expect(tool.structuredContent?.events).toHaveLength(1);
+      const waited = (await client.callTool({ name: 'wait_for_event', arguments: { name: 'resend.email.received', cursor: next.cursor, timeoutMs: 1000 } })) as { structuredContent?: { events: unknown[]; cursor: string } };
+      expect(waited.structuredContent).toMatchObject({ events: [] });
+      expect(typeof waited.structuredContent?.cursor).toBe('string');
+
+      // Errors: NotFound over the protocol; a readable tool error for the model.
+      await expect(poll({ name: 'email.received', arguments: {}, cursor: null })).rejects.toMatchObject({ code: -32011 });
+      expect((await client.callTool({ name: 'poll_events', arguments: { name: 'email.received' } })).isError).toBe(true);
+    } finally {
+      await client.close();
+    }
   });
 });
