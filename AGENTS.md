@@ -27,6 +27,7 @@ Secrets go in `.env` (gitignored); `.env.example` lists every variable with a co
 ## Ground rules
 
 - **Work on a branch** and commit in small steps.
+- **Use [Conventional Commits](https://www.conventionalcommits.org/)** for commit messages and pull request titles: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, with an optional scope (`feat(webhook): ...`). Mark a breaking change with `!` (`feat!: ...`) and a `BREAKING CHANGE:` footer.
 - **Events only.** Don't add tools that wrap provider APIs (sending email, reading email bodies). Vendors' own MCP servers do that.
 - **Event Gateway resources:** prefix everything you create with `bridge-`, `mcp-sub-`, `agent-` (the bridge's callback URLs for local agents) or `spike-` so it's easy to find and clean up. List what you created in your summary. Don't touch resources you didn't create.
 - **Provider resources:** the same for Resend webhooks. Delete spike webhooks when the spike is done.
