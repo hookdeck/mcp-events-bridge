@@ -110,3 +110,33 @@ Run on 5 Oct 2026. **Passed.**
 ### Resources
 
 All stage 2 to 4 Event Gateway resources (`spike-*` connections, sources and destinations) and the `spike-delivery` issue trigger were deleted, and webhook notifications were disabled. The project's default issue triggers were left as they were.
+
+## Poll mode: Event Gateway's request listing
+
+Run on 8 Oct 2026, for [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26). **Done; it changed the cursor design.**
+
+### What we ran
+
+1. A `WEBHOOK` source `spike-poll` with HMAC verification (sha256, hex, `x-signature`), and a connection to a `MOCK_API` destination with a dedupe rule on `headers.x-delivery-id` (1 hour), as the bridge sets up a generic webhook.
+2. Three runs of 40 signed requests each, single and in bursts of 5 within a second. For each: the send time, its `created_at`, and when it first appeared in `GET /requests?source_id=...&created_at[gte]=...&order_by=created_at&dir=asc`, listed every 250 ms.
+3. Three requests with a wrong signature and three duplicates (a repeated `x-delivery-id`), and the listing filters on them.
+4. The oldest request still listed on `bridge-resend` and `bridge-github` (read only).
+
+### What we saw
+
+- **Appearance:** 0.6 to 3.8 s after `created_at` in runs 1 and 3 (median about 2 s); in run 2, the last six requests took 8 to 15 s.
+- **Out of order:** 30 of 120 requests (25%) appeared after a request with a later `created_at` was already listed, with up to 1.4 s between their `created_at`s. The listing itself is always sorted by `created_at`, with no ties (microsecond precision).
+- **`created_at` isn't the receipt time:** the source answered the sender in about 25 ms, and `created_at` was 84 to 454 ms after sending. `ingested_at` (millisecond precision) is the receipt time, and `order_by=ingested_at` and `ingested_at[gte]` work, but appearance is just as out of order by `ingested_at`.
+- **Non-events:** a wrong signature gets `401` (no request id) and is listed with `status: rejected`, `verified: false`, `rejection_cause: VERIFICATION_FAILED`, no events. A duplicate gets `200` and is listed as accepted with `events_count: 0`, `ignored_count: 1`; its ignored event has cause `DUPLICATE` and `meta.duplicate_of_request_id`. An accepted request has `events_count: 1`.
+- **Filters** that work: `status=accepted|rejected` (lowercase), `verified`, `rejection_cause`, `events_count[gt]=0`, `events_count=0`, `ignored_count[gt]=0`. Unknown parameters are ignored silently, so a misspelled filter returns everything.
+- **Retention:** both sources' oldest requests were their first (2 and 3 days old), so the cutoff wasn't visible. Published: 3 days on Developer, 7 on Team, 30 on Growth ([pricing](https://hookdeck.com/pricing)).
+
+### What it means for the design
+
+- A cursor at the newest `created_at` seen would skip requests. The poll re-lists a window (60 seconds) behind the newest it has seen and carries the ids it has returned (`ARCHITECTURE.md`, "Poll mode").
+- `status=accepted` drops verification failures; duplicates are recognized by their ignored events, not by `events_count`, so requests waiting on a disconnected local bridge aren't dropped too.
+- Not covered: requests to a CLI connection (`cli_events_count`), left as an open question for building against a local bridge.
+
+### Resources
+
+The `spike-poll` connection, destination and source were deleted (confirmed gone). Nothing else was changed.

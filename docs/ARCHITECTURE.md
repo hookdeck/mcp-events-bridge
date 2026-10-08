@@ -148,6 +148,7 @@ Matching moves into Hookdeck filter syntax, which has no regex and no documented
 | CLI sessions that pick up newly matching sources ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)) | Restarting `listen` after each new tunnel URL, and the retry that covers the restart |
 | An MCP Events source holding several secrets, selected by `X-MCP-Subscription-Id` | Nothing the bridge needs today, since it dual-signs; it would let one source serve a receiver whose senders sign with one secret each, as the spec's receiver model expects |
 | Source updates that take effect at once (a secret change took 61 seconds to reach ingestion) | The bridge never changes a callback source's secret; overlapping old and new secrets during a rotation would make the delay harmless |
+| A sequence number on the request listing that only increases | Poll mode's 60-second re-read window and the ids its cursor carries: a cursor could be one number, with no requests missed however late they appear |
 | A request/response mode for the Hookdeck CLI | The cloudflared tunnel for a local MCP endpoint, which needs synchronous responses |
 
 ### Outpost for delivery (future option)
@@ -253,8 +254,59 @@ A local agent on the same machine connects to the bridge's MCP endpoint on `127.
 
 ### Clients that can't receive webhooks
 
-- **Poll** (`events/poll`): later, when a client needs it. Backed by Event Gateway's stored requests, with the cursor as a position in that history, so it also gives catch-up and replay. Hosts without MCP Events support (Codex CLI, Cursor) would get the same implementation as tools.
+- **Poll** (`events/poll`): designed (8 Oct, [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)), below. Backed by Event Gateway's stored requests, with the cursor as a position in that history, so it also gives catch-up and replay. Hosts without MCP Events support (Claude Code, Codex CLI, Cursor) get the same implementation as tools.
 - **Push** (`events/stream`): later, only if a client needs it. With the bridge on the same machine, a push-only client would connect over `localhost` and need no tunnel, though events would skip Event Gateway's delivery records.
+
+### Poll mode
+
+Designed 8 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) from the spike in `SPIKES.md` ("Poll mode: Event Gateway's request listing"), and revised after a review. Not built yet.
+
+**A proxy to Event Gateway.** Polls are answered from Event Gateway's request listing, with no event store in the bridge: the cursor carries the position. Event Gateway is the store, as it is for `get_event`, `list_events` and recovery, and a poll works whether or not the bridge's own inbound delivery was up. Events reach a poller about 2 seconds after Event Gateway receives them (up to 15 measured). If usage shows that's too slow, the relay could serve the live tail from an in-memory buffer.
+
+**Request and result,** as in SEP-3415: `events/poll { name, arguments, cursor, maxAgeMs?, maxEvents? }` returns `{ resultType: 'complete', events, cursor, truncated, hasMore, nextPollMs }`.
+
+- Each event is `{ eventId, name, timestamp, data }`: a webhook delivery's body without `cursor`.
+- `maxEvents` defaults to 50; larger values are lowered to 100.
+- `nextPollMs` is 2000, 0 with `hasMore`, and more under back-off (below).
+- An unknown name is `NotFound`, as for `events/subscribe`. `arguments` are parsed by the event's `parseArguments`, as subscribe does. A cursor that can't be read, or is for another name or arguments, is invalid params.
+- `events/list` adds `"poll"` to each event's `delivery`. The server advertises both `capabilities.events` (read by ChatGPT and pi-mcp-events) and `extensions["io.modelcontextprotocol/events"]` (SEP-3415).
+
+**The client polls, not the bridge.** `events/poll` and the `poll_events` tool answer once per call, and the client decides when to call again (after `nextPollMs`, or at once with `hasMore`). The bridge runs no timer. The one exception is `wait_for_event`, which checks again every 2 seconds within a single call.
+
+**One shared listing.** The Hookdeck API allows 240 requests per minute per API key, shared with recovery, `get_event` and setup. One poll loop at 2 seconds is 30 a minute, so listings are shared:
+
+- **The live window:** `GET /requests?source_id=<A>&source_id=<B>...&status=accepted&created_at[gte]=<t - L>&order_by=created_at&dir=asc&include=data&limit=255`, paged with `next`. Several sources go in one call as a repeated `source_id` (or `source_id[]`); `source_id=A,B` silently returns nothing (verified 8 Oct).
+- **Fetched on demand:** a poll that finds the window more than 2 seconds old fetches it, and polls that arrive during a fetch wait for the same one. No polls, no calls. Every poll and `wait_for_event` reads the same window, so live polling costs about 30 calls a minute (more pages at high event rates), however many clients poll.
+- **Only polled sources:** the window lists the sources polled in the last 60 seconds. A poll for a source not in the window adds it and fetches the window again at once; a source no poll has asked for in 60 seconds is dropped at the next fetch.
+- **Catch-up:** a poll whose watermark is older than the window (after a gap, or draining a backlog) lists its own source from its watermark, at most two pages, and returns `hasMore` if there's more.
+- **Back-off:** the bridge tracks `X-RateLimit-Remaining`. Below a quarter of the limit, the window's refresh interval and `nextPollMs` grow, up to 30 seconds, and come back to 2 seconds as it recovers. A `429` doesn't fail a poll: it's answered from the existing window, with a longer `nextPollMs`.
+
+**Which requests are events,** matching what the relay would have delivered. `status=accepted` drops `VERIFICATION_FAILED` and `NO_CONNECTION`. Then:
+
+- `events_count` or `cli_events_count` above 0: an event.
+- Neither, but `ignored_count` above 0: the ignored events are looked up (rare), and it's an event only if one is `CLI_DISCONNECTED` (waiting on a disconnected local bridge). `DUPLICATE`, `FILTERED`, `TRANSFORMATION_FAILED` and any other cause aren't.
+- No counts at all, or no `data`: not processed yet. It isn't returned or marked seen, and the watermark doesn't pass it until it's older than L.
+- An event is normalized by the provider (as for `get_event`) and kept if `event.accepts(arguments, data)`, the relay's own filter. Its `timestamp` is the provider's, or else `created_at` (a webhook delivery uses the bridge's clock instead).
+
+**The cursor, and late requests.** A request appears in the listing about 2 seconds after its `created_at` (up to 15), and out of order: in the spike, a quarter appeared after one with a later `created_at` was already listed. A cursor at the newest request seen would skip them, so the cursor re-reads a window:
+
+- It's opaque and versioned (base64url JSON): the event name and a hash of the arguments, a floor (nothing created before it is returned), a watermark `w`, the time `t` of the listing it came from, and the ids of requests at or after `w` that it has returned.
+- A poll reads the requests from `w` on, and returns those it hasn't returned, in `created_at` order, up to `maxEvents`. The new `w` is `t - L`, but never past an eligible request it didn't return (cut short by `maxEvents`) or one not processed yet. Ids older than the new `w` are dropped. Only returned ids are kept: a request that doesn't match the arguments gets the same answer each time, so the cursor grows with this subscription's events, not the source's traffic.
+- `t` is the listing response's `Date` header, Event Gateway's clock, so the bridge's clock doesn't matter.
+- **L is 60 seconds**, four times the slowest appearance measured (15 s, in 120 requests on one afternoon: a measurement, not a guarantee). A request that appears more than L late is missed, with no signal. A sequence number on the request listing that only increases would remove the window ("Hookdeck capabilities that would simplify the design").
+- **A null cursor** starts from now: floor `t`, `w = t - L`, no events. `maxAgeMs` is ignored with a null cursor, as the SEP says; for history, use `list_events`.
+- **`maxAgeMs`** with a cursor raises the floor to `t - maxAgeMs`, and `truncated` is true if the cursor's last listing is older than that floor.
+- **Retention:** when `w` is older than Event Gateway's retention (configurable; 3 days on the Developer plan, 7 on Team, 30 on Growth), the poll starts from the oldest retained request and returns `truncated: true`.
+- Delivery is at least once, as the SEP says: clients dedupe by `eventId`.
+
+**Tools,** for hosts without MCP Events support. The spec calls poll "a protocol-level operation", not a tool, so these are an adapter:
+
+- `poll_events(name, arguments?, cursor?, maxAgeMs?, maxEvents?)`: the same as `events/poll`.
+- `wait_for_event(name, arguments?, cursor?, timeoutMs?)`: reads the shared window every 2 seconds (no listing calls of its own), with progress notifications, and returns as soon as there are events, or with none and the cursor at `timeoutMs` (default 45 s, at most 50 s: Claude Code's HTTP timer and Codex's tool timeout are 60 s by default).
+
+**Acceptance (#26).** A property test against a fake listing (requests appearing late and out of order, duplicates, unprocessed requests, `maxEvents` from 1 to 100). pi-mcp-events calling `events/poll`. A 10-minute live soak with bursts, wrong signatures and duplicates, with Claude Code calling `wait_for_event` during it. A local bridge with `listen` stopped. A long gap, and concurrent pollers with no `429` reaching a caller.
+
+**Next (#26):** `mcp-events-bridge watch`, an `events/poll` client printing one line per event, for a Claude Code plugin monitor.
 
 ### MCP Events clients
 
@@ -541,7 +593,7 @@ Tools:
 - `list_providers()`: configured instances, their events, and how many subscriptions each has.
 - `create_tunnel_url(agent, name, port?, path?)` and `list_tunnel_urls(agent)`: tunnel URLs for local agents, on a bridge with CLI inbound (see "A local agent receiving events"). Results carry the URL, port and path, never secrets.
 - `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (not the catalog of event kinds, which is `events/list`). These also work around openai/codex#50714, where dot runs don't receive event data.
-- Later, if a client needs it, poll mode: `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. Advertise `"poll"` in each event's `delivery` once built. If a host supports neither MCP Events nor `events/poll`, expose the same implementation as `poll_events` and `wait_for_event` tools.
+- Next, poll mode (designed in "Poll mode", [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)): `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. `"poll"` in each event's `delivery` once built. For hosts that don't support MCP Events, the same implementation as the `poll_events` and `wait_for_event` tools.
 
 There are no setup tools: providers change through the config file.
 
@@ -662,9 +714,9 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Feature | Level | Status | Notes |
 | --- | --- | --- | --- |
 | `gap` and `terminated` control envelopes | MUST when used; `terminated` SHOULD on revocation or removed events | Not planned | ChatGPT doesn't support them. `bridge setup --prune` should send `terminated` if a client ever does |
-| Poll mode (`events/poll`) | Optional mode | Later | For clients that can't receive webhooks, when one needs it; backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools would wrap it for hosts without MCP Events support |
+| Poll mode (`events/poll`) | Optional mode | Designed (#26) | See "Poll mode": backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
 | Push mode (`events/stream`) | Optional mode | Not planned | Would bypass Event Gateway; only if a client needs it |
-| Replay: non-null `cursor`, `maxAgeMs` | MAY | Not planned | Possible later: Event Gateway keeps every inbound request, so a cursor could be a position in that history |
+| Replay: non-null `cursor`, `maxAgeMs` | MAY | Designed (#26) | With poll mode: the cursor is a position in Event Gateway's request history. Webhook deliveries still carry `cursor: null` |
 | Asymmetric `v1a,` signatures and JWKS | MAY | Not planned | |
 
 ### Summary
@@ -702,7 +754,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **Path forwarding on an `MCP_EVENTS` source** (probed 7 Oct): a verification challenge posted to a sub-path of the source URL (`<url>/mcp/events/webhook/abc`) is answered at the edge like one at the root, and a delivery to a sub-path is forwarded through `hookdeck listen` with the sub-path appended to the CLI destination's path: `/base` gives `/base/mcp/events/webhook/abc`, and `/` gives `/mcp/events/webhook/abc` exactly. So one tunnel URL can serve a receiver that routes by path.
 
-**Request search** (stage 5, measured live): `GET /requests` filters on request headers (`headers` as a JSON filter) and returns headers and body with `include=data`, so `get_event` finds an event by its provider id. A new request took about 6 seconds to become findable by header.
+**Request search** (stage 5, measured live): `GET /requests` filters on request headers (`headers` as a JSON filter) and returns headers and body with `include=data`, so `get_event` finds an event by its provider id. A new request took about 6 seconds to become findable by header. Measured again on 8 Oct (120 requests): it appears about 2 seconds after its `created_at` (median; p95 up to 13 s, max 15 s), out of order (a quarter appeared after a later one), and `created_at` is set after the source has answered the sender, up to about 450 ms later; `ingested_at` is the receipt time. `status`, `verified`, `rejection_cause`, `events_count` and `ignored_count` filter the listing; unknown query parameters are ignored silently (see `SPIKES.md`, "Poll mode"). Several sources can be listed in one call with a repeated `source_id` (or `source_id[]`), while `source_id=A,B` returns nothing; `limit` is at most 255. The API allows 240 requests per minute per key, with `X-RateLimit-Remaining` on each response (API docs).
 
 **Destination paths** (stage 5, found live): Event Gateway joins the destination path with the request's path, so a request to the source root arrives at `/inbound/hookdeck/` (trailing slash) for issue notifications. The bridge accepts both forms.
 
@@ -819,6 +871,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **7 Oct, deployment names.** `deployment` is optional: `BRIDGE_DEPLOYMENT`, else `local` (CLI inbound) or `public` (HTTP inbound). It was `dev` in the examples, which read as "not for real use" once a bridge on a laptop became the setup for local agents.
 - **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions.
 - **7 Oct, local scope.** One bridge per machine, with one owner and its own Hookdeck project, running alongside the agent. The bridge runs `listen` and catches up by itself; the agent-facing tool becomes `create_tunnel_url`. Poll, push and cursor replay aren't local requirements and move to later (supersedes the 5 Oct poll fallback for local agents).
+- **8 Oct, poll mode.** `events/poll` proxies to Event Gateway's request listing, with no event store in the bridge; an in-memory buffer only if usage shows latency problems. Polls share one listing of the polled sources, fetched on demand at most every 2 seconds, with back-off on the API rate limit. The cursor re-reads the last 60 seconds and carries the ids it has returned, because requests appear in the listing late and out of order. Tools (`poll_events`, `wait_for_event`) for hosts without MCP Events support; no Claude Code channel (see #26).
 - **7 Oct, generic webhooks.** A built-in `webhook()` provider on a `WEBHOOK` source with required verification (HMAC, Standard Webhooks, Basic auth or API key), static mapping config, and equality filters on declared fields. Until its secret is set, the source exists without an inbound connection (not a disabled or paused one: an upsert re-enables a disabled connection, and a paused one delivers its held events), and the bridge relays only requests marked `x-hookdeck-verified: true`. `providers add webhook <id>` creates the source and the config entry; it edits `bridge.config.ts` only on request, and only shapes it can edit safely.
 
 ## Open questions
@@ -831,6 +884,8 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [x] A real local agent: Hermes Agent, from its pull request, with our fixes merged into it (7 Oct). Named emitters, suggested by us, keep the emitter's URL and credentials in Hermes's `.env`, out of the model's context (`8813311330`).
 - [ ] Multi-tenant hosting: encrypt connection descriptions? The format is versioned so a sealed variant can be added; bigger questions (a Hookdeck project per tenant, quotas, per-user OAuth) come first.
 - [ ] Built-in OAuth: which maintained library supports CIMD and resource indicators (for example `oidc-provider`)?
+- [ ] Poll mode with a local bridge: what `cli_events_count` and ignored events look like for a request to a CLI connection, delivered and while disconnected (the spike used a mock destination).
+- [ ] Event Gateway retention for this project's plan, to check `truncated` against a real cutoff.
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
 - [x] Delivery issue notifications carry the failing response status, so the bridge deletes a subscription on `410` (stage 4).
 - [x] Stage 3: bodies are byte-identical across attempts and match the publisher's, and the signature headers don't change between attempts (see `SPIKES.md`).
