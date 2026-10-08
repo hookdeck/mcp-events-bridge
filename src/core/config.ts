@@ -179,6 +179,10 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
 
   if (missing.length) throw new ConfigError(`Missing environment variables: ${[...new Set(missing)].join(', ')}`);
   if (!resolved.hookdeck.apiKey || !resolved.hookdeck.signingSecret) throw new ConfigError('The Hookdeck API key and signing secret must not be empty');
+  if (resolved.auth.mcpSecret && !/^[A-Za-z0-9._~-]+$/.test(resolved.auth.mcpSecret)) {
+    // It's a path segment of the MCP URL; a pasted line with a note after the value would otherwise be accepted.
+    throw new ConfigError('BRIDGE_MCP_SECRET can only contain letters, digits, -, _, . and ~ (it is part of the MCP URL): set it to the value setup printed, and nothing else');
+  }
   if (inbound === 'http' && !publicUrl?.startsWith('https://')) {
     throw new ConfigError('http inbound needs an https public URL: set BRIDGE_PUBLIC_URL, or run on Fly.io');
   }

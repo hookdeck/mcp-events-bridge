@@ -70,4 +70,10 @@ describe('resolveConfig', () => {
   it('reads BRIDGE_MCP_SECRET when set', () => {
     expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 's3cret' }).auth.mcpSecret).toBe('s3cret');
   });
+
+  it('rejects a BRIDGE_MCP_SECRET that isn\'t URL-safe, such as a pasted line with a note after the value', () => {
+    expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 'Ab-_9.~z' }).auth.mcpSecret).toBe('Ab-_9.~z');
+    expect(() => resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 'abc123   (in .env, or: ...)' })).toThrow(/BRIDGE_MCP_SECRET can only contain/);
+    expect(() => resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 'a/b' })).toThrow(ConfigError);
+  });
 });

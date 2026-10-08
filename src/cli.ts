@@ -76,8 +76,9 @@ async function setup(configFile: string | undefined) {
     console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(ready, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
   }
   if (report.mcp.generated) {
-    console.log(`\nGenerated an MCP secret. Set it before running serve, and keep it private (the URL is a credential):`);
-    console.log(`  BRIDGE_MCP_SECRET=${report.mcp.secret}   (in .env, or: fly secrets set BRIDGE_MCP_SECRET=...)`);
+    const where = config.inbound === 'http' ? 'as a secret where the bridge runs (on Fly.io: fly secrets set)' : 'in .env';
+    console.log(`\nGenerated an MCP secret. Set this line ${where} before running serve, and keep it private (the URL is a credential):`);
+    console.log(`  BRIDGE_MCP_SECRET=${report.mcp.secret}`);
   }
   console.log(`\nMCP URL:\n  ${report.mcp.url}`);
 
@@ -106,7 +107,7 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
     console.warn(`[bridge] warning: ${message}`);
   }
 
-  const bridge = await createBridgeServer(config);
+  const bridge = await createBridgeServer(config, { version: packageVersion() });
   const { host, port } = await bridge.listen();
   console.log(`[bridge] listening on ${host}:${port} (${config.inbound} inbound, deployment "${config.deployment}")`);
 
