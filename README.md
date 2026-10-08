@@ -167,13 +167,13 @@ export default defineConfig({
 The server signs each request's raw body with HMAC-SHA256 and the shared secret, hex-encoded in `x-signature`, and POSTs JSON such as `{ "symbol": "AAPL", "side": "buy", "quantity": 100, "price": 187.5, "filled_at": "2026-10-07T14:30:00Z" }`.
 
 - **`verification`** (required): Event Gateway verifies every request and rejects the rest before they reach the bridge. One of:
-  - `{ type: 'hmac', algorithm, encoding, header, secret }`: an HMAC of the raw body in a header. `algorithm` is `sha1`, `sha256` or `sha512`; `encoding` is `hex`, `base64` or `base64url`. A `sha256=` prefix on the value is accepted.
+  - `{ type: 'hmac', algorithm, encoding, header, secret }`: an HMAC of the raw body in a header. `algorithm` is `sha1`, `sha256` or `sha512`; `encoding` is `hex`, `base64` or `base64url`. A `sha256=` prefix on the value is accepted. The key is the secret string as written (UTF-8), not decoded from hex or base64.
   - `{ type: 'standard-webhooks', secret }`: [Standard Webhooks](https://www.standardwebhooks.com) signatures, usually with a `whsec_...` secret.
   - `{ type: 'basic-auth', username, password }` or `{ type: 'api-key', header, key }`: a shared credential sent with every request. Prefer a signature: Event Gateway keeps request headers, so these credentials are stored with each request, and anyone who sees one can replay it.
   There's no unverified option: anyone with the URL could otherwise wake your agents with whatever they send.
 - **`events`:** the sender's event names (offered as `{id}.{name}`, e.g. `fills.order.filled`), as a list or with a description each. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
 - **`eventId`:** the sender's id for a delivery, from `{ header }` or `{ field }`. It becomes the event's `webhook-id`, and Event Gateway drops repeats within an hour. Default: Event Gateway's request id, which stays the same when Event Gateway retries but not when the sender does, so set it if your sender retries.
-- **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when the bridge received the request.
+- **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when the request was received (by the bridge for a delivery; by Event Gateway for `get_event` and `list_events`).
 - **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is ignored, and stays in Event Gateway), and the event at most 256 KiB.
 - **`filters`:** top-level body fields subscribers can filter on, by exact match.
 

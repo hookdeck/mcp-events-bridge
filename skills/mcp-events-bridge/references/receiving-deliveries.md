@@ -4,9 +4,11 @@ For an agent on the same machine as a local bridge that implements MCP Events we
 
 ## Subscribe
 
-1. Call the bridge's `create_tunnel_url` tool: `agent` (a name for this agent), `name` (one per subscription), `port` (the receiver's local port), `path` (the receiver's path; default `/events`). The first URL fixes the agent's port and path.
+The agent is an MCP client of the bridge, over Streamable HTTP at the MCP URL. It needs no client capability for MCP Events: `initialize` as usual, then:
+
+1. Call the bridge's `create_tunnel_url` tool: `agent` (a name for this agent), `name` (one per subscription), `port` (the receiver's local port), `path` (the receiver's path; default `/events`). The first URL fixes the agent's port and path. The URL is in the result's `structuredContent.url`. `agent` names an Event Gateway destination shared by the agent's tunnel URLs, so make it unique in the Hookdeck project (e.g. include the machine or user).
    - If the agent builds every callback URL from one base URL plus its own path (for example `<base>/mcp/events/webhook/<id>`), create **one** tunnel URL with `path: '/'` and use it as the base: a tunnel URL covers the paths under it, and the path is forwarded to the receiver.
-2. Call `events/subscribe` with `name` (an MCP event name from `events/list`, e.g. `resend.email.received`), `arguments` (filters), and `delivery: { mode: 'webhook', url: <tunnel URL>, secret: 'whsec_...' }`. Generate the secret yourself (24 to 64 random bytes, base64, `whsec_` prefix).
+2. Call `events/subscribe` with `name` (an MCP event name from `events/list`, e.g. `resend.email.received`), `arguments` (filters), and `delivery: { mode: 'webhook', url: <tunnel URL>, secret: 'whsec_...' }`. Generate the secret yourself (24 to 64 random bytes, base64, `whsec_` prefix). The result is `{ id, refreshBefore, cursor, truncated }`; `id` is the subscription id deliveries carry.
 3. Keep the subscription: refresh it (call `events/subscribe` again with the same key) before `refreshBefore`; unsubscribe with `name`, `arguments` and `delivery.url`.
 
 The verification challenge is answered by Event Gateway at the tunnel URL; the receiver never sees it.

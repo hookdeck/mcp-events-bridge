@@ -48,6 +48,8 @@ export default defineConfig({
 });
 ```
 
+For only a generic webhook, start with `providers: []` and import only `defineConfig`; step 3 adds the entry and its imports.
+
 Write `.env` with `HOOKDECK_API_KEY`, `HOOKDECK_SIGNING_SECRET` and the provider's variables (README "Configuration" lists them all). Then:
 
 ```sh
@@ -55,14 +57,14 @@ npx mcp-events-bridge setup
 ```
 
 - **Success:** a line per provider (`provider resend: source https://hkdk.events/..., connection bridge-resend-local, webhook registered`; on a re-run, `updated` or `existing`), then `MCP URL:`. Exit code 0.
-- **First run:** it generates an MCP secret and prints `BRIDGE_MCP_SECRET=...`. Add that line to `.env`. `setup` prints the full MCP URL, secret included, on every run: don't repeat it in your replies or write it anywhere but `.env`.
+- **First run:** it generates an MCP secret and prints a `BRIDGE_MCP_SECRET=...` line. Add that line to `.env` as printed. `setup` prints the full MCP URL, secret included, on every run: don't repeat it in your replies or write it anywhere but `.env`.
 - **Exit code 1 with "Setup isn't complete":** a webhook secret is missing (step 3, generic webhooks). Everything else was set up.
 
 ```sh
 npx mcp-events-bridge serve
 ```
 
-- **Success:** `[bridge] hookdeck listen connected: ...` and `[bridge] MCP endpoint: http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>`. Keep it running.
+- **Success:** `[bridge] hookdeck listen connected: ...` and `[bridge] MCP endpoint: http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>`. Keep it running; stop it with Ctrl-C (or `kill` its PID), which also stops its `hookdeck listen`.
 - It restarts `hookdeck listen` if it stops, and recovers provider events that arrived while the bridge was down.
 
 ## 3. Add providers
@@ -71,9 +73,9 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 
 - **Resend, GitHub:** add `resend({...})` or `github({...})` to `providers` (README "Webhook providers" has every option), add the variables to `.env`, run `setup` again. `setup` registers the provider's webhook itself.
 - **Any other sender (generic webhook), registered by hand:**
-  1. `npx mcp-events-bridge providers add webhook <id> --event <sender's event name> [--verification hmac --header x-signature ...]` (`providers add webhook --help` lists options: verification type, event type and id location, filters). It prints the source URL, adds `<ID>_WEBHOOK_SECRET=` to `.env`, and prints a `webhook({...})` entry.
+  1. `npx mcp-events-bridge providers add webhook <id> --event <sender's event name> [--event-id-header x-delivery-id] [--filter symbol]` (HMAC-SHA256, hex, in `x-signature` is the default; `providers add webhook --help` lists options: verification type, event type and id location, filters). It prints the source URL, adds `<ID>_WEBHOOK_SECRET=` to `.env`, and prints a `webhook({...})` entry.
   2. Paste the entry into `providers` in `bridge.config.ts` (or rerun with `--write-config`; it refuses configs it can't edit safely and prints the entry instead).
-  3. Register the printed URL with the sender. Put the secret it gives you (or one you generate, e.g. `openssl rand -hex 32`, for a server the user runs) in `.env`.
+  3. Register the printed URL with the sender. Put the secret it gives you (or one you generate, e.g. `openssl rand -hex 32`, for a server the user runs) in `.env`. For HMAC, the key is that string exactly as in `.env`, not hex- or base64-decoded.
   4. Run `setup` (exit 0 now; a new secret can take about a minute to take effect), then restart `serve`.
 
 ## 4. Connect an agent
@@ -89,7 +91,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 ## 5. Verify
 
 1. Trigger a real event: send an email to the Resend receiving address, open a GitHub issue, or (generic webhook) have the sender post one.
-2. In `serve`'s output: `[listen] inbound: ... [200] POST http://localhost:8080/inbound/<id>` then `[bridge] <id>.<event> <event id>: 1/1 published` (`0/0` means no subscription matched).
+2. In `serve`'s output: `[bridge] <id>.<event> <event id>: 1/1 published` then `[listen] inbound: ... [200] POST http://localhost:8080/inbound/<id>` (`0/0` means no subscription matched).
 3. The `list_providers` tool shows each provider's events and how many subscriptions each has.
 4. The `[listen]` line ends with an Event Gateway dashboard link for the request: every attempt is recorded there.
 
@@ -100,7 +102,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 | `setup` exits 1: "Setup isn't complete", then `<id>: set <VAR>` | A webhook secret isn't set | Register the URL, put the secret in `.env`, run `setup` |
 | `serve`: "Not set: <VAR> (provider <id>)" | Same | Same, then `serve` |
 | `serve`: "Event Gateway isn't set up for deployment ..." | `setup` hasn't run with this deployment name and inbound mode | Run `setup` with the same `BRIDGE_DEPLOYMENT` and `BRIDGE_INBOUND` |
-| Log: `subscription ... is for "...", which this bridge doesn't offer` | The provider was removed, its `id` renamed, or the subscription is from 0.1.0 | The agent subscribes again, to a name from `events/list` |
+| Log: `subscription ... is for "...", which this bridge doesn't offer` | The provider was removed, its `id` renamed, or the subscription is from 0.1.0; or it belongs to another bridge in the same Hookdeck project | The agent subscribes again, to a name from `events/list`; ignore another bridge's |
 | `events/subscribe` fails: "Unknown event" | Old or wrong name | Use a name from `events/list` |
 | A generic webhook sender gets 401 | Wrong signature, header, encoding or secret | Match the `verification` settings; a new secret can take about a minute |
 | `[bridge] ... 0/0 published` | No subscription matches (name or filters) | Check the subscription's name and arguments |
