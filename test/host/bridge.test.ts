@@ -48,6 +48,7 @@ async function startBridge({ inbound = 'cli' as 'cli' | 'http', store }: { inbou
     // The subscriber's receiver is local; stand in for Event Gateway's challenge answer.
     subscriptionOverrides: { verify: async () => ({ ok: true }), transport: createNodeCallbackTransport({ allowNonPublic: true }) },
     log: (m) => logs.push(m),
+    version: '9.9.9',
   });
   const { port } = await bridge.listen();
   running.push(bridge);
@@ -111,6 +112,7 @@ describe('bridge server', () => {
     const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
     try {
+      expect(client.getServerVersion()).toMatchObject({ name: 'mcp-events-bridge', version: '9.9.9' });
       const result = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
       expect(result.structuredContent?.providers).toEqual([{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }]);
     } finally {
