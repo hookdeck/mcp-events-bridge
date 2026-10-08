@@ -301,10 +301,20 @@ export class PollService {
       if (request.source_id !== sourceId || seen.has(request.id)) continue;
       const created = Date.parse(request.created_at);
       if (created < start) continue;
-      const kind = await this.classify(request);
+      let kind = await this.classify(request);
+      // Not routed yet: a request that just arrived, or one being retried (the bridge's inbound recovery retries
+      // requests a disconnected local bridge missed, and they show no events and no ignored events meanwhile, however
+      // old). Hold the watermark for a new one, so a duplicate can be recognized first; return an older one, since on
+      // a provider source it's in flight, and a duplicate returned this way repeats an eventId clients dedupe by.
+      if (kind === 'pending') {
+        if (created >= listing.t - this.lookbackMs) {
+          holdAt(created);
+          continue;
+        }
+        kind = 'event';
+      }
       const event = kind === 'event' ? this.deps.history.toEvent(entry.providerId, request) : undefined;
-      if (kind === 'pending' || (kind === 'event' && !event && !request.data)) {
-        // Not processed yet: hold the watermark for it, unless it's older than the look-back (then it's passed over).
+      if (kind === 'event' && !event && !request.data) {
         if (created >= listing.t - this.lookbackMs) holdAt(created);
         continue;
       }

@@ -110,6 +110,7 @@ describe('poll mode: cursor', () => {
     const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
     const { listing, service } = setup();
     const expected = new Set<string>();
+    let duplicates = 0;
     for (let i = 0; i < 1000; i++) {
       const createdAt = T0 + 1000 + Math.floor(rand() * 600_000);
       // Most appear within 4 s; some up to 15 s (the spike's worst); a few up to just under the look-back.
@@ -119,7 +120,9 @@ describe('poll mode: cursor', () => {
       const kind = k < 0.05 ? 'duplicate' : k < 0.08 ? 'filtered' : k < 0.11 ? 'cli-disconnected' : 'event';
       // Some are listed before Event Gateway has routed them.
       const processedAt = rand() < 0.1 ? createdAt + delay + rand() * 20_000 : createdAt;
-      const request = listing.add({ createdAt, visibleAt: createdAt + delay, processedAt, kind });
+      const original = kind === 'duplicate' ? [...expected][Math.floor(rand() * expected.size)] : undefined;
+      const request = listing.add({ createdAt, visibleAt: createdAt + delay, processedAt, kind, ...(original && { deliveryId: original }) });
+      if (kind === 'duplicate') duplicates++;
       if (kind === 'event' || kind === 'cli-disconnected') expected.add(request.deliveryId);
     }
 
@@ -133,7 +136,8 @@ describe('poll mode: cursor', () => {
     }
 
     expect(new Set(returned)).toEqual(expected);
-    expect(returned.length).toBe(expected.size); // no repeats
+    // Repeats only from duplicates still unrouted after the look-back (the same eventId; clients dedupe by it).
+    expect(returned.length - expected.size).toBeLessThanOrEqual(duplicates);
     // Shared listing: about one call per 2-second interval, not one per poll.
     expect(listing.calls.length).toBeLessThan((720_000 / POLL_INTERVAL_MS) * 1.2);
   });
@@ -172,7 +176,7 @@ describe('poll mode: cursor', () => {
     const { listing, service } = setup();
     const start = await service.poll({ name: NAME });
     listing.add({ createdAt: T0 + 1000, visibleAt: T0 + 2000, processedAt: T0 + 50_000, deliveryId: 'slow' });
-    // Still unprocessed after the look-back: passed over, as documented.
+    // Still unprocessed after the look-back: returned (on a provider source it's in flight, or being retried).
     listing.add({ createdAt: T0 + 1000, visibleAt: T0 + 2000, processedAt: T0 + 70_000, deliveryId: 'too-slow' });
     let cursor = start.cursor;
     const seen: string[] = [];
@@ -182,7 +186,21 @@ describe('poll mode: cursor', () => {
       seen.push(...result.events.map((e) => e.eventId));
       cursor = result.cursor;
     }
-    expect(seen).toEqual(['slow']);
+    expect(seen).toEqual(['slow', 'too-slow']);
+  });
+
+  it('returns requests the inbound recovery retries long after they arrived (a local bridge that was down)', async () => {
+    // Found live: while recovery retries a CLI_DISCONNECTED request, it shows no events and no ignored events.
+    const { listing, service } = setup();
+    const start = await service.poll({ name: NAME });
+    const missed = [1, 2, 3].map((i) => listing.add({ createdAt: T0 + 1000 * i, deliveryId: `missed-${i}`, kind: 'cli-disconnected' }));
+    listing.now += 3 * 60_000;
+    // Mid-retry: unrouted for now, routed to the CLI connection shortly after.
+    for (const r of missed) Object.assign(r, { kind: 'event', processedAt: listing.now + 5000 });
+    const during = await service.poll({ name: NAME, cursor: start.cursor });
+    listing.now += 10_000;
+    const after = await service.poll({ name: NAME, cursor: during.cursor });
+    expect([...during.events, ...after.events].map((e) => e.eventId).sort()).toEqual(['missed-1', 'missed-2', 'missed-3']);
   });
 
   it('drains a backlog with maxEvents and hasMore, after a long gap (catch-up listing)', async () => {

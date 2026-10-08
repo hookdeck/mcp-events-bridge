@@ -86,7 +86,11 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
   2. It calls `events/subscribe` with that URL and a `whsec_` secret it generates.
   3. What the agent's receiver must do: [references/receiving-deliveries.md](references/receiving-deliveries.md).
 - **Hermes Agent** (experimental: from an unmerged pull request; released Hermes has no MCP Events support): follow [references/hermes-agent.md](references/hermes-agent.md).
-- **Agents without MCP Events support:** they can still call `list_events` and `get_event` (events that happened, from Event Gateway).
+- **Agents without MCP Events support** (Claude Code, Codex, Cursor): add the bridge as an HTTP MCP server (Claude Code: `claude mcp add --transport http events-bridge <MCP URL>`) and use the poll tools, which need no public URL:
+  - `wait_for_event` (`name`, `arguments`, `cursor`): waits up to 45 s and returns as soon as there are events. Call it again with the `cursor` it returned to keep waiting.
+  - `poll_events` (same, plus `maxEvents`, `maxAgeMs`): returns at once; call again after `nextPollMs`, or at once when `hasMore` is true.
+  - Without a cursor, both start from now. Events can repeat: dedupe by `eventId`. For events that already happened, use `list_events` and `get_event`.
+- **Clients that implement MCP Events poll mode** call `events/poll` (same arguments and cursor) instead of subscribing.
 
 ## 5. Verify
 

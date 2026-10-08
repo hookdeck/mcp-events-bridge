@@ -254,12 +254,12 @@ A local agent on the same machine connects to the bridge's MCP endpoint on `127.
 
 ### Clients that can't receive webhooks
 
-- **Poll** (`events/poll`): designed (8 Oct, [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)), below. Backed by Event Gateway's stored requests, with the cursor as a position in that history, so it also gives catch-up and replay. Hosts without MCP Events support (Claude Code, Codex CLI, Cursor) get the same implementation as tools.
+- **Poll** (`events/poll`): built (8 Oct, [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)), below. Backed by Event Gateway's stored requests, with the cursor as a position in that history, so it also gives catch-up and replay. Hosts without MCP Events support (Claude Code, Codex CLI, Cursor) get the same implementation as tools.
 - **Push** (`events/stream`): later, only if a client needs it. With the bridge on the same machine, a push-only client would connect over `localhost` and need no tunnel, though events would skip Event Gateway's delivery records.
 
 ### Poll mode
 
-Designed 8 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) from the spike in `SPIKES.md` ("Poll mode: Event Gateway's request listing"), and revised after a review. Not built yet.
+Designed 8 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) from the spike in `SPIKES.md` ("Poll mode: Event Gateway's request listing"), and revised after a review. Built (8 Oct): `src/core/poll.ts`; see `SPIKES.md` ("Poll mode: acceptance") for the runs with real clients.
 
 **A proxy to Event Gateway.** Polls are answered from Event Gateway's request listing, with no event store in the bridge: the cursor carries the position. Event Gateway is the store, as it is for `get_event`, `list_events` and recovery, and a poll works whether or not the bridge's own inbound delivery was up. Events reach a poller about 2 seconds after Event Gateway receives them (up to 15 measured). If usage shows that's too slow, the relay could serve the live tail from an in-memory buffer.
 
@@ -285,7 +285,7 @@ Designed 8 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) 
 
 - `events_count` or `cli_events_count` above 0: an event.
 - Neither, but `ignored_count` above 0: the ignored events are looked up (rare), and it's an event only if one is `CLI_DISCONNECTED` (waiting on a disconnected local bridge). `DUPLICATE`, `FILTERED`, `TRANSFORMATION_FAILED` and any other cause aren't.
-- No counts at all, or no `data`: not processed yet. It isn't returned or marked seen, and the watermark doesn't pass it until it's older than L.
+- No counts at all: not routed yet, either just arrived or being retried (the bridge's inbound recovery retries requests a disconnected local bridge missed, and they show no events and no ignored events meanwhile, however old: found in the acceptance run). Within L of its `created_at`, it isn't returned or marked seen, and the watermark doesn't pass it, so a duplicate can be recognized first. Older, it's returned: on a provider source it's in flight, and if it turns out to be a duplicate, it repeats an `eventId` clients already dedupe by. A request without `data` is held the same way.
 - An event is normalized by the provider (as for `get_event`) and kept if `event.accepts(arguments, data)`, the relay's own filter. Its `timestamp` is the provider's, or else `created_at` (a webhook delivery uses the bridge's clock instead).
 
 **The cursor, and late requests.** A request appears in the listing about 2 seconds after its `created_at` (up to 15), and out of order: in the spike, a quarter appeared after one with a later `created_at` was already listed. A cursor at the newest request seen would skip them, so the cursor re-reads a window:
@@ -593,7 +593,7 @@ Tools:
 - `list_providers()`: configured instances, their events, and how many subscriptions each has.
 - `create_tunnel_url(agent, name, port?, path?)` and `list_tunnel_urls(agent)`: tunnel URLs for local agents, on a bridge with CLI inbound (see "A local agent receiving events"). Results carry the URL, port and path, never secrets.
 - `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (not the catalog of event kinds, which is `events/list`). These also work around openai/codex#50714, where dot runs don't receive event data.
-- Next, poll mode (designed in "Poll mode", [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)): `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. `"poll"` in each event's `delivery` once built. For hosts that don't support MCP Events, the same implementation as the `poll_events` and `wait_for_event` tools.
+- Poll mode ("Poll mode", [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)): `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the provider source; the cursor is a position in that history. `events/list` offers `"poll"` in each event's `delivery`. For hosts that don't support MCP Events, the same implementation as the `poll_events` and `wait_for_event` tools.
 
 There are no setup tools: providers change through the config file.
 
@@ -714,9 +714,9 @@ Status: **Designed** (covered by the design), **Gap** (known not to conform), **
 | Feature | Level | Status | Notes |
 | --- | --- | --- | --- |
 | `gap` and `terminated` control envelopes | MUST when used; `terminated` SHOULD on revocation or removed events | Not planned | ChatGPT doesn't support them. `bridge setup --prune` should send `terminated` if a client ever does |
-| Poll mode (`events/poll`) | Optional mode | Designed (#26) | See "Poll mode": backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
+| Poll mode (`events/poll`) | Optional mode | Built (#26) | See "Poll mode": backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
 | Push mode (`events/stream`) | Optional mode | Not planned | Would bypass Event Gateway; only if a client needs it |
-| Replay: non-null `cursor`, `maxAgeMs` | MAY | Designed (#26) | With poll mode: the cursor is a position in Event Gateway's request history. Webhook deliveries still carry `cursor: null` |
+| Replay: non-null `cursor`, `maxAgeMs` | MAY | Built, with poll (#26) | With poll mode: the cursor is a position in Event Gateway's request history. Webhook deliveries still carry `cursor: null` |
 | Asymmetric `v1a,` signatures and JWKS | MAY | Not planned | |
 
 ### Summary
@@ -884,7 +884,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [x] A real local agent: Hermes Agent, from its pull request, with our fixes merged into it (7 Oct). Named emitters, suggested by us, keep the emitter's URL and credentials in Hermes's `.env`, out of the model's context (`8813311330`).
 - [ ] Multi-tenant hosting: encrypt connection descriptions? The format is versioned so a sealed variant can be added; bigger questions (a Hookdeck project per tenant, quotas, per-user OAuth) come first.
 - [ ] Built-in OAuth: which maintained library supports CIMD and resource indicators (for example `oidc-provider`)?
-- [ ] Poll mode with a local bridge: what `cli_events_count` and ignored events look like for a request to a CLI connection, delivered and while disconnected (the spike used a mock destination).
+- [x] Poll mode with a local bridge: while it's disconnected, a request has no events and a `CLI_DISCONNECTED` ignored event; while the inbound recovery retries it, none of either; delivered, `cli_events_count: 1` (acceptance run, 8 Oct).
 - [ ] Event Gateway retention for this project's plan, to check `truncated` against a real cutoff.
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
 - [x] Delivery issue notifications carry the failing response status, so the bridge deletes a subscription on `410` (stage 4).

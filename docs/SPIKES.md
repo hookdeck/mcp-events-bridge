@@ -140,3 +140,31 @@ Run on 8 Oct 2026, for [#26](https://github.com/hookdeck/mcp-events-bridge/issue
 ### Resources
 
 The `spike-poll` connection, destination and source were deleted (confirmed gone). Nothing else was changed.
+
+## Poll mode: acceptance
+
+Run on 8 Oct 2026, for [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), against a local bridge (CLI inbound) in the development project, with the `fills` generic webhook provider and signed fills (no email). **Passed, after one fix it found.**
+
+### What we ran
+
+1. **pi-mcp-events** (0.1.1), a client that calls `events/poll` itself, driven through its own `scanServer` and `pollEvents`: discovery, a null cursor (with and without `maxAgeMs`), 3 fills sent and polled, a repeat poll, `maxEvents: 1`, an unknown name, arguments.
+2. **A 10-minute soak:** 200 signed fills in 40 bursts of 5 (60% AAPL), plus 3 with a wrong signature and 3 duplicates, while 6 `events/poll` loops (5 unfiltered, 1 with `{ "symbol": "AAPL" }`) polled as the spec says (`nextPollMs`, or at once with `hasMore`), and the API's `X-RateLimit-Remaining` was sampled every 30 seconds.
+3. **Claude Code** (2.1.294, `claude -p` with Haiku 4.5, the bridge as an HTTP MCP server) during the soak, told to call `wait_for_event` for `{ "symbol": "MSFT" }` 15 times, carrying the cursor.
+4. **A local bridge that was down:** a cursor taken, the bridge stopped, 5 fills sent, 150 seconds waited (so they're recorded `CLI_DISCONNECTED`), the bridge started again, and the old cursor polled through the bridge's inbound recovery, carried forward as a client would for 30 seconds.
+
+### What we saw
+
+- **pi-mcp-events:** 8 of 8 checks passed. Two gaps in the client, not the bridge: it requires an `Authorization` header or OAuth sign-in for any HTTP server (so a URL that carries its own secret needs a placeholder header), and its transport (`@earendil-works/pi-mcp` 1.0.2) doesn't send the `Mcp-Method` header the 2026-07-28 HTTP transport requires, which the bridge's MCP SDK enforces (`-32020`). The run added the header in a `fetch` shim.
+- **Soak:** every loop got every fill it should (200, or the 120 AAPL), with none missing, none extra, no repeats and no errors, in 247 polls each. The wrong signatures were refused (`401`) and the duplicates never appeared. Each loop was served 4 fills after a later one had been returned, all of them: the late-and-out-of-order case the cursor exists for (fewer than the spike's 25%, since a 2-second poll sees most reordering inside one listing). The API's remaining allowance stayed between 211 and 238 of 240 a minute with 7 pollers, including the sampler and the bridge's own recovery.
+- **Claude Code:** 15 calls, no errors; 27 MSFT fills, none missing between the first and last it received, and nothing else. The longest call took 13.1 seconds, well inside the timeouts.
+- **Bridge down:** while the bridge was stopped, the 5 requests were accepted with no events and one `CLI_DISCONNECTED` ignored event each (this answers the open question about CLI connections). The first run returned only 1 of the 5: while the inbound recovery retries a request, it shows no events and no ignored events, and the cursor passed over unrouted requests older than the look-back. Fixed (unrouted requests older than the look-back are returned; see "Poll mode" in `ARCHITECTURE.md`), with a regression test; the rerun returned all 5, once each, over 9 polls straddling the recovery.
+
+### What it means for the design
+
+- Poll mode works with a native `events/poll` client and with Claude Code through the tools, and the shared listing keeps 7 pollers well inside the API's rate limit.
+- An unrouted request isn't always new: the rule for them changed (above).
+- The interop gaps in pi-mcp-events are worth reporting upstream.
+
+### Resources
+
+No Event Gateway resources were created: the fills went to the existing `bridge-fills` source. The test scripts and logs are in the session scratchpad, not the repo.

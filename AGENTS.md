@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Not yet: poll mode and a Claude Code plugin ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), next), OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Push mode is later, only if a client needs it.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Poll mode (`events/poll` and the poll tools) is built; next is the Claude Code plugin ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)). Not yet: OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Push mode is later, only if a client needs it.
 
 ## What the maintainer sets up first
 
