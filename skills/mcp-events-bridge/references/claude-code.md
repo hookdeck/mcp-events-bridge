@@ -30,9 +30,9 @@ The URL contains `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
 
 ## 2. Ask for events
 
-Name the event and its filter, and ask Claude to keep waiting:
+Name the event and its filter, and ask Claude to keep waiting. The examples here use the GitHub provider, set up for the repository; ask "what events can the bridge give me?" to see the events and filters your bridge offers.
 
-> Wait for new comments on issues in hookdeck/hookdeck-demos (github.issue_comment, repository hookdeck/hookdeck-demos) and summarize each one.
+> Wait for new comments on issues in `<owner>/<repo>` (github.issue_comment, repository `<owner>/<repo>`) and summarize each one.
 
 Claude calls `wait_for_event`, which returns as soon as there are events, or with none after up to 45 seconds, and calls it again with the `cursor` it returned. `events/list` (or asking "what events can the bridge give me?") lists the names and their filters.
 
@@ -52,7 +52,7 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 
 Then ask, in any project:
 
-> Watch hookdeck/hookdeck-demos for new issues and comments.
+> Watch `<owner>/<repo>` for new issues and comments.
 
 Claude adds the watches to the project's watch list, and the plugin's monitor, which runs `mcp-events-bridge watch` for the whole session, wakes Claude for each event. "Stop watching…" and "what am I watching?" work too.
 
@@ -65,7 +65,7 @@ Claude adds the watches to the project's watch list, and the plugin's monitor, w
 
 **Without the plugin**, ask Claude to run `watch` with its Monitor tool, which wakes the session on each line a command prints:
 
-> In the background, watch hookdeck/hookdeck-demos for new issues and comments with `npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos`, and tell me about each one as it arrives.
+> In the background, watch `<owner>/<repo>` for new issues and comments with `npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=<owner>/<repo>`, and tell me about each one as it arrives.
 
 `watch` needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge). A Monitor watch expires after at most 30 minutes, and events between one watch and the next are missed. Claude Code asks before starting the command unless `Monitor` is allowed.
 
