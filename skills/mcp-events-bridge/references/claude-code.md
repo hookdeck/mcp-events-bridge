@@ -45,7 +45,7 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
-(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP URL and keeps it in secure storage. The plugin adds the bridge as an MCP server, so you don't need step 1 as well.
+(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP URL and keeps it in secure storage. To set it from a script without it showing on screen, pipe it in: `printf '{"mcp_url":"%s"}' "$BRIDGE_MCP_URL" | claude plugin configure mcp-events-bridge@hookdeck --values-stdin`, then start a new session. The plugin adds the bridge as an MCP server, so you don't need step 1 as well.
 
 Then ask, in any project:
 
@@ -66,7 +66,7 @@ Claude adds the watches to the project's watch list, and the plugin's monitor, w
 
 `watch` needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge). A Monitor watch expires after at most 30 minutes, and events between one watch and the next are missed. Claude Code asks before starting the command unless `Monitor` is allowed.
 
-**Tested:** Claude Code 2.1.295 (interactive, Opus 5.5) against a deployed bridge. With the Monitor tool, Claude started the watch, went idle, and reported GitHub comments within seconds, without a prompt. With the plugin (loaded with `--plugin-dir`, the MCP URL from `BRIDGE_MCP_URL`), the monitor started with the session, a comment woke a session that had never had a prompt, and a comment posted while no session was open arrived when the next one started.
+**Tested:** Claude Code 2.1.295 (interactive, Opus 5.5) against a deployed bridge. With the Monitor tool, Claude started the watch, went idle, and reported GitHub comments within seconds, without a prompt. With the plugin, installed from the marketplace (`claude plugin install`, the URL set with `--values-stdin`): the session-start hook wrote the URL file, the plugin's MCP server answered, the monitor started with the session, Claude added watches with filters from "watch… for new issues and comments", a comment woke the session (a reopen, filtered out, didn't), and a comment posted while no session was open arrived when the next one started.
 
 ## Limits
 
