@@ -193,9 +193,19 @@ Run on 9 Oct 2026 against a local bridge (CLI inbound) in the development projec
 - **Real traffic:** pushes, pull requests and workflow runs from merges on `mcp-events-bridge` arrived alongside, including those sent while the bridge was stopped, recovered when it started.
 - **Claude Code:** one `wait_for_event` call waited inside the call and returned the comment (event id, sender, issue number and text) about 15 seconds in.
 
+### ChatGPT, on Fly
+
+Run the same day against the Fly deployment (0.3.0, HTTP inbound, its own `bridge-github-fly` connection on the same source), with the local bridge stopped.
+
+- **ChatGPT's stale event list:** ChatGPT listed the seven `github.*` events (a live call to the bridge) but could only subscribe to `email.received`, the 0.1.0 name: it keeps the subscribable events from when the plugin was added. Refreshing the plugin fixed it; the README now says so ([#43](https://github.com/hookdeck/mcp-events-bridge/pull/43)).
+- **Subscriptions:** ChatGPT subscribed to all seven events, unfiltered, through one "GitHub event notifications" monitoring task. Each callback verified and each subscription was accepted for 30 days.
+- **Events:** opening and merging #43 and a comment on `hookdeck-demos#25` sent pull request, push (including the branch deletion), workflow run and comment events. The bridge published each once (`1/1`), and Event Gateway delivered each to ChatGPT with a `200` on the first attempt.
+- **One task run:** ChatGPT reported 11 events together as a numbered list, each with a link.
+- **Comment summaries:** for the comment, ChatGPT quoted the issue's title rather than the comment's text. The event has both (`title` is the parent issue's, `comment` the text); the agent chose `title`.
+
 ### What it means for the design
 
-- The GitHub provider works end to end with automatic registration, its summaries are what an agent needs, and Event Gateway's verification and dedupe behave as designed.
+- The GitHub provider works end to end with automatic registration, locally and on Fly, to Claude Code by polling and to ChatGPT by webhook. Its summaries are what an agent needs, and Event Gateway's verification and dedupe behave as designed.
 - `setup` needs to say which permission a token lacks (#38), and to check webhooks at the provider rather than trust its own record (#41).
 
 ### Resources
