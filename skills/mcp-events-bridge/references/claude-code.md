@@ -1,8 +1,11 @@
 # Claude Code with the bridge
 
-Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhook deliveries. It can use the bridge's **poll tools**, which need no public URL, so they work with a deployed bridge or a local one.
+Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhook deliveries. It polls instead, which needs no public URL, so it works with a deployed bridge or a local one:
 
-**Tested:** Claude Code 2.1.294 and 2.1.295 (`claude -p`, Haiku 4.5) calling `wait_for_event` against a local bridge, for generic webhook fills and GitHub comments (see `docs/SPIKES.md`).
+- **While Claude works on a request:** the bridge's poll tools (sections 1 and 2).
+- **Between prompts:** the plugin (section 3), which wakes Claude for each event. If you only want this, install the plugin and skip sections 1 and 2.
+
+**Tested:** Claude Code 2.1.294 and 2.1.295: `wait_for_event` with `claude -p` and interactively, against local and deployed bridges, and the plugin installed from the marketplace (see "Claude Code: watch and the plugin" in `docs/SPIKES.md`).
 
 ## 1. Add the bridge as an MCP server
 

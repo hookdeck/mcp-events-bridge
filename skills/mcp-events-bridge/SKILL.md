@@ -90,6 +90,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
   - `wait_for_event` (`name`, `arguments`, `cursor`): waits up to 45 s and returns as soon as there are events. Call it again with the `cursor` it returned to keep waiting.
   - `poll_events` (same, plus `maxEvents`, `maxAgeMs`): returns at once; call again after `nextPollMs`, or at once when `hasMore` is true.
   - Without a cursor, both start from now. Events can repeat: dedupe by `eventId`. For events that already happened, use `list_events` and `get_event`.
+- **Claude Code, between prompts:** the poll tools only wait while Claude is working on a request. To be told about events while it's idle, the user installs the plugin, `/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge` (it asks for the MCP URL), then says "watch … for …"; see [references/claude-code.md](references/claude-code.md), section 3. Other agents that wake on a background command's output can run `npx @hookdeck/mcp-events-bridge watch <event...> [--filter key=value]`, which prints one JSON line per event.
 - **Clients that implement MCP Events poll mode** call `events/poll` (same arguments and cursor) instead of subscribing.
 
 ## 5. Verify
