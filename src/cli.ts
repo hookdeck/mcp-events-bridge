@@ -377,8 +377,9 @@ async function watchCommand(argv: string[]) {
       onError: (name, error, retryMs) => console.error(`[watch] ${name}: ${redactUrl(String((error as Error).message ?? error))}; retrying in ${retryMs / 1000}s`),
     });
   } catch (error) {
-    // Fatal: an unknown event name, or arguments that don't match its inputSchema.
-    console.error(`[watch] ${redactUrl(String((error as Error).message ?? error))}`);
+    // Fatal: an unknown event name, or arguments that don't match its inputSchema (data.detail says how).
+    const detail = (error as { data?: { detail?: unknown } }).data?.detail;
+    console.error(`[watch] ${redactUrl(String((error as Error).message ?? error))}${typeof detail === 'string' ? `: ${detail}` : ''}`);
     process.exitCode = 1;
   } finally {
     void (await client?.catch(() => undefined))?.close();
