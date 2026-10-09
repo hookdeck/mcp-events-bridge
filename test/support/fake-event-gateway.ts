@@ -31,6 +31,8 @@ export class FakeEventGateway {
   readonly issueTriggers = new Map<string, Record<string, unknown>>();
   readonly issues = new Map<string, { id: string; type: string; status: string; aggregation_keys: Record<string, unknown[]> }>();
   readonly published: Array<{ sourceName: string; headers: Record<string, string>; body: string }> = [];
+  /** Stored requests, for get_event, list_events and poll; all listed at once (no appearance delay). */
+  readonly requests: Array<{ id: string; source_id: string; created_at: string; verified: boolean; rejection_cause: string | null; events_count: number; ignored_count: number; data: { headers: Record<string, string>; body: unknown } }> = [];
   /** Subscription ids (X-MCP-Subscription-Id) whose publish should fail with 503. */
   readonly failPublishFor = new Set<string>();
   webhookNotifications: Record<string, unknown> | null = null;
@@ -155,6 +157,20 @@ export class FakeEventGateway {
       const models = [...this.sources.values()].filter((src) => !name || src.name === name).map(({ config: _hidden, ...visible }) => visible);
       return json(200, { models });
     }
+
+    if (method === 'GET' && path === '/requests') {
+      const sourceIds = url.searchParams.getAll('source_id');
+      const from = url.searchParams.get('created_at[gte]');
+      const accepted = url.searchParams.get('status') === 'accepted';
+      const limit = Number(url.searchParams.get('limit') ?? 100);
+      const models = this.requests
+        .filter((r) => (!sourceIds.length || sourceIds.includes(r.source_id)) && (!from || r.created_at >= from) && (!accepted || !r.rejection_cause))
+        .sort((a, b) => (url.searchParams.get('dir') === 'asc' ? a.created_at.localeCompare(b.created_at) : b.created_at.localeCompare(a.created_at)))
+        .slice(0, limit);
+      return new Response(JSON.stringify({ models, pagination: {} }), { status: 200, headers: { date: new Date().toUTCString() } });
+    }
+
+    if (method === 'GET' && /^\/requests\/[^/]+\/ignored_events$/.test(path)) return json(200, { models: [] });
 
     if (method === 'PUT' && path === '/notifications/webhooks') {
       this.webhookNotifications = JSON.parse(String(init?.body));

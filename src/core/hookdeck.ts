@@ -33,6 +33,8 @@ export interface HookdeckRequest {
   source_id: string;
   created_at: string;
   events_count?: number | null;
+  /** Events to CLI destinations (a local bridge's inbound connection), counted apart from `events_count`. */
+  cli_events_count?: number | null;
   ignored_count?: number | null;
   rejection_cause?: string | null;
   verified?: boolean;
@@ -187,7 +189,25 @@ export interface HookdeckClientOptions {
   retryDelaysMs?: number[];
 }
 
-type Query = Record<string, string | number | undefined>;
+/** An array value is sent as a repeated parameter (`source_id=a&source_id=b`): a comma-separated value matches nothing. */
+type Query = Record<string, string | number | string[] | undefined>;
+
+/** What Event Gateway's response headers say: its clock, and the API rate limit (240 requests a minute per key). */
+export interface ResponseMeta {
+  /** The response's `Date` header, as epoch milliseconds (1-second precision). */
+  date?: number;
+  rateLimit?: { limit: number; remaining: number };
+}
+
+const responseMeta = (headers: Headers): ResponseMeta => {
+  const date = Date.parse(headers.get('date') ?? '');
+  const limit = Number(headers.get('x-ratelimit-limit'));
+  const remaining = Number(headers.get('x-ratelimit-remaining'));
+  return {
+    ...(Number.isFinite(date) && { date }),
+    ...(headers.has('x-ratelimit-remaining') && Number.isFinite(remaining) && { rateLimit: { limit: Number.isFinite(limit) && limit > 0 ? limit : 240, remaining } }),
+  };
+};
 
 export class HookdeckClient {
   private readonly apiBase: string;
@@ -203,10 +223,16 @@ export class HookdeckClient {
   }
 
   private async api<T>(path: string, init: { method?: string; query?: Query; body?: unknown } = {}): Promise<T> {
+    return (await this.apiWithMeta<T>(path, init)).body;
+  }
+
+  /** With `retry: false`, a 429 or server error throws at once (poll answers from what it has rather than wait). */
+  private async apiWithMeta<T>(path: string, init: { method?: string; query?: Query; body?: unknown; retry?: boolean } = {}): Promise<{ body: T; meta: ResponseMeta }> {
     const method = init.method ?? 'GET';
     const url = new URL(this.apiBase + path);
     for (const [key, value] of Object.entries(init.query ?? {})) {
-      if (value !== undefined) url.searchParams.set(key, String(value));
+      if (Array.isArray(value)) for (const item of value) url.searchParams.append(key, item);
+      else if (value !== undefined) url.searchParams.set(key, String(value));
     }
     // Recovery walks every request in a window, two calls each, so rate
     // limits are reachable. Back off here rather than in each caller.
@@ -217,8 +243,8 @@ export class HookdeckClient {
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
       });
       const text = await res.text();
-      if (res.ok) return (text ? JSON.parse(text) : {}) as T;
-      const delay = this.retryDelaysMs[attempt];
+      if (res.ok) return { body: (text ? JSON.parse(text) : {}) as T, meta: responseMeta(res.headers) };
+      const delay = init.retry === false ? undefined : this.retryDelaysMs[attempt];
       // 429s always back off. Server errors are retried only for idempotent methods: concurrent upserts that
       // create the same new source can fail with 500 FATAL_ERROR (stage 5).
       const retryable = res.status === 429 || (method !== 'POST' && [500, 502, 503, 504].includes(res.status));
@@ -261,6 +287,27 @@ export class HookdeckClient {
     });
   }
 
+  /**
+   * Accepted requests to several sources, oldest first, with headers and body: poll mode's listing. One call covers
+   * every source (a repeated `source_id`); the meta carries Event Gateway's clock and the rate limit.
+   */
+  async listAcceptedRequests(query: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }): Promise<{ page: Page<HookdeckRequest>; meta: ResponseMeta }> {
+    const { body, meta } = await this.apiWithMeta<Page<HookdeckRequest>>('/requests', {
+      retry: false,
+      query: {
+        source_id: query.source_ids,
+        status: 'accepted',
+        include: 'data',
+        'created_at[gte]': query.created_at_gte,
+        limit: query.limit ?? 255,
+        order_by: 'created_at',
+        dir: 'asc',
+        next: query.next,
+      },
+    });
+    return { page: body, meta };
+  }
+
   /** Events, filtered by connection (`webhook_id`, verified live to filter) and creation time. */
   listEvents(query: { webhook_id: string; created_at_gte?: string; status?: string; limit?: number; next?: string }) {
     return this.api<Page<HookdeckEvent>>('/events', {
@@ -293,8 +340,10 @@ export class HookdeckClient {
     return this.api<Page<HookdeckEvent>>(`/requests/${encodeURIComponent(requestId)}/events`, { query: { limit: 100 } });
   }
 
-  listIgnoredEventsForRequest(requestId: string) {
-    return this.api<Page<IgnoredEvent>>(`/requests/${encodeURIComponent(requestId)}/ignored_events`, { query: { limit: 100 } });
+  /** With `retry: false`, a 429 throws at once (poll mode answers without waiting). */
+  async listIgnoredEventsForRequest(requestId: string, options: { retry?: boolean } = {}) {
+    const path = `/requests/${encodeURIComponent(requestId)}/ignored_events`;
+    return (await this.apiWithMeta<Page<IgnoredEvent>>(path, { query: { limit: 100 }, retry: options.retry })).body;
   }
 
   /**
