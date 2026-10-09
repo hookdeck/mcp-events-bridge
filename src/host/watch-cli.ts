@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { addWatch, projectPaths, readWatchList, removeWatches, statePathFor, watchKey, watchList, writeWatchList, type Watch } from './watch-list.js';
-import { isFatal, parseFilters, redactUrl, watch, watchUrl, type Poll } from './watch.js';
+import { addWatch, projectPaths, pruneState, readWatchList, removeWatches, statePathFor, updateWatchList, watchKey, watchList, type Watch } from './watch-list.js';
+import { isBridgeError, isFatal, parseFilters, redactUrl, watch, watchUrl, type Poll } from './watch.js';
 
 /*
  * The `watch` and `watches` commands. `watch` polls the bridge and prints one JSON line per event;
@@ -30,10 +30,11 @@ Options:
   --state <file>          where to save the cursors (default: <list>.state.json beside the list)
   --store <dir> --project <dir>
                           the list and state for a project, kept under <store>/projects/
-  --url <MCP URL>         the bridge's MCP URL (default: --url-file, else BRIDGE_MCP_URL, else built
-                          from BRIDGE_PUBLIC_URL or the local port, and BRIDGE_MCP_SECRET, read from .env)
-  --url-file <file>       a file holding the MCP URL, read when connecting (default with --store:
-                          <store>/mcp-url)`;
+  --url <MCP URL>         the bridge's MCP URL. Default with event names or --list: BRIDGE_MCP_URL,
+                          else built from BRIDGE_PUBLIC_URL (or the local port) and BRIDGE_MCP_SECRET,
+                          read from the environment or .env
+  --url-file <file>       a file holding the MCP URL, read when connecting, else BRIDGE_MCP_URL
+                          (default with --store: <store>/mcp-url; .env isn't read)`;
 
 export const WATCHES_USAGE = `Usage: mcp-events-bridge watches add <event name> [--filter key=value...] <list options>
        mcp-events-bridge watches remove <event name> [--filter key=value...] | --all  <list options>
@@ -101,12 +102,13 @@ async function bridgePoller(url: () => string, version: string): Promise<{ poll:
       await c.connect(new StreamableHTTPClientTransport(new URL(url())));
       return c;
     })());
-  const poll: Poll = async (request) => {
+  const poll: Poll = async (request, signal) => {
     const current = connect();
     try {
-      return (await (await current).request({ method: 'events/poll', params: request } as never, anyResult)) as never;
+      return (await (await current).request({ method: 'events/poll', params: request } as never, anyResult, { signal })) as never;
     } catch (error) {
-      if (!isFatal(error) && client === current) {
+      // An error from the bridge leaves the connection usable; a transport failure drops it.
+      if (!isBridgeError(error) && client === current) {
         client = undefined;
         void current.then((c) => c.close()).catch(() => {});
       }
@@ -129,9 +131,11 @@ function stopOnSignals() {
   return controller;
 }
 
-export async function watchCommand(argv: string[], version: string) {
+export async function watchCommand(argv: string[], version: string, loadDotEnv: () => void) {
   const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: listOptions });
   const paths = listPaths(values);
+  // A plugin monitor runs in the user's project: its .env is theirs, not the bridge's.
+  if (!values.store && !values['url-file']) loadDotEnv();
   if (values.help || (positionals.length === 0 && !paths)) return console.log(WATCH_USAGE);
   if (paths && positionals.length) throw new Error('give event names or a watch list, not both');
   const url = urlSource(values);
@@ -148,6 +152,7 @@ export async function watchCommand(argv: string[], version: string) {
       onEvent: (event) => console.log(JSON.stringify(event)),
       onProblem: (problem) => console.log(JSON.stringify(problem)),
       onError,
+      describe: message,
       signal: controller.signal,
     });
     return bridge.close();
@@ -187,10 +192,11 @@ const safeUrl = (url: () => string) => {
 const describe = (w: Watch) =>
   `${w.name}${Object.keys(w.arguments).length ? ` ${Object.entries(w.arguments).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' ')}` : ''}`;
 
-export async function watchesCommand(argv: string[], version: string) {
+export async function watchesCommand(argv: string[], version: string, loadDotEnv: () => void) {
   const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: { ...listOptions, all: { type: 'boolean', default: false } } });
   const [action, name] = positionals;
   const paths = listPaths(values);
+  if (!values.store && !values['url-file']) loadDotEnv();
   if (values.help || !action) return console.log(WATCHES_USAGE);
   if (!paths) throw new Error('give the watch list: --list <file>, or --store <dir> --project <dir>');
   const watches = readWatchList(paths.list);
@@ -219,19 +225,21 @@ export async function watchesCommand(argv: string[], version: string) {
       } finally {
         await bridge.close();
       }
-      addWatch(watches, watch);
-      writeWatchList(paths.list, watches);
+      // Under the lock, from the list as it is now: another add may have written it meanwhile.
+      await updateWatchList(paths.list, (latest) => addWatch(latest, watch));
       console.log(`Watching ${describe(watch)}.${unchecked ? ` (Not checked with the bridge, which couldn't be reached: ${unchecked})` : ''}`);
       return;
     }
     case 'remove': {
-      if (values.all) {
-        writeWatchList(paths.list, []);
-        return console.log(`Removed ${watches.length} watch${watches.length === 1 ? '' : 'es'}.`);
-      }
-      if (!name) throw new Error('watches remove <event name> [--filter key=value...] | --all');
-      const removed = removeWatches(watches, name, values.filter?.length ? parseFilters(values.filter) : undefined);
-      writeWatchList(paths.list, watches);
+      if (!values.all && !name) throw new Error('watches remove <event name> [--filter key=value...] | --all');
+      const args = values.filter?.length ? parseFilters(values.filter) : undefined;
+      const { removed, left } = await updateWatchList(paths.list, (latest) => {
+        const removed = values.all ? latest.splice(0).length : removeWatches(latest, name!, args);
+        return { removed, left: [...latest] };
+      });
+      // Their saved cursors too, so adding one again starts from now.
+      pruneState(paths.state, left);
+      if (values.all) return console.log(`Removed ${removed} watch${removed === 1 ? '' : 'es'}.`);
       return console.log(removed ? `Removed ${removed} watch${removed === 1 ? '' : 'es'} for ${name}.` : `No watch for ${name} matched.`);
     }
     default:

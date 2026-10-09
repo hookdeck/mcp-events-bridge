@@ -26,7 +26,7 @@ events-bridge watches list --store "${CLAUDE_PLUGIN_DATA}" --project "${CLAUDE_P
 - `--filter` is repeatable. A list value is JSON: `--filter 'actions=["opened","closed"]'`.
 - `add` checks the name and filters with the bridge, and says why if they're wrong. `remove` without `--filter` removes every watch for that event name.
 - The monitor picks up a change within a few seconds. A new watch starts from now. Don't start a watch with the Monitor tool yourself: the plugin's monitor already runs.
-- Watches belong to this project and last between sessions. When a session starts, events from the last 24 hours that weren't reported yet arrive first.
+- Watches belong to this project and last between sessions. When a session starts, events that happened since the last session arrive first (up to 24 hours old).
 
 To show past events instead, use the MCP server's `list_events` and `get_event` tools.
 
@@ -39,4 +39,5 @@ Long lines are cut short in notifications. If a field looks cut off, read the wh
 A line like `{"problem": "..."}` means something is wrong. Tell the user:
 
 - `stopped watching: ...` with a `watch`: that watch can't run (for example, the event no longer exists). Suggest removing it.
-- `can't reach the bridge, still retrying: ...`: events will arrive once the bridge is reachable again. If it says `no MCP URL yet`, the plugin's MCP URL isn't set: the user sets it in `/plugin` (configure the MCP Events bridge plugin).
+- `this watch keeps failing, still retrying: ...` with a `watch`: the bridge answers, but not for that watch (for example, its provider isn't set up). It's still retried.
+- `can't reach the bridge, still retrying: ...`: events will arrive once the bridge is reachable again. If it says `no MCP URL yet`, the plugin's MCP URL isn't set: the user sets it in `/plugin` (configure the MCP Events bridge plugin), then starts a new session.

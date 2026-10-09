@@ -16,7 +16,7 @@ export interface PollRequest {
   maxAgeMs?: number;
 }
 
-export type Poll = (request: PollRequest) => Promise<Pick<PollResult, 'events' | 'cursor' | 'hasMore' | 'nextPollMs'>>;
+export type Poll = (request: PollRequest, signal?: AbortSignal) => Promise<Pick<PollResult, 'events' | 'cursor' | 'hasMore' | 'nextPollMs'>>;
 
 export interface WatchDeps {
   names: string[];
@@ -34,6 +34,15 @@ export function isFatal(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === EventsErrorCode.InvalidParams || code === EventsErrorCode.NotFound;
 }
+
+/** events/poll rejected the cursor (invalid params with `data.field: 'cursor'`). */
+export function isCursorError(error: unknown): boolean {
+  const e = error as { code?: unknown; data?: { field?: unknown } } | null;
+  return e?.code === EventsErrorCode.InvalidParams && e.data?.field === 'cursor';
+}
+
+/** A JSON-RPC error from the bridge, as opposed to a transport failure (no connection, HTTP error, timeout). */
+export const isBridgeError = (error: unknown) => typeof (error as { code?: unknown } | null)?.code === 'number';
 
 const MAX_BACKOFF_MS = 30_000;
 /** Polls overlap, so the same event can come back: remember this many ids per name. */
@@ -77,7 +86,7 @@ export async function runWatch(deps: RunWatchDeps): Promise<void> {
     try {
       const request: PollRequest = { name: deps.name, arguments: deps.arguments, cursor };
       if (cursor !== null && deps.maxAgeMs !== undefined) request.maxAgeMs = deps.maxAgeMs;
-      const result = await deps.poll(request);
+      const result = await deps.poll(request, deps.signal);
       if (deps.signal.aborted) return;
       for (const event of result.events) {
         if (seen.has(event.eventId)) continue;
@@ -91,6 +100,11 @@ export async function runWatch(deps: RunWatchDeps): Promise<void> {
       delay = result.hasMore ? 0 : result.nextPollMs;
     } catch (error) {
       if (deps.signal.aborted) return;
+      // A cursor this bridge no longer accepts (a saved one, after an upgrade): start again from now.
+      if (cursor !== null && isCursorError(error)) {
+        cursor = null;
+        continue;
+      }
       if (isFatal(error)) throw error;
       delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** failures++);
       deps.onError(deps.name, error, delay, failures);
@@ -141,5 +155,6 @@ export function watchUrl(flag: string | undefined, environment: NodeJS.ProcessEn
 
 /** The URL without its secret path segment, for messages. */
 export function redactUrl(url: string): string {
-  return url.replace(/\/mcp\/[^/?#]+/, '/mcp/<secret>');
+  // The secret is URL-safe (base64url, or percent-encoded), so stop at anything else.
+  return url.replace(/\/mcp\/[A-Za-z0-9_.~%-]+/g, '/mcp/<secret>');
 }

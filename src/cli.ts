@@ -315,9 +315,8 @@ async function main() {
     return providers(argv.slice(1));
   }
   if (argv[0] === 'watch' || argv[0] === 'watches') {
-    loadDotEnv();
     try {
-      return await (argv[0] === 'watch' ? watchCommand : watchesCommand)(argv.slice(1), packageVersion());
+      return await (argv[0] === 'watch' ? watchCommand : watchesCommand)(argv.slice(1), packageVersion(), loadDotEnv);
     } catch (error) {
       console.error(`[${argv[0]}] ${(error as Error).message}`);
       process.exitCode = 1;

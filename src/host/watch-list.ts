@@ -4,7 +4,7 @@ import path from 'node:path';
 import { canonicalJson } from '../core/canonical-json.js';
 import type { PastEvent } from '../core/event-history.js';
 import { writeAtomically } from './providers-add.js';
-import { abortableSleep, runWatch, type Poll, type WatchDeps } from './watch.js';
+import { abortableSleep, isBridgeError, runWatch, type Poll, type WatchDeps } from './watch.js';
 
 /*
  * `watch --list <file>`: watches from a file that changes while it runs, for a process that's
@@ -69,6 +69,39 @@ export function writeWatchList(file: string, watches: Watch[]) {
   writeAtomically(file, `${JSON.stringify({ watches } satisfies WatchListFile, null, 2)}\n`);
 }
 
+/**
+ * Runs `update` on the list under a lock file, so two `watches add` at once (Claude often runs them
+ * in parallel) don't overwrite each other. A lock older than `staleMs` is from a process that died.
+ */
+export async function updateWatchList<T>(file: string, update: (watches: Watch[]) => T, { waitMs = 5000, staleMs = 10_000 } = {}): Promise<T> {
+  const lock = `${file}.lock`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lock, 'wx'));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > staleMs) fs.rmSync(lock, { force: true });
+      } catch {
+        // gone already
+      }
+      if (Date.now() > deadline) throw new Error(`the watch list is locked (${lock}); try again`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  try {
+    const watches = readWatchList(file);
+    const result = update(watches);
+    writeWatchList(file, watches);
+    return result;
+  } finally {
+    fs.rmSync(lock, { force: true });
+  }
+}
+
 /** Adds a watch (no-op if it's there); returns false if it was already there. */
 export function addWatch(watches: Watch[], watch: Watch): boolean {
   if (watches.some((w) => watchKey(w) === watchKey(watch))) return false;
@@ -100,12 +133,14 @@ export interface WatchListDeps {
   /** Something the agent should know about, printed with the events: a watch that can't run, a bridge that can't be reached. */
   onProblem: (problem: { problem: string; watch?: Watch }) => void;
   onError: WatchDeps['onError'];
+  /** An error as text for `onProblem`, with any secret removed (default: its message). */
+  describe?: (error: unknown) => string;
   signal: AbortSignal;
   /** How often to check the list for changes (default 2 s). */
   reloadMs?: number;
-  /** Resume from a saved cursor no older than this, skipping older events (default 24 hours). */
+  /** When resuming from a saved cursor, skip events older than this (default 24 hours). */
   resumeMaxAgeMs?: number;
-  /** Consecutive failed polls before `onProblem` reports the bridge unreachable (default 5, about 30 s). */
+  /** Consecutive failed polls before `onProblem` reports them (default 5, about 30 s). */
   failuresToReport?: number;
   /** Save cursors at most this often (default 10 s). */
   saveEveryMs?: number;
@@ -113,16 +148,29 @@ export interface WatchListDeps {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
+/** Removes saved cursors for watches that aren't in `list` (a watch added again starts from now). */
+export function pruneState(state: string, list: Watch[]) {
+  const cursors = readState(state);
+  const keep = new Set(list.map(watchKey));
+  const stale = Object.keys(cursors).filter((key) => !keep.has(key));
+  if (!stale.length) return;
+  for (const key of stale) delete cursors[key];
+  writeAtomically(state, `${JSON.stringify(cursors, null, 2)}\n`);
+}
+
 /** Runs the watches in `list`, following its changes, until `signal` aborts. */
 export async function watchList(deps: WatchListDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? abortableSleep;
+  const describe = deps.describe ?? ((error: unknown) => String((error as Error)?.message ?? error));
   const reloadMs = deps.reloadMs ?? 2000;
   const resumeMaxAgeMs = deps.resumeMaxAgeMs ?? 24 * 60 * 60 * 1000;
   const failuresToReport = deps.failuresToReport ?? 5;
   const saveEveryMs = deps.saveEveryMs ?? 10_000;
 
   const running = new Map<string, { watch: Watch; controller: AbortController; done: Promise<void> }>();
+  /** Watches stopped by an error a retry can't fix: they stay stopped until removed from the list. */
+  const stopped = new Set<string>();
   const cursors = readState(deps.state);
   let dirty = false;
   let lastSave = 0;
@@ -137,62 +185,93 @@ export async function watchList(deps: WatchListDeps): Promise<void> {
       // try again at the next save
     }
   };
-  let unreachable = false;
+
+  // Consecutive failures per watch, so one failing watch isn't reported as the bridge being unreachable.
+  const failing = new Map<string, number>();
+  const reported = new Set<string>();
+  let reportedAll = false;
+  const report = (key: string, watch: Watch, error: unknown, failures: number, fromBridge: boolean) => {
+    failing.set(key, failures);
+    const live = [...running.keys()].filter((k) => !stopped.has(k));
+    if (live.every((k) => (failing.get(k) ?? 0) >= failuresToReport)) {
+      if (!reportedAll) {
+        reportedAll = true;
+        deps.onProblem({ problem: `can't reach the bridge, still retrying: ${describe(error)}` });
+      }
+    } else if (fromBridge && failures >= failuresToReport && !reported.has(key)) {
+      reported.add(key);
+      deps.onProblem({ problem: `this watch keeps failing, still retrying: ${describe(error)}`, watch });
+    }
+  };
 
   const start = (watch: Watch) => {
     const key = watchKey(watch);
     const controller = new AbortController();
-    const saved = cursors[key];
-    const fresh = saved && now() - Date.parse(saved.savedAt) <= resumeMaxAgeMs;
+    stopped.delete(key);
     const done = runWatch({
       ...watch,
-      cursor: fresh ? saved.cursor : null,
+      // A saved cursor resumes there; the bridge skips events older than maxAgeMs.
+      cursor: cursors[key]?.cursor ?? null,
       maxAgeMs: resumeMaxAgeMs,
       poll: deps.poll,
       onEvent: deps.onEvent,
       onCursor: (cursor) => {
-        unreachable = false;
+        failing.delete(key);
+        reported.delete(key);
+        reportedAll = false;
         cursors[key] = { cursor, savedAt: new Date(now()).toISOString() };
         dirty = true;
         save();
       },
       onError: (name, error, retryMs, failures) => {
         deps.onError(name, error, retryMs, failures);
-        if (failures >= failuresToReport && !unreachable) {
-          unreachable = true;
-          deps.onProblem({ problem: `can't reach the bridge, still retrying: ${String((error as Error)?.message ?? error)}` });
-        }
+        report(key, watch, error, failures, isBridgeError(error));
       },
       signal: controller.signal,
       sleep: deps.sleep,
-    }).catch((error: unknown) => deps.onProblem({ problem: `stopped watching: ${String((error as Error)?.message ?? error)}`, watch }));
+    }).catch((error: unknown) => {
+      stopped.add(key);
+      failing.delete(key);
+      deps.onProblem({ problem: `stopped watching: ${describe(error)}`, watch });
+    });
     running.set(key, { watch, controller, done });
   };
 
   let lastText: string | undefined;
   while (!deps.signal.aborted) {
-    let text: string;
+    let text: string | undefined;
     try {
       text = fs.readFileSync(deps.list, 'utf8');
-    } catch {
-      text = '{"watches":[]}';
+    } catch (error) {
+      // No list (yet, or while an editor rewrites it): nothing to watch, but keep the cursors. Unreadable: keep going as is.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') text = '';
     }
-    if (text !== lastText) {
+    if (text !== undefined && text !== lastText) {
+      const first = lastText === undefined;
       lastText = text;
       let watches: Watch[] | undefined;
       try {
-        watches = parseWatchList(text);
+        watches = text === '' ? [] : parseWatchList(text);
       } catch (error) {
         deps.onProblem({ problem: `can't read the watch list ${deps.list}: ${(error as Error).message}` });
       }
       if (watches) {
         const wanted = new Map(watches.map((w) => [watchKey(w), w]));
+        // Cursors for watches no longer in the list: dropped, so a watch added again starts from now (not for a missing file).
+        if (text !== '' || first) {
+          for (const key of Object.keys(cursors)) {
+            if (wanted.has(key) || (text === '' && first)) continue;
+            delete cursors[key];
+            dirty = true;
+          }
+        }
         for (const [key, run] of running) {
           if (wanted.has(key)) continue;
           run.controller.abort();
           running.delete(key);
-          delete cursors[key];
-          dirty = true;
+          stopped.delete(key);
+          failing.delete(key);
+          reported.delete(key);
         }
         for (const [key, watch] of wanted) if (!running.has(key)) start(watch);
       }

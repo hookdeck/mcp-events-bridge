@@ -53,7 +53,7 @@ Then ask, in any project:
 
 Claude adds the watches to the project's watch list, and the plugin's monitor, which runs `mcp-events-bridge watch` for the whole session, wakes Claude for each event. "Stop watching…" and "what am I watching?" work too.
 
-- **Per project, and between sessions:** each project has its own watch list. When you start a session, events from the last 24 hours that weren't reported yet arrive first.
+- **Per project, and between sessions:** each project has its own watch list. When you start a session, events that happened since your last session in that project arrive first, up to 24 hours old.
 - **Interactive sessions only:** plugin monitors don't run with `claude -p`.
 - **More than one session in a project:** each one is told about every event.
 - **Long events are shortened:** monitor notifications cut long lines short (seen at around 500 characters), so the plugin's skill has Claude read the whole event with `get_event`.
@@ -62,7 +62,7 @@ Claude adds the watches to the project's watch list, and the plugin's monitor, w
 
 **Without the plugin**, ask Claude to run `watch` with its Monitor tool, which wakes the session on each line a command prints:
 
-> In the background, watch hookdeck/hookdeck-demos for new issues and comments with `npx mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos`, and tell me about each one as it arrives.
+> In the background, watch hookdeck/hookdeck-demos for new issues and comments with `npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos`, and tell me about each one as it arrives.
 
 `watch` needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge). A Monitor watch expires after at most 30 minutes, and events between one watch and the next are missed. Claude Code asks before starting the command unless `Monitor` is allowed.
 
