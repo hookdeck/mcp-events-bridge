@@ -1,0 +1,12 @@
+{
+  "name": "hookdeck",
+  "description": "Hookdeck plugins for Claude Code",
+  "owner": { "name": "Hookdeck", "url": "https://hookdeck.com" },
+  "plugins": [
+    {
+      "name": "mcp-events-bridge",
+      "source": "./plugins/mcp-events-bridge",
+      "description": "Watch MCP Events bridge events (GitHub, Resend, webhooks) in the background: Claude is told as each one happens."
+    }
+  ]
+}

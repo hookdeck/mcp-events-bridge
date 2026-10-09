@@ -211,3 +211,36 @@ Run the same day against the Fly deployment (0.3.0, HTTP inbound, its own `bridg
 ### Resources
 
 Webhooks on the five repositories deliver to the development project's `bridge-github` source, kept for dogfooding. The test issue (`hookdeck-demos#25`) and draft pull request (`hookdeck-demos#26`) are closed; the pull request's branch is deleted.
+
+## Claude Code: watch and the plugin
+
+Run on 9 Oct 2026 with Claude Code 2.1.295 (interactive, Opus 5.5) against the Fly deployment, with GitHub events from `hookdeck/hookdeck-demos` ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)). Question: can Claude Code hear about events between prompts, without MCP Events support? **Yes, through a background command that prints each event.**
+
+### What we ran
+
+1. **`wait_for_event` in a turn:** asked to watch for three comments, while three were posted 20 seconds apart.
+2. **`watch` with the Monitor tool** ([#45](https://github.com/hookdeck/mcp-events-bridge/pull/45)): asked to watch issues and comments "in the background", then asked something else, while an issue was opened, commented on twice and closed.
+3. **A Fly restart** under a running `watch`, with a comment before and one after.
+4. **A plugin monitor** (a minimal plugin with `--plugin-dir`): a comment while the session had never had a prompt.
+5. **The plugin** ([#47](https://github.com/hookdeck/mcp-events-bridge/pull/47)), first with `--plugin-dir`, then installed from the marketplace on the branch (`--scope local`, in a throwaway project), the MCP URL set with `claude plugin configure --values-stdin` and not in the environment: "watch hookdeck/hookdeck-demos for new issues and comments", a comment, a reopen, then a comment posted while no session was open.
+
+### What we saw
+
+- **`wait_for_event`:** each comment reported within seconds, with progress notifications ("waiting for events") while it waited. The turn is held throughout.
+- **Monitor tool:** each of four events woke the idle session as a "Monitor event", and Claude reported each; the session answered another question in between. Claude chose a 30-minute timeout, the Monitor tool's maximum, and offered to re-arm it.
+- **Long lines are shortened:** a notification's line was cut at around 500 characters, so a comment near the end of the JSON arrived cut off. The bridge's own limit (500 characters per text field) wasn't the cause. Lines start with `eventId`, so `get_event` reads the rest; the skill says so.
+- **stderr woke Claude too:** Claude merged stderr into the Monitor command, and `watch`'s startup line woke it with nothing to report. `watch` now prints it only to a terminal.
+- **Fly restart:** no failed poll and nothing lost. The bridge's MCP is stateless (one server per request), so there's no session to lose.
+- **Plugin monitor:** started with the session ("1 monitor") before any prompt, woke a session that had never had a prompt, and stopped with the session.
+- **The plugin, installed:** the required option was reported unset at install; the `SessionStart` hook wrote `mcp-url` (mode 0600); the plugin's MCP server answered `list_providers`; the skill added two watches, choosing `actions` filters (`opened`, `created`) for "new"; a comment woke the session and the reopen was filtered out; the comment posted while the session was closed arrived when the next one started.
+- **A review found, and we fixed before release:** the secret in `{ problem }` lines (a 404 page that echoes the path), two parallel `watches add` losing one (reproduced against Fly; a re-read wasn't enough, a lock file is), one failing watch reported every 30 s as "can't reach the bridge", and a rejected saved cursor stopping a watch every session.
+
+### What it means for the design
+
+- Claude Code gets events between prompts today, with no MCP Events support: the bridge's poll mode plus a plugin monitor. Push isn't needed for it.
+- Notifications are text lines with a length limit, so events need an id up front and a way to fetch the rest (`get_event`).
+- Plugin monitors can't read the plugin's user config, so the secret reaches `watch` through a file the session-start hook writes. A Claude Code feature to pass user config to monitors would remove that copy.
+
+### Resources
+
+Test issues `hookdeck-demos#27`, `#28` and `#29` (closed). The test plugin install and its data were removed. Screenshots: `docs/images/claude-code-wait-for-event.png` and `docs/images/claude-code-watch.png`.

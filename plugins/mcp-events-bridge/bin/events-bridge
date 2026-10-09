@@ -1,0 +1,4 @@
+#!/bin/sh
+# The bridge's CLI, for the plugin's monitor and skill. MCP_EVENTS_BRIDGE_CLI runs another build,
+# such as a checkout: MCP_EVENTS_BRIDGE_CLI="npx tsx /path/to/mcp-events-bridge/src/cli.ts".
+exec ${MCP_EVENTS_BRIDGE_CLI:-npx -y @hookdeck/mcp-events-bridge@0.4.0} "$@"

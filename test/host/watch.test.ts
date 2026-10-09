@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { invalidParams, notFound } from '../../src/core/errors.js';
+import { internalError, invalidParams, notFound } from '../../src/core/errors.js';
 import type { PastEvent } from '../../src/core/event-history.js';
-import { isFatal, parseFilters, redactUrl, watch, watchUrl, type PollRequest, type WatchDeps } from '../../src/host/watch.js';
+import { isBridgeError, isCursorError, isFatal, parseFilters, redactUrl, runWatch, watch, watchUrl, type PollRequest, type WatchDeps } from '../../src/host/watch.js';
 
 const event = (eventId: string, name = 'github.issue_comment'): PastEvent => ({ eventId, name, timestamp: '2026-10-09T13:00:00.000Z', data: {} });
 type Result = Awaited<ReturnType<WatchDeps['poll']>>;
@@ -81,6 +81,27 @@ describe('watch', () => {
   });
 });
 
+describe('runWatch', () => {
+  it('passes its signal to each poll', async () => {
+    const controller = new AbortController();
+    const signals: Array<AbortSignal | undefined> = [];
+    await runWatch({
+      name: 'github.issues',
+      arguments: {},
+      signal: controller.signal,
+      poll: async (_request, signal) => {
+        signals.push(signal);
+        controller.abort();
+        return page([], 'c1');
+      },
+      onEvent: () => {},
+      onError: () => {},
+      sleep: async () => {},
+    });
+    expect(signals).toEqual([controller.signal]);
+  });
+});
+
 describe('watch helpers', () => {
   it('parses --filter values, JSON where it parses', () => {
     expect(parseFilters(['repository=hookdeck/hookdeck-demos', 'actions=["opened"]', 'sender=null', 'note=a=b'])).toEqual({
@@ -90,6 +111,13 @@ describe('watch helpers', () => {
       note: 'a=b',
     });
     expect(() => parseFilters(['repository'])).toThrow('key=value');
+  });
+
+  it('tells cursor errors and bridge errors apart', () => {
+    expect(isCursorError(invalidParams('cursor is not a cursor this bridge returned', { field: 'cursor' }))).toBe(true);
+    expect(isCursorError(invalidParams('arguments do not match the inputSchema'))).toBe(false);
+    expect(isBridgeError(internalError('x'))).toBe(true);
+    expect(isBridgeError(new Error('fetch failed'))).toBe(false);
   });
 
   it('treats only bad requests as fatal', () => {
@@ -105,5 +133,6 @@ describe('watch helpers', () => {
     expect(watchUrl(undefined, { BRIDGE_MCP_SECRET: 's', PORT: '9000' })).toBe('http://127.0.0.1:9000/mcp/s');
     expect(() => watchUrl(undefined, {})).toThrow('BRIDGE_MCP_SECRET');
     expect(redactUrl('https://b.example/mcp/abc123?x=1')).toBe('https://b.example/mcp/<secret>?x=1');
+    expect(redactUrl('Cannot POST /mcp/abc123 (from https://b.example/mcp/abc123)')).toBe('Cannot POST /mcp/<secret> (from https://b.example/mcp/<secret>)');
   });
 });

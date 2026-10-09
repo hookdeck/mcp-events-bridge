@@ -19,9 +19,9 @@ The bridge closes that gap:
 - **Every event verified, delivered and recorded.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.
 
-It's for developers who want agents (ChatGPT, and agents on the same machine as the bridge) to react to events from the services they already use.
+It's for developers who want agents (ChatGPT, Claude Code, and agents on the same machine as the bridge) to react to events from the services they already use.
 
-**Status:** 0.2, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
+**Status:** 0.4, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
 
 ## How it works
 
@@ -103,7 +103,7 @@ You need:
 
    Locally, `serve` checks that setup has run and starts `hookdeck listen` for every provider, so events reach your laptop through the Hookdeck CLI; it restarts `listen` if it stops, and recovers events that arrived while the bridge was down. Send an email to your Resend address, or open an issue, and the bridge logs it.
 
-6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt). ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://127.0.0.1:8080` and use `https://<tunnel host>/mcp/<BRIDGE_MCP_SECRET>`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
+6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt) or [Connect Claude Code](#connect-claude-code). ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://127.0.0.1:8080` and use `https://<tunnel host>/mcp/<BRIDGE_MCP_SECRET>`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
 
 ## Connect ChatGPT
 
@@ -116,6 +116,18 @@ When an event arrives, the task runs with it, as in the screenshot at the top.
 ChatGPT keeps the list of events it can subscribe to from when you added the plugin. After you upgrade the bridge or add a provider, refresh the plugin in Plugins, or ChatGPT can't subscribe to the new or renamed events (it may still list them, since that call goes to the bridge). Then ask it to subscribe again.
 
 The MCP URL is a credential: anyone with it can use the bridge. Keep it private (see [Security and limitations](#security-and-limitations)).
+
+## Connect Claude Code
+
+Claude Code doesn't support MCP Events yet, so it polls. Install the plugin, which asks for the MCP URL and keeps it in secure storage:
+
+```text
+/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
+```
+
+Then, in any project, ask Claude to watch, for example "watch hookdeck/hookdeck-demos for new issues and comments". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). It needs no public URL, so it works with a local bridge.
+
+Without the plugin, add the bridge as an MCP server and ask Claude to wait for events with the poll tools (see [Polling](#polling)). The [Claude Code guide](skills/mcp-events-bridge/references/claude-code.md) has both.
 
 ## Webhook providers
 
@@ -318,14 +330,20 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 `mcp-events-bridge watch` polls a running bridge from now on and prints each event on its own line, as JSON (`{ eventId, name, timestamp, data }`), until stopped:
 
 ```sh
-npx mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos
+npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos
 ```
 
 Run it under an agent that wakes on a command's output, and the agent hears about events while it's idle or busy with something else. Here Claude Code runs `watch` with its Monitor tool, answers another question, then reports an issue opening, two comments and the issue closing, each as it happens, with no prompt:
 
 ![Claude Code, with a watch on hookdeck/hookdeck-demos running in the background, answers "what events can the bridge give me?", then four Monitor events arrive one by one and Claude reports each: issue #29 opened, two comments quoted in full, and the issue closed](docs/images/claude-code-watch.png)
 
-In Claude Code, that's the Monitor tool: ask Claude to watch in the background with this command (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background)). It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
+In Claude Code, install the plugin, which runs `watch` for the whole session and lets you say "watch hookdeck-demos for new issues" (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background-the-plugin)):
+
+```text
+/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
+```
+
+`watch` also follows a watch list file that changes while it runs (`--list`, edited with `mcp-events-bridge watches add|remove|list`), and resumes where it left off. It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
 
 ## Local agents
 
@@ -349,6 +367,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 ## Security and limitations
 
 - **The MCP URL is a credential.** One secret URL authenticates one owner. It's redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned.
+- **The Claude Code plugin keeps a copy of the URL on disk.** Claude Code keeps it in secure storage, but plugin monitors can't read that, so a session-start hook writes it to `~/.claude/plugins/data/mcp-events-bridge-hookdeck/mcp-url`, readable only by you. Uninstalling the plugin deletes that directory.
 - **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first. Generic webhooks have no unverified option, and the bridge relays only requests Event Gateway marked as verified.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook and poll delivery.** Push (`events/stream`) may come later if clients need it. Local agents receive webhooks through the Hookdeck CLI (above). Poll mode misses a request that takes more than 60 seconds to appear in Event Gateway's request listing (it took up to 15 when measured).
@@ -366,6 +385,9 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 | `serve` logs `0/0 published` | No subscription matches the event's name or filters | Check the subscription's name and arguments with `list_providers` |
 | An event takes a minute or two | `hookdeck listen` occasionally takes ~30s to connect, and Event Gateway occasionally queues a CLI delivery | Wait: the bridge re-sends missed deliveries itself |
 | The same event twice | Two bridges in one Hookdeck project, or a retry | One Hookdeck project per bridge; receivers dedupe by `webhook-id` |
+| Claude Code (plugin) reports `{"problem": "can't reach the bridge, still retrying: no MCP URL yet ..."}` | The plugin's MCP URL isn't set, or was set during this session | Set it in `/plugin` (or `claude plugin configure mcp-events-bridge@hookdeck`), then start a new session |
+| Claude Code (plugin) never reports events | The session isn't interactive (`claude -p`), or nothing is watched in this project | Ask "what am I watching?"; plugin monitors run only in interactive sessions |
+| Claude Code (plugin) reports events cut off | Monitor notifications shorten long lines | Nothing: Claude reads the whole event with `get_event` |
 
 ## Development
 

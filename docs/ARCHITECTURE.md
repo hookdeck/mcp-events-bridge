@@ -306,7 +306,24 @@ Designed 8 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) 
 
 **Acceptance (#26).** A property test against a fake listing (requests appearing late and out of order, duplicates, unprocessed requests, `maxEvents` from 1 to 100). pi-mcp-events calling `events/poll`. A 10-minute live soak with bursts, wrong signatures and duplicates, with Claude Code calling `wait_for_event` during it. A local bridge with `listen` stopped. A long gap, and concurrent pollers with no `429` reaching a caller.
 
-**Next (#26):** `mcp-events-bridge watch`, an `events/poll` client printing one line per event, for a Claude Code plugin monitor.
+### Background: `watch` and the Claude Code plugin
+
+Built 9 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), [#45](https://github.com/hookdeck/mcp-events-bridge/pull/45), [#47](https://github.com/hookdeck/mcp-events-bridge/pull/47)). `wait_for_event` holds an agent's turn; between turns nothing polls. Claude Code wakes a session on each line a background command prints (its Monitor tool, and plugin monitors), so a command that polls and prints events is enough.
+
+**`mcp-events-bridge watch`** (`src/host/watch*.ts`) is an `events/poll` client, connected to the bridge over MCP like any other:
+
+- **With event names:** one loop per name, each with its own cursor from now, one JSON line per event (`{ eventId, name, timestamp, data }`), deduped by `eventId`. It waits `nextPollMs` (none with `hasMore`), backs off up to 30 s on failures, and exits on an unknown name or arguments that don't match the inputSchema.
+- **With a watch list** (`--list <file>`, or `--store <dir> --project <dir>`): it follows `{ "watches": [{ name, arguments }] }` as it changes (checked every 2 s), saves each watch's cursor (at most every 10 s, and on exit), and resumes from it next time, with `maxAgeMs` of 24 hours. A rejected saved cursor (after an upgrade) restarts from now. Problems an agent should hear about go to stdout as `{ "problem": ... }`: a watch that can't run (it stays stopped), a watch that keeps failing, and the bridge unreachable for about 30 s (only when every watch is failing). Secrets are redacted in every message.
+- **`watches add|remove|list`** edits the list under a lock file (Claude runs adds in parallel). `add` checks the name and arguments with a no-cursor `events/poll` first; `remove` also drops the saved cursor, so adding it again starts from now.
+
+**The plugin** (`plugins/mcp-events-bridge`, listed in `.claude-plugin/marketplace.json` as `mcp-events-bridge@hookdeck`):
+
+- A **monitor** (`when: always`) runs `watch --store "${CLAUDE_PLUGIN_DATA}" --project "${CLAUDE_PROJECT_DIR}"` for the whole session, so each project has its own watch list, and a new session first delivers what happened since the last one.
+- A **skill** (`watch`) turns "watch…", "stop watching…" and "what am I watching?" into `events-bridge watches …` (pre-approved with `allowed-tools`), and says to read a cut-off line with `get_event`: notifications shorten long lines (seen at around 500 characters).
+- The bridge as an **MCP server**, `url: ${user_config.mcp_url}`, a sensitive option kept in secure storage. Monitor commands can't read user config, so a `SessionStart` hook copies it to `${CLAUDE_PLUGIN_DATA}/mcp-url` (mode 0600) for `watch`.
+- `bin/events-bridge` runs `npx @hookdeck/mcp-events-bridge@<version>`, or `MCP_EVENTS_BRIDGE_CLI` for a checkout.
+
+Limits: plugin monitors run only in interactive sessions (not `claude -p`); two sessions in one project each hear every event and share the saved cursors; events from more than 24 hours before a session starts are skipped.
 
 ### MCP Events clients
 
@@ -319,7 +336,7 @@ Searched on 7 Oct 2026, for clients that subscribe (not servers that emit):
 | [pi-mcp-events](https://github.com/richardanaya/pi-mcp-events) (Pi coding agent) | 0.1.1 | Webhook, poll and push calls as tools; receives no webhooks itself | Poll or push only |
 | [OpenClaw](https://github.com/openclaw/openclaw/issues/166586) | Feature request | Poll and push proposed; webhook deferred | None yet |
 
-So no released local agent works with the bridge today; Hermes does from its pull request (see the [guide](../skills/mcp-events-bridge/references/hermes-agent.md)), and the e2e tests use a mock agent. Before our fixes went into the pull request, run against the bridge on 7 Oct, Hermes's client code failed every request: its top-level `_meta` makes the message invalid JSON-RPC (`-32600` from the MCP SDK), and with that fixed, subscribe and unsubscribe fail with `name is required`. Hermes's receiver would suit a tunnel URL once it follows the spec: Event Gateway answers the challenge for it, and path forwarding on the tunnel source works for its path-per-subscription receiver (probed 7 Oct). Hermes uses one public base URL for every subscription, so its callback URLs are sub-paths of one tunnel URL, which the bridge recognizes as that tunnel's (see "Paths under a tunnel URL").
+Claude Code isn't an MCP Events client: it uses the poll tools, and the plugin for events between prompts (see "Background: `watch` and the Claude Code plugin"). So no released local agent subscribes through the bridge today; Hermes does from its pull request (see the [guide](../skills/mcp-events-bridge/references/hermes-agent.md)), and the e2e tests use a mock agent. Before our fixes went into the pull request, run against the bridge on 7 Oct, Hermes's client code failed every request: its top-level `_meta` makes the message invalid JSON-RPC (`-32600` from the MCP SDK), and with that fixed, subscribe and unsubscribe fail with `name is required`. Hermes's receiver would suit a tunnel URL once it follows the spec: Event Gateway answers the challenge for it, and path forwarding on the tunnel source works for its path-per-subscription receiver (probed 7 Oct). Hermes uses one public base URL for every subscription, so its callback URLs are sub-paths of one tunnel URL, which the bridge recognizes as that tunnel's (see "Paths under a tunnel URL").
 
 ### When a public tunnel is used
 
@@ -374,17 +391,24 @@ src/
     event-history.ts    get_event and list_events, from Event Gateway's requests
     callbacks.ts        tunnel URLs for local agents: create, sweep unused, plan listen, retry missed deliveries
     inbound-recovery.ts recover provider events a local bridge missed while its listen was down
+    poll.ts             events/poll: a proxy to Event Gateway's request listing, with the cursor as a position in it
   host/
     callback-transport.ts  CallbackTransport over node:http(s) with a pinned, public-only DNS lookup
     server.ts           HTTP listener: inbound routes and the MCP endpoint (secret-URL check)
     cli-listen.ts       logs the CLI in; supervises `hookdeck listen` processes (restart, "Connected")
     local-runtime.ts    a laptop bridge's listen processes: inbound with recovery, local agents with retries
     load-config.ts      finds and loads bridge.config.ts (TypeScript through tsx)
-  cli.ts                serve | setup (planned: setup --prune, doctor)
+    providers-add.ts    `providers add webhook <id>`: the source, .env variables and the config entry
+    watch.ts            `watch <event...>`: an events/poll client printing one JSON line per event
+    watch-list.ts       `watch --list`: a watch list followed as it changes, with saved cursors
+    watch-cli.ts        the `watch` and `watches add|remove|list` commands
+  cli.ts                setup | serve | providers add webhook | watch | watches (planned: setup --prune, doctor)
+plugins/
+  mcp-events-bridge/    the Claude Code plugin: a monitor running `watch`, a skill, the bridge as an MCP server
 test/
 ```
 
-Later: `adapters/claude-channel.ts`, built-in OAuth, and `core/poll.ts` (with cursor replay) if a client needs it.
+Later: built-in OAuth. (A Claude Code channel adapter was planned and dropped for poll mode and the plugin; see "Background: `watch` and the Claude Code plugin".)
 
 The `core/` boundary keeps a serverless build possible. `node:crypto` is allowed because Workers (with `nodejs_compat`), Deno and Bun support it. Sending to a callback is not: the SSRF guard resolves the host, rejects non-public addresses and pins the connection to the checked IP, which `fetch` can't do. So `core/` calls a `CallbackTransport`, and `host/` implements it with `node:dns` and `node:http(s)`. A serverless host would supply its own. Today only the challenge uses it, since Event Gateway makes the deliveries.
 
@@ -412,7 +436,7 @@ From `hookdeck/hookdeck-demos/hookdeck/cli-fleet-fanout`:
 | `per-machine/src/recover.ts` | Recovering the bridge's own inbound after a disconnect (done: `core/inbound-recovery.ts`) |
 | `shared/src/machine.ts` | How `listen` is spawned and "Connected" detected (done: `host/cli-listen.ts`, with restarts) |
 
-Also: `hookdeck/claude-channel-plugin` for the channel shim, and `hookdeck/webhook-skills` for per-provider event lists and verification details.
+Also: `hookdeck/webhook-skills` for per-provider event lists and verification details. (`hookdeck/claude-channel-plugin` was for a channel shim, no longer planned.)
 
 ## Configuration file
 
@@ -871,6 +895,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **7 Oct, deployment names.** `deployment` is optional: `BRIDGE_DEPLOYMENT`, else `local` (CLI inbound) or `public` (HTTP inbound). It was `dev` in the examples, which read as "not for real use" once a bridge on a laptop became the setup for local agents.
 - **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions.
 - **7 Oct, local scope.** One bridge per machine, with one owner and its own Hookdeck project, running alongside the agent. The bridge runs `listen` and catches up by itself; the agent-facing tool becomes `create_tunnel_url`. Poll, push and cursor replay aren't local requirements and move to later (supersedes the 5 Oct poll fallback for local agents).
+- **9 Oct, Claude Code in the background.** A `watch` command run by a Claude Code plugin monitor, with a per-project watch list and saved cursors, rather than a channel (a research preview) or MCP Events support in Claude Code (not there yet). Two sessions in one project both hear every event, rather than one holding a lock.
 - **8 Oct, poll mode.** `events/poll` proxies to Event Gateway's request listing, with no event store in the bridge; an in-memory buffer only if usage shows latency problems. Polls share one listing of the polled sources, fetched on demand at most every 2 seconds, with back-off on the API rate limit. The cursor re-reads the last 60 seconds and carries the ids it has returned, because requests appear in the listing late and out of order. Tools (`poll_events`, `wait_for_event`) for hosts without MCP Events support; no Claude Code channel (see #26).
 - **7 Oct, generic webhooks.** A built-in `webhook()` provider on a `WEBHOOK` source with required verification (HMAC, Standard Webhooks, Basic auth or API key), static mapping config, and equality filters on declared fields. Until its secret is set, the source exists without an inbound connection (not a disabled or paused one: an upsert re-enables a disabled connection, and a paused one delivers its held events), and the bridge relays only requests marked `x-hookdeck-verified: true`. `providers add webhook <id>` creates the source and the config entry; it edits `bridge.config.ts` only on request, and only shapes it can edit safely.
 

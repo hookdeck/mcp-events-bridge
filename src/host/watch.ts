@@ -12,15 +12,19 @@ export interface PollRequest {
   name: string;
   arguments: Record<string, unknown>;
   cursor: string | null;
+  /** With a cursor: skip events older than this (a resumed watch shouldn't replay days of events). */
+  maxAgeMs?: number;
 }
+
+export type Poll = (request: PollRequest, signal?: AbortSignal) => Promise<Pick<PollResult, 'events' | 'cursor' | 'hasMore' | 'nextPollMs'>>;
 
 export interface WatchDeps {
   names: string[];
   arguments: Record<string, unknown>;
-  poll: (request: PollRequest) => Promise<Pick<PollResult, 'events' | 'cursor' | 'hasMore' | 'nextPollMs'>>;
+  poll: Poll;
   onEvent: (event: PastEvent) => void;
-  /** A poll failed and will be retried after `retryMs`. */
-  onError: (name: string, error: unknown, retryMs: number) => void;
+  /** A poll failed and will be retried after `retryMs`; `failures` counts consecutive failures. */
+  onError: (name: string, error: unknown, retryMs: number, failures: number) => void;
   signal: AbortSignal;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -31,11 +35,20 @@ export function isFatal(error: unknown): boolean {
   return code === EventsErrorCode.InvalidParams || code === EventsErrorCode.NotFound;
 }
 
+/** events/poll rejected the cursor (invalid params with `data.field: 'cursor'`). */
+export function isCursorError(error: unknown): boolean {
+  const e = error as { code?: unknown; data?: { field?: unknown } } | null;
+  return e?.code === EventsErrorCode.InvalidParams && e.data?.field === 'cursor';
+}
+
+/** A JSON-RPC error from the bridge, as opposed to a transport failure (no connection, HTTP error, timeout). */
+export const isBridgeError = (error: unknown) => typeof (error as { code?: unknown } | null)?.code === 'number';
+
 const MAX_BACKOFF_MS = 30_000;
 /** Polls overlap, so the same event can come back: remember this many ids per name. */
 const SEEN_LIMIT = 1000;
 
-const abortableSleep = (ms: number, signal: AbortSignal) =>
+export const abortableSleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
     if (signal.aborted) return resolve();
     const timer = setTimeout(done, ms);
@@ -47,37 +60,62 @@ const abortableSleep = (ms: number, signal: AbortSignal) =>
     signal.addEventListener('abort', done, { once: true });
   });
 
+export interface RunWatchDeps {
+  name: string;
+  arguments: Record<string, unknown>;
+  /** Where to start: a saved cursor, or null for now. */
+  cursor?: string | null;
+  maxAgeMs?: number;
+  poll: Poll;
+  onEvent: (event: PastEvent) => void;
+  onError: WatchDeps['onError'];
+  /** Called after each successful poll with the cursor to continue from. */
+  onCursor?: (cursor: string) => void;
+  signal: AbortSignal;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+/** One watch: polls one event name with its arguments until `signal` aborts; rejects on a fatal error. */
+export async function runWatch(deps: RunWatchDeps): Promise<void> {
+  const sleep = deps.sleep ?? abortableSleep;
+  let cursor = deps.cursor ?? null;
+  let failures = 0;
+  const seen = new Set<string>();
+  while (!deps.signal.aborted) {
+    let delay: number;
+    try {
+      const request: PollRequest = { name: deps.name, arguments: deps.arguments, cursor };
+      if (cursor !== null && deps.maxAgeMs !== undefined) request.maxAgeMs = deps.maxAgeMs;
+      const result = await deps.poll(request, deps.signal);
+      if (deps.signal.aborted) return;
+      for (const event of result.events) {
+        if (seen.has(event.eventId)) continue;
+        seen.add(event.eventId);
+        if (seen.size > SEEN_LIMIT) seen.delete(seen.values().next().value!);
+        deps.onEvent(event);
+      }
+      cursor = result.cursor;
+      deps.onCursor?.(cursor);
+      failures = 0;
+      delay = result.hasMore ? 0 : result.nextPollMs;
+    } catch (error) {
+      if (deps.signal.aborted) return;
+      // A cursor this bridge no longer accepts (a saved one, after an upgrade): start again from now.
+      if (cursor !== null && isCursorError(error)) {
+        cursor = null;
+        continue;
+      }
+      if (isFatal(error)) throw error;
+      delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** failures++);
+      deps.onError(deps.name, error, delay, failures);
+    }
+    if (delay > 0) await sleep(delay, deps.signal);
+  }
+}
+
 /** Runs until `signal` aborts; rejects on the first fatal error. */
 export async function watch(deps: WatchDeps): Promise<void> {
-  const sleep = deps.sleep ?? abortableSleep;
-  const loop = async (name: string) => {
-    let cursor: string | null = null;
-    let failures = 0;
-    const seen = new Set<string>();
-    while (!deps.signal.aborted) {
-      let delay: number;
-      try {
-        const result = await deps.poll({ name, arguments: deps.arguments, cursor });
-        if (deps.signal.aborted) return;
-        for (const event of result.events) {
-          if (seen.has(event.eventId)) continue;
-          seen.add(event.eventId);
-          if (seen.size > SEEN_LIMIT) seen.delete(seen.values().next().value!);
-          deps.onEvent(event);
-        }
-        cursor = result.cursor;
-        failures = 0;
-        delay = result.hasMore ? 0 : result.nextPollMs;
-      } catch (error) {
-        if (deps.signal.aborted) return;
-        if (isFatal(error)) throw error;
-        delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** failures++);
-        deps.onError(name, error, delay);
-      }
-      if (delay > 0) await sleep(delay, deps.signal);
-    }
-  };
-  await Promise.all(deps.names.map(loop));
+  await Promise.all(deps.names.map((name) => runWatch({ ...deps, name })));
 }
 
 /**
@@ -117,5 +155,6 @@ export function watchUrl(flag: string | undefined, environment: NodeJS.ProcessEn
 
 /** The URL without its secret path segment, for messages. */
 export function redactUrl(url: string): string {
-  return url.replace(/\/mcp\/[^/?#]+/, '/mcp/<secret>');
+  // The secret is URL-safe (base64url, or percent-encoded), so stop at anything else.
+  return url.replace(/\/mcp\/[A-Za-z0-9_.~%-]+/g, '/mcp/<secret>');
 }

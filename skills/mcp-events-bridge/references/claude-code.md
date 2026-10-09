@@ -1,8 +1,11 @@
 # Claude Code with the bridge
 
-Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhook deliveries. It can use the bridge's **poll tools**, which need no public URL, so they work with a deployed bridge or a local one.
+Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhook deliveries. It polls instead, which needs no public URL, so it works with a deployed bridge or a local one:
 
-**Tested:** Claude Code 2.1.294 and 2.1.295 (`claude -p`, Haiku 4.5) calling `wait_for_event` against a local bridge, for generic webhook fills and GitHub comments (see `docs/SPIKES.md`).
+- **While Claude works on a request:** the bridge's poll tools (sections 1 and 2).
+- **Between prompts:** the plugin (section 3), which wakes Claude for each event. If you only want this, install the plugin and skip sections 1 and 2.
+
+**Tested:** Claude Code 2.1.294 and 2.1.295: `wait_for_event` with `claude -p` and interactively, against local and deployed bridges, and the plugin installed from the marketplace (see "Claude Code: watch and the plugin" in `docs/SPIKES.md`).
 
 ## 1. Add the bridge as an MCP server
 
@@ -37,23 +40,38 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 - **Repeats:** delivery is at least once. If the same `eventId` comes back, it's the same event.
 - **Permissions:** Claude Code asks before each MCP tool call unless allowed. Allow the read-only tools for the session, or in settings: `mcp__events-bridge__wait_for_event`, `mcp__events-bridge__poll_events`, `mcp__events-bridge__list_events` and `mcp__events-bridge__get_event`.
 
-## 3. Watch in the background
+## 3. Watch in the background: the plugin
 
-`wait_for_event` holds Claude's turn. To hear about events while Claude is idle or doing something else, ask it to run `mcp-events-bridge watch` with its Monitor tool, which wakes the session on each line a command prints:
+`wait_for_event` holds Claude's turn. To hear about events while Claude is idle or doing something else, install the MCP Events bridge plugin:
 
-> In the background, watch hookdeck/hookdeck-demos for new issues and comments with `npx mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos`, and tell me about each one as it arrives.
+```text
+/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
+```
 
-`watch` prints one JSON line per event. It needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge).
+(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP URL and keeps it in secure storage. To set it from a script without it showing on screen, pipe it in: `printf '{"mcp_url":"%s"}' "$BRIDGE_MCP_URL" | claude plugin configure mcp-events-bridge@hookdeck --values-stdin`, then start a new session. The plugin adds the bridge as an MCP server, so you don't need step 1 as well.
 
-- **Up to 30 minutes at a time:** a Monitor watch expires after at most 30 minutes, and Claude re-arms it when told to keep watching. Events that arrive in between are missed, because each new `watch` starts from now.
-- **Long events are shortened:** Monitor cuts a long line short (seen at around 500 characters), so long text fields, such as a comment, can arrive cut off. Each line starts with the `eventId`, so Claude can read the whole event with `get_event`.
-- **Busy sources:** Monitor stops a command that prints too many lines. Filter by repository, actions or sender.
-- **Permissions:** Claude Code asks before starting the command unless `Monitor` is allowed.
+Then ask, in any project:
 
-**Tested:** Claude Code 2.1.295 (interactive, Opus 5.5), with `watch` against a deployed bridge: Claude started the watch, went idle, and reported a GitHub comment within seconds of it being posted, without a prompt.
+> Watch hookdeck/hookdeck-demos for new issues and comments.
+
+Claude adds the watches to the project's watch list, and the plugin's monitor, which runs `mcp-events-bridge watch` for the whole session, wakes Claude for each event. "Stop watching…" and "what am I watching?" work too.
+
+- **Per project, and between sessions:** each project has its own watch list. When you start a session, events that happened since your last session in that project arrive first, up to 24 hours old.
+- **Interactive sessions only:** plugin monitors don't run with `claude -p`.
+- **More than one session in a project:** each one is told about every event.
+- **Long events are shortened:** monitor notifications cut long lines short (seen at around 500 characters), so the plugin's skill has Claude read the whole event with `get_event`.
+- **Busy sources:** Claude Code stops a monitor that prints too many lines. Filter by repository, actions or sender.
+- **Where things are kept:** the watch lists and cursors, and a copy of the MCP URL for the monitor (readable only by you; plugin monitors can't read secure storage), are in the plugin's data directory, `~/.claude/plugins/data/mcp-events-bridge-hookdeck/`.
+
+**Without the plugin**, ask Claude to run `watch` with its Monitor tool, which wakes the session on each line a command prints:
+
+> In the background, watch hookdeck/hookdeck-demos for new issues and comments with `npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos`, and tell me about each one as it arrives.
+
+`watch` needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge). A Monitor watch expires after at most 30 minutes, and events between one watch and the next are missed. Claude Code asks before starting the command unless `Monitor` is allowed.
+
+**Tested:** Claude Code 2.1.295 (interactive, Opus 5.5) against a deployed bridge. With the Monitor tool, Claude started the watch, went idle, and reported GitHub comments within seconds, without a prompt. With the plugin, installed from the marketplace (`claude plugin install`, the URL set with `--values-stdin`): the session-start hook wrote the URL file, the plugin's MCP server answered, the monitor started with the session, Claude added watches with filters from "watch… for new issues and comments", a comment woke the session (a reopen, filtered out, didn't), and a comment posted while no session was open arrived when the next one started.
 
 ## Limits
 
-- **`wait_for_event` waits only while Claude is working on your request.** Between turns nothing polls, and events wait in Event Gateway until the next call. Each call holds the turn for up to 45 seconds. Use `watch` (section 3) to hear about events between turns.
-- **No plugin yet:** you name the command when asking Claude to watch. A Claude Code plugin that knows it is planned ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)).
+- **`wait_for_event` waits only while Claude is working on your request.** Between turns nothing polls, and events wait in Event Gateway until the next call. Each call holds the turn for up to 45 seconds. Use the plugin (section 3) to hear about events between turns.
 - **Latency:** an event reaches Claude about 2 seconds after Event Gateway receives it, sometimes up to 15 (see Polling in the README).

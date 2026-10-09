@@ -4,7 +4,7 @@ Instructions for coding agents working on this repo. Read [`docs/PLAN.md`](docs/
 
 ## Current scope
 
-Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Poll mode (`events/poll` and the poll tools) is built; next is the Claude Code plugin ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)). Not yet: OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Push mode is later, only if a client needs it.
+Stages 1 to 5 in `docs/PLAN.md` are done; stage 7 has started (the GitHub provider, the generic webhook provider and the npm package). Stage 6 is in progress: local agents receive through tunnel URLs, with the bridge running `listen` and catching up by itself, and Hermes Agent's MCP Events pull request works with the bridge (experimental; see the stage 6 steps). Poll mode (`events/poll` and the poll tools), the `watch` and `watches` commands, and the Claude Code plugin (`plugins/mcp-events-bridge`, [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) are built. Not yet: OAuth tiers beyond the secret URL, `doctor` and `setup --prune`. Push mode is later, only if a client needs it.
 
 ## What the maintainer sets up first
 
@@ -19,6 +19,7 @@ You can't do these. Each is needed before the step that uses it.
 | The e2e tests | A verified Resend sending domain, and a key that can send email; or, with `E2E_SOURCE=webhook`, the `fills` secret instead (no email sent) | `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` (or `FILLS_WEBHOOK_SECRET`) |
 | The Hermes Agent test (optional) | An Anthropic API key with a spending limit, for the model Hermes runs | `HERMES_ANTHROPIC_API_KEY`, `HERMES_MODEL` |
 | ChatGPT | ChatGPT Plus or above with Developer mode (Work chats; dots aren't needed) | |
+| Claude Code (optional) | Claude Code 2.1.275 or later, interactive (plugin monitors don't run with `claude -p`) | |
 | Everything | Hookdeck CLI with `gateway connection upsert`, Node 22.12 or later | |
 | The reference deployment | A Fly.io account and an API token for deploys | `FLY_API_TOKEN` |
 
