@@ -13,9 +13,10 @@ import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
 import { EMPTY_CONFIG, insertProvider, missingEnvLines, referencedEnv, webhookSnippet, writeAtomically } from './host/providers-add.js';
 import { createBridgeServer } from './host/server.js';
+import { isFatal, parseFilters, redactUrl, watch, watchUrl } from './host/watch.js';
 
 /*
- * mcp-events-bridge setup | serve | providers add webhook <id> | doctor
+ * mcp-events-bridge setup | serve | providers add webhook <id> | watch <event...> | doctor
  *
  * `doctor` comes in stage 7.
  */
@@ -32,7 +33,23 @@ Commands:
           Add a generic webhook: create its Event Gateway source and print the URL to register
           with the sender, add its variables to .env, and print (or with --write-config, add)
           its bridge.config.ts entry. \`providers add webhook --help\` for the options
+  watch <event...> [--filter key=value] [--url <MCP URL>]
+          Print one JSON line per event as it happens, polling the bridge (events/poll) from now
+          on. \`watch --help\` for the options
   doctor  Check the deployment (not built yet)`;
+
+const WATCH_USAGE = `Usage: mcp-events-bridge watch <event name...> [options]
+
+Polls a running bridge for events from now on and prints each one on its own line, as JSON
+({ eventId, name, timestamp, data }), for an agent watching the command's output (such as Claude
+Code's Monitor tool) or a script. Progress and errors go to stderr. Runs until stopped.
+
+Options:
+  --filter <key>=<value>  the events' arguments, repeatable, as events/list describes them, e.g.
+                          --filter repository=hookdeck/hookdeck-demos. JSON values are parsed:
+                          --filter 'actions=["opened"]'
+  --url <MCP URL>         the bridge's MCP URL (default: BRIDGE_MCP_URL, else built from
+                          BRIDGE_PUBLIC_URL or the local port, and BRIDGE_MCP_SECRET, read from .env)`;
 
 const PROVIDERS_ADD_USAGE = `Usage: mcp-events-bridge providers add webhook <id> [options]
 
@@ -297,6 +314,77 @@ async function providers(argv: string[]) {
   );
 }
 
+/** `watch <event...>`: an events/poll client printing one JSON line per event. */
+async function watchCommand(argv: string[]) {
+  const { positionals, values } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      filter: { type: 'string', multiple: true },
+      url: { type: 'string' },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+  });
+  if (values.help || positionals.length === 0) return console.log(WATCH_USAGE);
+  const args = parseFilters(values.filter ?? []);
+  const url = watchUrl(values.url, process.env);
+  // Loaded here so the other commands don't need the MCP client.
+  const { Client, StreamableHTTPClientTransport } = await import('@modelcontextprotocol/client');
+  const { z } = await import('zod');
+  const anyResult = z.record(z.string(), z.unknown());
+
+  // One client for all the loops; a failed request drops it, and the next poll reconnects (a redeployed bridge forgets sessions).
+  let client: Promise<InstanceType<typeof Client>> | undefined;
+  const connect = () =>
+    (client ??= (async () => {
+      const c = new Client({ name: 'mcp-events-bridge-watch', version: packageVersion() }, { versionNegotiation: { mode: 'auto' } });
+      await c.connect(new StreamableHTTPClientTransport(new URL(url)));
+      return c;
+    })());
+  try {
+    await connect();
+  } catch (error) {
+    console.error(`[watch] can't connect to ${redactUrl(url)}: ${redactUrl(String((error as Error).message ?? error))}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  const filters = Object.keys(args).length ? ` (${Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ')})` : '';
+  // Only for a person at a terminal: an agent watching the output (stderr included) would be woken by it.
+  if (process.stderr.isTTY) console.error(`[watch] ${positionals.join(', ')}${filters} from ${redactUrl(url)}, from now on`);
+  try {
+    await watch({
+      names: positionals,
+      arguments: args,
+      signal: controller.signal,
+      poll: async (request) => {
+        const current = connect();
+        try {
+          return (await (await current).request({ method: 'events/poll', params: request } as never, anyResult)) as never;
+        } catch (error) {
+          if (!isFatal(error) && client === current) {
+            client = undefined;
+            void current.then((c) => c.close()).catch(() => {});
+          }
+          throw error;
+        }
+      },
+      onEvent: (event) => console.log(JSON.stringify(event)),
+      onError: (name, error, retryMs) => console.error(`[watch] ${name}: ${redactUrl(String((error as Error).message ?? error))}; retrying in ${retryMs / 1000}s`),
+    });
+  } catch (error) {
+    // Fatal: an unknown event name, or arguments that don't match its inputSchema.
+    console.error(`[watch] ${redactUrl(String((error as Error).message ?? error))}`);
+    process.exitCode = 1;
+  } finally {
+    void (await client?.catch(() => undefined))?.close();
+  }
+}
+
 /** This package's version; package.json is one level up from both src/cli.ts and dist/cli.js. */
 function packageVersion(): string {
   return (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
@@ -307,6 +395,10 @@ async function main() {
   if (argv[0] === 'providers') {
     loadDotEnv();
     return providers(argv.slice(1));
+  }
+  if (argv[0] === 'watch') {
+    loadDotEnv();
+    return watchCommand(argv.slice(1));
   }
   const { positionals, values } = parseArgs({
     allowPositionals: true,

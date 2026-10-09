@@ -37,8 +37,22 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 - **Repeats:** delivery is at least once. If the same `eventId` comes back, it's the same event.
 - **Permissions:** Claude Code asks before each MCP tool call unless allowed. Allow the read-only tools for the session, or in settings: `mcp__events-bridge__wait_for_event`, `mcp__events-bridge__poll_events`, `mcp__events-bridge__list_events` and `mcp__events-bridge__get_event`.
 
+## 3. Watch in the background
+
+`wait_for_event` holds Claude's turn. To hear about events while Claude is idle or doing something else, ask it to run `mcp-events-bridge watch` with its Monitor tool, which wakes the session on each line a command prints:
+
+> In the background, watch hookdeck/hookdeck-demos for new issues and comments with `npx mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos`, and tell me about each one as it arrives.
+
+`watch` prints one JSON line per event. It needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge).
+
+- **Up to 30 minutes at a time:** a Monitor watch expires after at most 30 minutes, and Claude re-arms it when told to keep watching. Events that arrive in between are missed, because each new `watch` starts from now.
+- **Busy sources:** Monitor stops a command that prints too many lines. Filter by repository, actions or sender.
+- **Permissions:** Claude Code asks before starting the command unless `Monitor` is allowed.
+
+**Tested:** Claude Code 2.1.295 (interactive, Opus 5.5), with `watch` against a deployed bridge: Claude started the watch, went idle, and reported a GitHub comment within seconds of it being posted, without a prompt.
+
 ## Limits
 
-- **Claude only waits while it's working on your request.** Between turns nothing polls, and events wait in Event Gateway until the next call. Each `wait_for_event` call holds the turn for up to 45 seconds.
-- **Waking a session on an event**, without a prompt, is planned as a Claude Code plugin ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)).
+- **`wait_for_event` waits only while Claude is working on your request.** Between turns nothing polls, and events wait in Event Gateway until the next call. Each call holds the turn for up to 45 seconds. Use `watch` (section 3) to hear about events between turns.
+- **No plugin yet:** you name the command when asking Claude to watch. A Claude Code plugin that knows it is planned ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)).
 - **Latency:** an event reaches Claude about 2 seconds after Event Gateway receives it, sometimes up to 15 (see Polling in the README).

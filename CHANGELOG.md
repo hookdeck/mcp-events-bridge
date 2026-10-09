@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`mcp-events-bridge watch <event...>`:** polls a running bridge and prints one JSON line per event, from now on, for agents that wake on a command's output, such as Claude Code's Monitor tool. See [Polling](README.md#in-the-background-watch).
+
 ## 0.3.0 (2026-10-09)
 
 ### Added
