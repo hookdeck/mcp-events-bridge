@@ -1,0 +1,20 @@
+{
+  "name": "mcp-events-bridge",
+  "displayName": "MCP Events bridge",
+  "version": "0.4.0",
+  "description": "Watch MCP Events bridge events (GitHub, Resend, webhooks) in the background: Claude is told as each one happens, between prompts too.",
+  "author": { "name": "Hookdeck", "url": "https://hookdeck.com" },
+  "homepage": "https://github.com/hookdeck/mcp-events-bridge/blob/main/skills/mcp-events-bridge/references/claude-code.md",
+  "repository": "https://github.com/hookdeck/mcp-events-bridge",
+  "license": "MIT",
+  "keywords": ["mcp", "events", "webhooks", "hookdeck"],
+  "userConfig": {
+    "mcp_url": {
+      "type": "string",
+      "title": "Bridge MCP URL",
+      "description": "Your bridge's MCP URL, https://<bridge>/mcp/<BRIDGE_MCP_SECRET> (or http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET> for a local bridge). It contains the secret, so it's kept in secure storage.",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}

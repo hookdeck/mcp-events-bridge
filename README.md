@@ -325,7 +325,13 @@ Run it under an agent that wakes on a command's output, and the agent hears abou
 
 ![Claude Code, with a watch on hookdeck/hookdeck-demos running in the background, answers "what events can the bridge give me?", then four Monitor events arrive one by one and Claude reports each: issue #29 opened, two comments quoted in full, and the issue closed](docs/images/claude-code-watch.png)
 
-In Claude Code, that's the Monitor tool: ask Claude to watch in the background with this command (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background)). It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
+In Claude Code, install the plugin, which runs `watch` for the whole session and lets you say "watch hookdeck-demos for new issues" (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background-the-plugin)):
+
+```text
+/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
+```
+
+`watch` also follows a watch list file that changes while it runs (`--list`, edited with `mcp-events-bridge watches add|remove|list`), and resumes where it left off. It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
 
 ## Local agents
 

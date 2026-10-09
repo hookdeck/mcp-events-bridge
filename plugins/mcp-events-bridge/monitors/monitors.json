@@ -1,0 +1,7 @@
+[
+  {
+    "name": "events",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/events-bridge\" watch --store \"${CLAUDE_PLUGIN_DATA}\" --project \"${CLAUDE_PROJECT_DIR}\"",
+    "description": "MCP Events bridge events this project watches"
+  }
+]
