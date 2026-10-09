@@ -109,7 +109,7 @@ In order:
 5. **Claude Code in the background** ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)). `wait_for_event` only waits inside a turn.
    - [x] `mcp-events-bridge watch <event...>`: an `events/poll` client printing one JSON line per event, run by Claude Code's Monitor tool, which wakes the session on each line ([#45](https://github.com/hookdeck/mcp-events-bridge/pull/45), 9 Oct). Live: Claude went idle and reported GitHub events with no prompt; a Fly restart lost nothing.
    - [x] The Claude Code plugin ([#47](https://github.com/hookdeck/mcp-events-bridge/pull/47), 9 Oct): a monitor that runs `watch` on the project's watch list for the whole session, a skill that edits it (`watches add|remove|list`), saved cursors so a new session catches up (up to 24 hours), and the bridge as an MCP server from a sensitive `userConfig` URL. Tested installed from the marketplace (see "Claude Code: watch and the plugin" in `SPIKES.md`).
-   - [ ] Released in 0.4.0: the plugin's monitor runs `npx @hookdeck/mcp-events-bridge@0.4.0`.
+   - [x] Released in 0.4.0 (9 Oct): the plugin's monitor runs `npx @hookdeck/mcp-events-bridge@0.4.0`.
 
 Decided 7 Oct: every source keeps its own bridge-generated secret, and a tunnel URL also covers the paths under it. Agents that take a URL per subscription get one source each; a client that builds every callback from one base URL plus a path (Hermes) uses one tunnel URL as that base, so its subscriptions share one source.
 
@@ -121,7 +121,7 @@ Done when: the mock agent, given only a tunnel URL, receives an email; adding a 
 - Bring your own identity provider (auth tier 3).
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
-- Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` (0.1.0 on 6 Oct, 0.2.0 and 0.2.1 on 8 Oct, 0.3.0 with poll mode on 9 Oct), compiled to `dist/`; the README, restructured around it; and the generic webhook provider, for any HTTP sender with HMAC, Standard Webhooks, Basic auth or API key verification, with `providers add webhook <id>` to create its source before the secret exists (see "Generic provider: webhooks" in `ARCHITECTURE.md`).
+- Done early: the GitHub provider, with automatic and manual modes (see "Second provider: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` (0.1.0 on 6 Oct, 0.2.0 and 0.2.1 on 8 Oct, 0.3.0 with poll mode and 0.4.0 with `watch` and the Claude Code plugin on 9 Oct), compiled to `dist/`; the README, restructured around it; and the generic webhook provider, for any HTTP sender with HMAC, Standard Webhooks, Basic auth or API key verification, with `providers add webhook <id>` to create its source before the secret exists (see "Generic provider: webhooks" in `ARCHITECTURE.md`).
 - A release workflow (added 8 Oct): publishing a GitHub Release publishes to npm from GitHub Actions, with npm trusted publishing and provenance (`.github/workflows/release.yml`), and a `test` workflow on pull requests and `main`. Maintainers follow the `mcp-events-bridge-release` skill.
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.

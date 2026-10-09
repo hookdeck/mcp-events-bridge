@@ -1,12 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-09)
 
 ### Added
 
-- **`mcp-events-bridge watch <event...>`:** polls a running bridge and prints one JSON line per event, from now on, for agents that wake on a command's output, such as Claude Code's Monitor tool. See [Polling](README.md#in-the-background-watch).
-- **`watch --list <file>` and `mcp-events-bridge watches add|remove|list`:** `watch` follows a watch list as it changes, saves each watch's cursor, and resumes there next time (events up to 24 hours old). A watch that can't run, or a bridge that can't be reached, is reported on stdout as `{ "problem": ... }`.
-- **Claude Code plugin** (`plugins/mcp-events-bridge`, installed with `/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge`): a monitor that runs `watch` on the project's watch list for the whole session, a skill for "watch…", "stop watching…" and "what am I watching?", and the bridge as an MCP server. See [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background-the-plugin).
+- **`mcp-events-bridge watch <event...>`** ([#45](https://github.com/hookdeck/mcp-events-bridge/pull/45)): polls a running bridge and prints one JSON line per event, from now on, for agents that wake on a command's output, such as Claude Code's Monitor tool. See [Polling](README.md#in-the-background-watch).
+- **`watch --list <file>` and `mcp-events-bridge watches add|remove|list`** ([#47](https://github.com/hookdeck/mcp-events-bridge/pull/47)): `watch` follows a watch list as it changes, saves each watch's cursor, and resumes there next time (events up to 24 hours old). A watch that can't run, or a bridge that can't be reached, is reported on stdout as `{ "problem": ... }`.
+- **Claude Code plugin** ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), [#47](https://github.com/hookdeck/mcp-events-bridge/pull/47); `plugins/mcp-events-bridge`, installed with `/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge`): a monitor that runs `watch` on the project's watch list for the whole session, a skill for "watch…", "stop watching…" and "what am I watching?", and the bridge as an MCP server. See [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background-the-plugin).
+
+### Changed
+
+- **`@modelcontextprotocol/client` is a dependency** (it was a dev dependency), for `watch`.
+
+### Fixed
+
+- **Docs:** ChatGPT keeps the events it can subscribe to from when the plugin was added, so refresh the plugin after upgrading the bridge or adding a provider ([#43](https://github.com/hookdeck/mcp-events-bridge/pull/43)). Connecting Claude Code, with screenshots ([#46](https://github.com/hookdeck/mcp-events-bridge/pull/46)).
 
 ## 0.3.0 (2026-10-09)
 

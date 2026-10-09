@@ -24,7 +24,7 @@ Follow in order.
 - [ ] **Tags:** `PREV_TAG` is the last release on this line (`gh release list`); propose `NEW_TAG`.
 - [ ] **Change set:** read `git log PREV_TAG..origin/main` in full (and the diff where commits are unclear). Group the changes by what users see.
 - [ ] **SemVer gate:** state the minimum bump the change set needs (see **SemVer**). If the maintainer proposed a version that under-bumps, say so and recommend the right one.
-- [ ] **Release PR** (see **The release PR**): `package.json` version and the `CHANGELOG.md` heading. **Gate:** the maintainer approves the version and the changelog, then the PR is merged.
+- [ ] **Release PR** (see **The release PR**): `package.json` version, the plugin's pinned version, and the `CHANGELOG.md` heading. **Gate:** the maintainer approves the version and the changelog, then the PR is merged.
 - [ ] **CI gate:** the `test` workflow is green on the commit you'll release (see **CI check**). Don't release on red, pending or unknown.
 - [ ] **Release notes:** draft them (see **Release notes** and [`references/release-notes-template.md`](references/release-notes-template.md)). **Gate:** the maintainer approves the tag, the target and the notes.
 - [ ] **Publish:** `gh release create` with a temporary notes file (see **Publish**).
@@ -63,8 +63,9 @@ On a branch `chore/release-X.Y.Z`:
 
 1. `package.json` (and `package-lock.json`): `npm version X.Y.Z --no-git-tag-version`.
 2. `CHANGELOG.md`: rename `## Unreleased` to `## X.Y.Z (YYYY-MM-DD)`, with the release date. Check the entries against the change set: every user-visible change from the log is there, and nothing that isn't shipping. Keep the house style (bold lead-in per bullet, issue and PR links).
-3. `docs/PLAN.md`: record the release where it lists versions.
-4. Title `chore: release X.Y.Z`. **Gate:** the maintainer approves, then merge.
+3. The Claude Code plugin runs the published CLI at a pinned version: set `X.Y.Z` in `plugins/mcp-events-bridge/.claude-plugin/plugin.json` (`version`) and in `plugins/mcp-events-bridge/bin/events-bridge` (`@hookdeck/mcp-events-bridge@X.Y.Z`). `test/plugin.test.ts` fails until they match `package.json`. The marketplace serves the plugin from `main`, so between merging the release PR and npm publishing it, a new install can't start `watch`: publish straight after merging.
+4. `docs/PLAN.md`: record the release where it lists versions.
+5. Title `chore: release X.Y.Z`. **Gate:** the maintainer approves, then merge.
 
 ## CI check
 

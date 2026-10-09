@@ -125,7 +125,7 @@ Claude Code doesn't support MCP Events yet, so it polls. Install the plugin, whi
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
-Then, in any project, ask Claude to watch, for example "watch hookdeck/hookdeck-demos for new issues and comments". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). It needs no public URL, so it works with a local bridge.
+Then, in any project, ask Claude to watch for events your bridge offers ("what events can the bridge give me?" lists them). For example, with the [GitHub provider](#github) set up for a repository, "watch `<owner>/<repo>` for new issues and comments"; with [Resend](#resend), "tell me when an email arrives". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). It needs no public URL, so it works with a local bridge.
 
 Without the plugin, add the bridge as an MCP server and ask Claude to wait for events with the poll tools (see [Polling](#polling)). The [Claude Code guide](skills/mcp-events-bridge/references/claude-code.md) has both.
 
@@ -330,14 +330,14 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 `mcp-events-bridge watch` polls a running bridge from now on and prints each event on its own line, as JSON (`{ eventId, name, timestamp, data }`), until stopped:
 
 ```sh
-npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos
+npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=<owner>/<repo>
 ```
 
 Run it under an agent that wakes on a command's output, and the agent hears about events while it's idle or busy with something else. Here Claude Code runs `watch` with its Monitor tool, answers another question, then reports an issue opening, two comments and the issue closing, each as it happens, with no prompt:
 
 ![Claude Code, with a watch on hookdeck/hookdeck-demos running in the background, answers "what events can the bridge give me?", then four Monitor events arrive one by one and Claude reports each: issue #29 opened, two comments quoted in full, and the issue closed](docs/images/claude-code-watch.png)
 
-In Claude Code, install the plugin, which runs `watch` for the whole session and lets you say "watch hookdeck-demos for new issues" (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background-the-plugin)):
+In Claude Code, install the plugin, which runs `watch` for the whole session and lets you say "watch `<owner>/<repo>` for new issues" (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background-the-plugin)):
 
 ```text
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
