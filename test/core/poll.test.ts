@@ -37,8 +37,11 @@ class FakeListing {
   requests: FakeRequest[] = [];
   calls: Array<{ sources: string[]; from: number }> = [];
   ignoredLookups = 0;
+  /** Listing calls attempted, including rate-limited ones. */
+  attempts = 0;
   rateLimit: { limit: number; remaining: number } | undefined = undefined;
   rateLimited = false;
+  ignoredRateLimited = false;
   private n = 0;
 
   add(r: Partial<FakeRequest> & { createdAt: number }) {
@@ -66,6 +69,7 @@ class FakeListing {
 
   readonly client = {
     listAcceptedRequests: async ({ source_ids, created_at_gte, limit = 255, next }: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }) => {
+      this.attempts++;
       if (this.rateLimited) throw new HookdeckApiError('GET', '/requests', 429, '{}');
       const from = Date.parse(created_at_gte);
       if (!next) this.calls.push({ sources: [...source_ids], from });
@@ -82,6 +86,7 @@ class FakeListing {
     },
     listIgnoredEventsForRequest: async (id: string) => {
       this.ignoredLookups++;
+      if (this.ignoredRateLimited) throw new HookdeckApiError('GET', `/requests/${id}/ignored_events`, 429, '{}');
       const r = this.requests.find((x) => x.id === id)!;
       const cause = { duplicate: 'DUPLICATE', filtered: 'FILTERED', 'cli-disconnected': 'CLI_DISCONNECTED', event: 'NONE' }[r.kind];
       return { models: [{ id: `ign_${id}`, request_id: id, webhook_id: 'web_1', cause, created_at: '' }] };
@@ -313,6 +318,94 @@ describe('poll mode: shared listing and back-off', () => {
     expect(limited).toMatchObject({ events: [], hasMore: false });
     expect(limited.nextPollMs).toBe(MAX_POLL_INTERVAL_MS);
   });
+
+  it('keeps clients that poll slowly, at nextPollMs, on the shared listing (no catch-up call each)', async () => {
+    // Review of #31: the window used to reach back only 5 s past the look-back, so a cursor more than about 5 s old
+    // made its own listing call on every poll, most of all while backed off.
+    for (const rateLimit of [undefined, { limit: 240, remaining: 0 }]) {
+      const { listing, service } = setup();
+      listing.rateLimit = rateLimit;
+      const cursors = await Promise.all([1, 2, 3].map(() => service.poll({ name: NAME }).then((r) => r.cursor)));
+      const got: string[][] = [[], [], []];
+      for (let round = 0; round < 10; round++) {
+        listing.add({ createdAt: listing.now + 1000, deliveryId: `fill-${round}` });
+        // As told (30 s backed off), or slower than the interval but within it (20 s).
+        listing.now += rateLimit ? MAX_POLL_INTERVAL_MS : 20_000;
+        const results = await Promise.all(cursors.map((cursor) => service.poll({ name: NAME, cursor })));
+        results.forEach((r, i) => {
+          got[i]!.push(...r.events.map((e) => e.eventId));
+          cursors[i] = r.cursor;
+        });
+      }
+      expect(listing.calls).toHaveLength(11);
+      for (const ids of got) expect(ids).toEqual(Array.from({ length: 10 }, (_, i) => `fill-${i}`));
+    }
+  });
+
+  it('shares a failed listing call between waiting polls, and waits before calling again', async () => {
+    // Review of #31: each waiting poll used to start its own call after a shared one failed, and the next poll after
+    // the interval called again.
+    const { listing, service } = setup();
+    listing.rateLimited = true;
+    const polls = () => Promise.allSettled(Array.from({ length: 5 }, () => service.poll({ name: NAME })));
+    await polls();
+    expect(listing.attempts).toBe(1);
+    listing.now += 10_000;
+    await polls();
+    expect(listing.attempts).toBe(1);
+    listing.rateLimited = false;
+    listing.now += MAX_POLL_INTERVAL_MS;
+    await polls();
+    expect(listing.attempts).toBe(2);
+  });
+
+  it('starts a null cursor at this poll, not at an older listing, and under a 429 too', async () => {
+    // Review of #31: the cursor started at the listing's time, up to an interval (30 s backed off) before the poll.
+    const { listing, service } = setup();
+    listing.rateLimit = { limit: 240, remaining: 0 };
+    await service.poll({ name: NAME });
+    listing.add({ createdAt: T0 + 5000, visibleAt: T0 + 7000, deliveryId: 'before' });
+    listing.now = T0 + 25_000;
+    const late = await service.poll({ name: NAME });
+    listing.now = T0 + 70_000;
+    expect((await service.poll({ name: NAME, cursor: late.cursor })).events).toEqual([]);
+
+    // Rate limited with no listing yet: a cursor, not an error.
+    const fresh = setup();
+    fresh.listing.rateLimited = true;
+    const start = await fresh.service.poll({ name: NAME });
+    expect(start).toMatchObject({ events: [], hasMore: false });
+    fresh.listing.rateLimited = false;
+    fresh.listing.add({ createdAt: T0 + 1000, deliveryId: 'after' });
+    fresh.listing.now += MAX_POLL_INTERVAL_MS + 1000;
+    expect((await fresh.service.poll({ name: NAME, cursor: start.cursor })).events.map((e) => e.eventId)).toEqual(['after']);
+  });
+
+  it("answers a 429 from the ignored-events lookup without failing the poll, and looks a request up once", async () => {
+    const { listing, service } = setup();
+    const cursors = await Promise.all([1, 2, 3].map(() => service.poll({ name: NAME }).then((r) => r.cursor)));
+    listing.add({ createdAt: T0 + 1000, deliveryId: 'asleep', kind: 'cli-disconnected' });
+    listing.now += 5000;
+    listing.ignoredRateLimited = true;
+    const limited = await service.poll({ name: NAME, cursor: cursors[0] });
+    expect(limited).toMatchObject({ events: [], cursor: cursors[0], hasMore: false, nextPollMs: MAX_POLL_INTERVAL_MS });
+
+    listing.ignoredRateLimited = false;
+    listing.now += MAX_POLL_INTERVAL_MS;
+    const lookups = listing.ignoredLookups;
+    const results = await Promise.all(cursors.map((cursor) => service.poll({ name: NAME, cursor })));
+    for (const r of results) expect(r.events.map((e) => e.eventId)).toEqual(['asleep']);
+    expect(listing.ignoredLookups - lookups).toBe(1);
+  });
+
+  it('checks the cursor while rate limited', async () => {
+    const start = await setup().service.poll({ name: NAME, arguments: { symbol: 'AAPL' } });
+    // Another bridge process (a restart), rate limited, with no listing to answer from.
+    const { listing, service } = setup();
+    listing.rateLimited = true;
+    await expect(service.poll({ name: NAME, cursor: 'not-a-cursor' })).rejects.toMatchObject({ code: EventsErrorCode.InvalidParams });
+    await expect(service.poll({ name: NAME, arguments: { symbol: 'MSFT' }, cursor: start.cursor })).rejects.toMatchObject({ code: EventsErrorCode.InvalidParams });
+  });
 });
 
 describe('poll mode: wait_for_event', () => {
@@ -326,6 +419,19 @@ describe('poll mode: wait_for_event', () => {
     expect(listing.now - T0).toBeLessThan(15_000);
     expect(progress.length).toBeGreaterThan(0);
     expect(listing.calls.length).toBeLessThanOrEqual(8);
+  });
+
+  it('stops when aborted, without polling again', async () => {
+    const { listing, service } = setup();
+    const controller = new AbortController();
+    const progress: number[] = [];
+    const sleep = async (ms: number) => {
+      listing.now += ms;
+      controller.abort();
+    };
+    await service.wait({ name: NAME }, { timeoutMs: 45_000, sleep, signal: controller.signal, onProgress: (ms) => progress.push(ms) });
+    expect(listing.attempts).toBe(1);
+    expect(progress).toEqual([]);
   });
 
   it('returns no events and a cursor to wait from when the time is up', async () => {

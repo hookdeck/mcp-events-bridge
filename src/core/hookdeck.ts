@@ -340,8 +340,10 @@ export class HookdeckClient {
     return this.api<Page<HookdeckEvent>>(`/requests/${encodeURIComponent(requestId)}/events`, { query: { limit: 100 } });
   }
 
-  listIgnoredEventsForRequest(requestId: string) {
-    return this.api<Page<IgnoredEvent>>(`/requests/${encodeURIComponent(requestId)}/ignored_events`, { query: { limit: 100 } });
+  /** With `retry: false`, a 429 throws at once (poll mode answers without waiting). */
+  async listIgnoredEventsForRequest(requestId: string, options: { retry?: boolean } = {}) {
+    const path = `/requests/${encodeURIComponent(requestId)}/ignored_events`;
+    return (await this.apiWithMeta<Page<IgnoredEvent>>(path, { query: { limit: 100 }, retry: options.retry })).body;
   }
 
   /**

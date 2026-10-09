@@ -27,6 +27,13 @@ const CATCH_UP_MAX_PAGES = 2;
 export const DEFAULT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 /** Margin on the window's start, for the bridge's estimate of Event Gateway's clock. */
 const WINDOW_MARGIN_MS = 5_000;
+/**
+ * How far the shared window reaches back beyond LOOKBACK_MS: a cursor's watermark is its listing's time less the
+ * look-back, the listing can be up to one interval old when served, and the client waits another interval
+ * (nextPollMs) before polling again. Covering two of the longest intervals keeps a client that waits as told, even
+ * while backed off, on the shared listing rather than its own catch-up call.
+ */
+const WINDOW_EXTRA_MS = 2 * MAX_POLL_INTERVAL_MS + WINDOW_MARGIN_MS;
 
 export interface PollParams {
   name: string;
@@ -98,14 +105,16 @@ async function listFrom(hookdeck: ListingClient, sourceIds: string[], from: numb
 }
 
 /**
- * The shared listing: the accepted requests of every source polled in the last minute, from LOOKBACK_MS (plus a
- * margin) before Event Gateway's now. Fetched when a poll finds it older than the interval or missing its source;
- * polls that arrive during a fetch wait for it. The interval grows as the API's rate limit runs low.
+ * The shared listing: the accepted requests of every source polled in the last minute, from LOOKBACK_MS (plus
+ * WINDOW_EXTRA_MS) before Event Gateway's now. Fetched when a poll finds it older than the interval or missing its
+ * source; polls that arrive during a fetch share it, and its failure. After a failure, no fetch until `retryAt`. The
+ * interval grows as the API's rate limit runs low.
  */
 export class RequestWindow {
   private readonly active = new Map<string, number>();
   private cached?: { at: number; from: number; listing: Listing; sources: Set<string> };
   private inflight?: Promise<void>;
+  private failure?: { error: unknown; retryAt: number };
   private skewMs = 0;
   /** How long a listing is reused, and the nextPollMs polls are given. */
   interval = POLL_INTERVAL_MS;
@@ -125,42 +134,67 @@ export class RequestWindow {
     return this.now() + this.skewMs;
   }
 
-  async get(sourceId: string): Promise<{ from: number; listing: Listing }> {
+  /** Marks a source as polled, so the next fetch includes it, without fetching. */
+  touch(sourceId: string) {
     this.active.set(sourceId, this.now());
+  }
+
+  /** Whether a recent failure (a 429, say) means no API calls for now. */
+  get backingOff() {
+    return this.failure !== undefined && this.now() < this.failure.retryAt;
+  }
+
+  async get(sourceId: string): Promise<{ from: number; listing: Listing }> {
+    this.touch(sourceId);
     for (;;) {
       const cached = this.cached;
-      if (cached?.sources.has(sourceId) && this.now() - cached.at < this.interval) return cached;
-      if (this.inflight) {
-        await this.inflight.catch(() => {});
-        continue;
+      const covers = cached?.sources.has(sourceId) ?? false;
+      if (cached && covers && this.now() - cached.at < this.interval) return cached;
+      if (this.failure && this.backingOff) {
+        // Rate limited or failing: answer from the last listing if it covers this source.
+        if (cached && covers) return cached;
+        throw this.failure.error;
       }
-      this.inflight = this.fetch().finally(() => (this.inflight = undefined));
+      this.inflight ??= this.fetch().finally(() => (this.inflight = undefined));
       try {
         await this.inflight;
       } catch (error) {
-        // Rate limited or failing: answer from the last listing if it covers this source.
-        if (cached?.sources.has(sourceId)) return cached;
+        if (cached && covers) return cached;
         throw error;
       }
     }
+  }
+
+  /** Takes Event Gateway's clock and the rate limit from a listing response (the shared one or a catch-up). */
+  observe(meta: ResponseMeta, requestedAt: number) {
+    if (meta.date !== undefined) this.skewMs = meta.date - requestedAt;
+    if (meta.rateLimit) this.interval = intervalFor(meta.rateLimit);
+  }
+
+  /** Records a failed listing call: a 429 backs off for the longest interval, anything else for one interval. */
+  fail(error: unknown) {
+    const rateLimited = error instanceof RateLimitedError;
+    if (rateLimited) this.interval = MAX_POLL_INTERVAL_MS;
+    this.failure = { error, retryAt: this.now() + (rateLimited ? MAX_POLL_INTERVAL_MS : POLL_INTERVAL_MS) };
   }
 
   private async fetch() {
     const now = this.now();
     for (const [id, at] of this.active) if (now - at > ACTIVE_SOURCE_MS) this.active.delete(id);
     const sources = [...this.active.keys()];
-    const from = this.egNow() - (this.deps.lookbackMs ?? LOOKBACK_MS) - WINDOW_MARGIN_MS;
+    const from = this.egNow() - (this.deps.lookbackMs ?? LOOKBACK_MS) - WINDOW_EXTRA_MS;
     this.fetches++;
     let result;
     try {
       result = await listFrom(this.deps.hookdeck, sources, from, WINDOW_MAX_PAGES);
     } catch (error) {
-      if (error instanceof RateLimitedError) this.interval = MAX_POLL_INTERVAL_MS;
+      this.fail(error);
       throw error;
     }
     const { requests, meta, until } = result;
-    if (meta.date !== undefined) this.skewMs = meta.date - now;
-    this.interval = intervalFor(meta.rateLimit);
+    this.failure = undefined;
+    this.observe(meta, now);
+    if (!meta.rateLimit) this.interval = POLL_INTERVAL_MS;
     this.cached = { at: this.now(), from, sources: new Set(sources), listing: { requests, t: meta.date ?? this.egNow(), until } };
   }
 }
@@ -208,8 +242,11 @@ export interface PollServiceDeps {
 
 export class PollService {
   readonly window: RequestWindow;
-  /** Whether an accepted request with no events was ignored only for a disconnected CLI (kept, as poll returns it). */
-  private readonly waitingOnCli = new Map<string, boolean>();
+  /**
+   * Whether an accepted request with no events was ignored only for a disconnected CLI (kept, as poll returns it).
+   * A promise, so concurrent polls reading the same listing look each request up once.
+   */
+  private readonly waitingOnCli = new Map<string, Promise<boolean>>();
 
   constructor(private readonly deps: PollServiceDeps) {
     this.window = deps.window ?? new RequestWindow({ hookdeck: deps.hookdeck, now: deps.now, lookbackMs: deps.lookbackMs });
@@ -245,22 +282,25 @@ export class PollService {
     const sourceId = await this.deps.history.sourceIdFor(entry.providerId);
     if (!sourceId) throw internalError(`No Event Gateway source for ${entry.providerId}: run setup`);
 
-    let window;
-    try {
-      window = await this.window.get(sourceId);
-    } catch (error) {
-      if (error instanceof RateLimitedError && cursor) return this.unchanged(cursor);
-      throw error;
-    }
-
     // A null cursor starts from now; maxAgeMs is ignored with it (SEP-3415: no replay from before the subscription).
+    // Now is Event Gateway's clock at this poll, not the time of a listing that may be an interval old. The listing
+    // is read (when due) only to add the source and refresh the clock estimate, so a failure doesn't fail the poll.
     if (cursor === null) {
-      const t = window.listing.t;
+      await this.window.get(sourceId).catch(() => {});
+      const t = this.window.egNow();
       return this.result([], { v: 1, n: entry.name, a: hash, f: t, w: t - this.lookbackMs, t, ids: [] }, false, false);
     }
 
     const state = decodeCursor(cursor);
     if (state.n !== entry.name || state.a !== hash) throw invalidParams('cursor is for another event name or arguments', { field: 'cursor' });
+
+    let window;
+    try {
+      window = await this.window.get(sourceId);
+    } catch (error) {
+      if (error instanceof RateLimitedError) return this.unchanged(cursor);
+      throw error;
+    }
 
     let floor = state.f;
     let truncated = false;
@@ -281,12 +321,19 @@ export class PollService {
     // The shared window answers when it covers `start` and was read to the end (at very high volume it may not be).
     if (start >= window.from && window.listing.until === undefined) listing = window.listing;
     else {
-      // Catch-up: older than the shared window, so this poll lists its own source from where it is.
+      // Catch-up: older than the shared window, so this poll lists its own source from where it is. Not while the
+      // window is backing off, and its rate limit feeds the window's interval.
+      if (this.window.backingOff) return this.unchanged(cursor);
       try {
+        const requestedAt = (this.deps.now ?? Date.now)();
         const { requests, meta, until } = await listFrom(this.deps.hookdeck, [sourceId], start, CATCH_UP_MAX_PAGES);
+        this.window.observe(meta, requestedAt);
         listing = { requests, t: meta.date ?? egNow, until };
       } catch (error) {
-        if (error instanceof RateLimitedError) return this.unchanged(cursor);
+        if (error instanceof RateLimitedError) {
+          this.window.fail(error);
+          return this.unchanged(cursor);
+        }
         throw error;
       }
     }
@@ -301,7 +348,14 @@ export class PollService {
       if (request.source_id !== sourceId || seen.has(request.id)) continue;
       const created = Date.parse(request.created_at);
       if (created < start) continue;
-      let kind = await this.classify(request);
+      let kind;
+      try {
+        kind = await this.classify(request);
+      } catch (error) {
+        if (!(error instanceof RateLimitedError)) throw error;
+        this.window.fail(error);
+        return this.unchanged(cursor);
+      }
       // Not routed yet: a request that just arrived, or one being retried (the bridge's inbound recovery retries
       // requests a disconnected local bridge missed, and they show no events and no ignored events meanwhile, however
       // old). Hold the watermark for a new one, so a duplicate can be recognized first; return an older one, since on
@@ -341,8 +395,9 @@ export class PollService {
   }
 
   /**
-   * Polls until there are events or `timeoutMs` passes, reading the shared listing (no listing calls of its own beyond
-   * it). Returns the last result: with events, or none and the cursor to wait from next time.
+   * Polls until there are events or `timeoutMs` passes, every nextPollMs (at least POLL_INTERVAL_MS), so it reads the
+   * shared listing. With `hasMore` and nothing matching, polls again at once. Returns the last result: with events, or
+   * none and the cursor to wait from next time.
    */
   async wait(
     params: Record<string, unknown>,
@@ -354,12 +409,15 @@ export class PollService {
     let cursor = (params.cursor as string | null | undefined) ?? null;
     for (;;) {
       const result = await this.poll({ ...params, cursor });
-      if (result.events.length > 0 || result.hasMore) return result;
+      if (result.events.length > 0) return result;
+      // More to read past requests that didn't match: go on at once (unless the cursor didn't move).
+      const draining = result.hasMore && result.cursor !== cursor;
       cursor = result.cursor;
       const elapsed = now() - started;
-      const delay = Math.max(result.nextPollMs, POLL_INTERVAL_MS);
+      const delay = draining ? result.nextPollMs : Math.max(result.nextPollMs, POLL_INTERVAL_MS);
       if (elapsed + delay > options.timeoutMs || options.signal?.aborted) return result;
-      await sleep(delay, options.signal);
+      if (delay > 0) await sleep(delay, options.signal);
+      if (options.signal?.aborted) return result;
       options.onProgress?.(now() - started);
     }
   }
@@ -370,20 +428,29 @@ export class PollService {
     if (!(request.ignored_count ?? 0)) return 'pending'; // not processed yet
     let waiting = this.waitingOnCli.get(request.id);
     if (waiting === undefined) {
-      const ignored = await this.deps.hookdeck.listIgnoredEventsForRequest(request.id);
-      waiting = ignored.models.some((i) => i.cause === 'CLI_DISCONNECTED');
+      if (this.window.backingOff) throw new RateLimitedError('Event Gateway API rate limit reached');
       if (this.waitingOnCli.size > 5000) this.waitingOnCli.clear();
+      waiting = this.deps.hookdeck.listIgnoredEventsForRequest(request.id, { retry: false }).then(
+        (ignored) => ignored.models.some((i) => i.cause === 'CLI_DISCONNECTED'),
+        (error: unknown) => {
+          this.waitingOnCli.delete(request.id);
+          if (error instanceof HookdeckApiError && error.status === 429) throw new RateLimitedError('Event Gateway API rate limit reached');
+          throw error;
+        },
+      );
       this.waitingOnCli.set(request.id, waiting);
     }
     // DUPLICATE, FILTERED, TRANSFORMATION_FAILED and other causes were never delivered.
-    return waiting ? 'event' : 'skip';
+    return (await waiting) ? 'event' : 'skip';
   }
 
   private result(events: PastEvent[], state: CursorState, truncated: boolean, hasMore: boolean): PollResult {
-    return { resultType: 'complete', events, cursor: encodeCursor(state), truncated, hasMore, nextPollMs: hasMore ? 0 : this.window.interval };
+    // hasMore: poll again at once, unless the rate limit is running low (a backlog drains at the backed-off pace).
+    const interval = this.window.interval;
+    return { resultType: 'complete', events, cursor: encodeCursor(state), truncated, hasMore, nextPollMs: hasMore && interval <= POLL_INTERVAL_MS ? 0 : interval };
   }
 
-  /** Rate limited with nothing to answer from: no events, the same cursor, and wait the longest interval. */
+  /** Rate limited with nothing to answer from: no events, the same (checked) cursor, and wait the longest interval. */
   private unchanged(cursor: string): PollResult {
     return { resultType: 'complete', events: [], cursor, truncated: false, hasMore: false, nextPollMs: MAX_POLL_INTERVAL_MS };
   }

@@ -307,7 +307,7 @@ Then ask the agent to wait for an event, for example "wait for fills.order.fille
 - **No public URL needed:** each poll reads the provider's requests from Event Gateway, so it works from a laptop, with a deployed or a local bridge.
 - **Start from now:** a first call without a cursor returns no events, only a cursor. For events that already happened, use `list_events`.
 - **At least once:** events can repeat, so dedupe by `eventId`. `truncated: true` means events were skipped (`maxAgeMs`, or older than Event Gateway keeps).
-- **Latency:** an event reaches a poller about 2 seconds after Event Gateway receives it, sometimes up to 15. Polls share one listing of Event Gateway's requests, at most every 2 seconds, so the API's rate limit (240 requests a minute per key) is shared, however many agents poll.
+- **Latency:** an event reaches a poller about 2 seconds after Event Gateway receives it, sometimes up to 15. Polls share one listing of Event Gateway's requests, at most every 2 seconds, so the API's rate limit (240 requests a minute per key) is shared, however many agents poll, as long as each polls at the `nextPollMs` it's given (`wait_for_event` does). When the limit runs low, `nextPollMs` grows to 30 seconds.
 
 ## Local agents
 
