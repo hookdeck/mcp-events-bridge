@@ -46,6 +46,7 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 `watch` prints one JSON line per event. It needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge).
 
 - **Up to 30 minutes at a time:** a Monitor watch expires after at most 30 minutes, and Claude re-arms it when told to keep watching. Events that arrive in between are missed, because each new `watch` starts from now.
+- **Long events are shortened:** Monitor cuts a long line short (seen at around 500 characters), so long text fields, such as a comment, can arrive cut off. Each line starts with the `eventId`, so Claude can read the whole event with `get_event`.
 - **Busy sources:** Monitor stops a command that prints too many lines. Filter by repository, actions or sender.
 - **Permissions:** Claude Code asks before starting the command unless `Monitor` is allowed.
 
