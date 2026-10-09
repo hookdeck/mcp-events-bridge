@@ -7,6 +7,10 @@
 - **Poll mode** ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)): `events/poll`, for clients that can't receive webhooks, answered from Event Gateway's request history with no event store in the bridge. `events/list` offers `poll`. See [Polling](README.md#polling).
 - **`poll_events` and `wait_for_event` tools,** the same polling for MCP clients without MCP Events support, such as Claude Code: `wait_for_event` returns as soon as there are events, or after up to 50 seconds.
 
+### Fixed
+
+- **GitHub: switching from manual mode to automatic registration no longer deletes the webhooks `setup` just created.** The old registration was removed by source URL, which the new webhooks share.
+
 ### Changed
 
 - **The capability is also advertised as `extensions["io.modelcontextprotocol/events"]`,** as in the MCP Events SEP (SEP-3415), alongside `events`.

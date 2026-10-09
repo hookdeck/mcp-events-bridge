@@ -106,6 +106,24 @@ describe('bridge setup', () => {
     expect(gh.calls).toEqual([]);
   });
 
+  it('GitHub: switching from manual mode to automatic registration keeps the webhooks it creates', async () => {
+    // Found live: the old registration id ('manual') differs from the new one, so setup unregistered it, and GitHub's
+    // unregister deletes webhooks by source URL: the ones register had just created.
+    const gateway = new FakeEventGateway();
+    const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
+    const gh = new FakeGithub();
+    const run = (provider: ReturnType<typeof github>) =>
+      runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', providers: [provider] }), environment), hookdeck, fetch: gh.fetch });
+
+    await run(github({ webhookSecret: 'manual-secret-0123456789' }));
+    expect((await run(github({ token: 't', scope: { repos: ['o/one', 'o/two'] } }))).providers[0]!.webhook).toBe('updated');
+    const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
+    for (const path of ['/repos/o/one/hooks', '/repos/o/two/hooks']) {
+      expect(gh.hooks.get(path)).toEqual([expect.objectContaining({ config: expect.objectContaining({ url: source.url }) })]);
+    }
+    expect(gh.calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
+  });
+
   describe('generic webhook', () => {
     const fills = (secret = env('FILLS_WEBHOOK_SECRET')) =>
       webhook({
