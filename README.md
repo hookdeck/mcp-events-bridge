@@ -306,6 +306,8 @@ claude mcp add --transport http events-bridge 'https://<bridge>/mcp/<BRIDGE_MCP_
 
 Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp-events-bridge/references/claude-code.md)), for example "wait for fills.order.filled for AAPL and tell me about each fill". It calls `wait_for_event`, which returns as soon as there are events (or after up to 50 seconds with none), and calls it again with the `cursor` it returned.
 
+![Claude Code, asked to watch hookdeck/hookdeck-demos for new issue comments until three arrive, calls the events-bridge tools and reports each comment as it's posted, then lists all three with their times](docs/images/claude-code-wait-for-event.png)
+
 - **No public URL needed:** each poll reads the provider's requests from Event Gateway, so it works from a laptop, with a deployed or a local bridge.
 - **Start from now:** a first call without a cursor returns no events, only a cursor. For events that already happened, use `list_events`.
 - **At least once:** events can repeat, so dedupe by `eventId`. `truncated: true` means events were skipped (`maxAgeMs`, or older than Event Gateway keeps).
@@ -319,7 +321,11 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 npx mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos
 ```
 
-Run it under an agent that wakes on a command's output, and the agent hears about events while it's idle or busy with something else. In Claude Code, that's the Monitor tool: ask Claude to watch in the background with this command (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background)). It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
+Run it under an agent that wakes on a command's output, and the agent hears about events while it's idle or busy with something else. Here Claude Code runs `watch` with its Monitor tool, answers another question, then reports an issue opening, two comments and the issue closing, each as it happens, with no prompt:
+
+![Claude Code, with a watch on hookdeck/hookdeck-demos running in the background, answers "what events can the bridge give me?", then four Monitor events arrive one by one and Claude reports each: issue #29 opened, two comments quoted in full, and the issue closed](docs/images/claude-code-watch.png)
+
+In Claude Code, that's the Monitor tool: ask Claude to watch in the background with this command (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background)). It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
 
 ## Local agents
 
