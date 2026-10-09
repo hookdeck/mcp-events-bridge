@@ -1,6 +1,6 @@
 {
   "name": "@hookdeck/mcp-events-bridge",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Turn third-party webhooks into MCP Events for AI agents, with Hookdeck Event Gateway receiving and delivering them.",
   "keywords": [
     "mcp",
