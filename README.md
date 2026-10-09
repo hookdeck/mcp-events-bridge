@@ -311,6 +311,16 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 - **At least once:** events can repeat, so dedupe by `eventId`. `truncated: true` means events were skipped (`maxAgeMs`, or older than Event Gateway keeps).
 - **Latency:** an event reaches a poller about 2 seconds after Event Gateway receives it, sometimes up to 15. Polls share one listing of Event Gateway's requests, at most every 2 seconds, so the API's rate limit (240 requests a minute per key) is shared, however many agents poll, as long as each polls at the `nextPollMs` it's given (`wait_for_event` does). When the limit runs low, `nextPollMs` grows to 30 seconds.
 
+### In the background: `watch`
+
+`mcp-events-bridge watch` polls a running bridge from now on and prints each event on its own line, as JSON (`{ eventId, name, timestamp, data }`), until stopped:
+
+```sh
+npx mcp-events-bridge watch github.issues github.issue_comment --filter repository=hookdeck/hookdeck-demos
+```
+
+Run it under an agent that wakes on a command's output, and the agent hears about events while it's idle or busy with something else. In Claude Code, that's the Monitor tool: ask Claude to watch in the background with this command (see [the guide](skills/mcp-events-bridge/references/claude-code.md#3-watch-in-the-background)). It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
+
 ## Local agents
 
 An agent on a laptop has no public URL to receive webhooks on. Run the bridge on the same machine, in its own Hookdeck project, and it gives the agent one per subscription, through Event Gateway and the Hookdeck CLI:
