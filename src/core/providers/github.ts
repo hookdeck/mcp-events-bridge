@@ -314,9 +314,13 @@ export const githubProvider: ProviderDefinition<GithubOptions> = {
     return { webhookId: HOOKS_BY_URL, signingSecret };
   },
 
-  /** Deletes every webhook in scope that delivers to the source URL. In manual mode there's nothing the bridge created. */
-  async unregister({ sourceUrl, options, fetch: fetchFn }) {
-    if (!options.scope || !options.token) return;
+  /**
+   * Deletes every webhook in scope that delivers to the source URL. A manual-mode registration (`webhookId` 'manual')
+   * created nothing, so there's nothing to delete: and since webhooks are matched by URL, deleting would remove the
+   * ones automatic registration just created when setup switches from manual mode.
+   */
+  async unregister({ webhookId, sourceUrl, options, fetch: fetchFn }) {
+    if (webhookId === MANUAL || !options.scope || !options.token) return;
     for (const path of hookPaths(options.scope)) {
       for (const id of await hooksForUrl(fetchFn, options.token, path, sourceUrl)) {
         await githubApi(fetchFn, options.token, `${path}/${id}`, { method: 'DELETE' });
