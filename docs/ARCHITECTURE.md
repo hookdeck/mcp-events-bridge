@@ -676,79 +676,172 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 
 ## Spec conformance
 
-Checked on 5 Oct 2026 against the MCP Events design sketch (`experimental-ext-triggers-events`, webhook delivery) and OpenAI's MCP Events requirements for ChatGPT. Rows marked "Designed" are implemented and covered by the e2e run unless noted. The rows marked "ported" reuse code from `mcp-events-outpost-demo`, which passed OpenAI's checklist with ChatGPT on 1 Oct.
+Checked on 9 Oct 2026 against [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415) (the Events extension proposal, `seps/0000-events-extension.md` at `c47fd24`), from the code at 0.4.0, not from docs. Line numbers in the tables refer to that file. This replaces a 5 Oct check against the earlier design sketch (`experimental-ext-triggers-events`), which the SEP supersedes; the sketch's open PR #5 (`waitMs` on `events/poll`) isn't normative yet.
 
-Status: **Designed** (covered by the design), **Gap** (known not to conform), **Unknown** (depends on something not yet checked), **Event Gateway** (the requirement applies to delivery, which Event Gateway performs), **Not planned** (optional, or not used by ChatGPT, and out of scope for now).
-
-### Catalog and discovery
-
-| Requirement | Level | Status | Notes |
-| --- | --- | --- | --- |
-| `events` capability in `server/discover` | MUST | Designed (ported) | |
-| `listChanged` and `notifications/events/list_changed` | MUST if advertised | Designed | Advertise `listChanged: false`: providers change through the config file and a restart, not at runtime |
-| `events/list` with `name`, `delivery`, `inputSchema`, `payloadSchema`; `description` | MUST; SHOULD | Designed | From the provider definitions; `delivery: ["webhook"]` |
-| `nextCursor` pagination | MAY | Not planned | Catalogs are small |
-| Additive schema evolution; new name for incompatible payloads | SHOULD; MUST NOT reuse | Designed | A rule for provider authors; worth stating in the provider guide |
-
-### Subscribe, refresh, unsubscribe
-
-| Requirement | Level | Status | Notes |
-| --- | --- | --- | --- |
-| Authenticated principal; reject with `-32012` | MUST | **Partial** | Secret URL (default): a request without the secret is rejected, and every caller with it is the one owner principal. Built-in OAuth or an identity provider gives token-based principals (stage 7) |
-| Principal authorized for the event and arguments | MUST | **Gap** | Single-tenant: any principal the deployment accepts can subscribe to any configured event. No per-resource access model |
-| Re-check access during the subscription; stop on revocation | SHOULD (spec), required by OpenAI | **Gap** | Only "remove the principal's token". No revocation signal from providers |
-| `https` callback URLs; reject others with `-32602` | MUST | Designed | ChatGPT callbacks are `https`; local agents use Hookdeck source URLs, which are `https`. The demo's `allowLocal` (`http` on localhost) is dev-only and doesn't conform |
-| `whsec_` secret, 24 to 64 bytes | MUST | Designed (ported) | |
-| Deterministic id; idempotent upsert on (principal, URL, name, canonical arguments) | MUST | Designed (ported) | |
-| `refreshBefore`; no more than `ttlMs`; `null` only if `ttlMs: null` | MUST | Designed (ported) | ChatGPT sent no `ttlMs`, so the server default applies |
-| Keep subscriptions for the granted lifetime, across restarts | MUST (for long TTLs) | Designed | Kept in Event Gateway (connection metadata, secrets in destination auth) and reloaded at startup; verified against the live API |
-| Replace the secret on refresh; dual-sign during rotation | MUST; SHOULD | Designed (ported) | The new secret replaces the one in destination auth. The relay signs with both for the grace window; the previous secret is kept in memory, so a restart inside the window ends dual-signing early |
-| `cursor` in the subscribe response (`null` if no replay) | MUST | Designed | Always `null`: no replay |
-| `truncated` | MAY | Designed (ported) | `true` when a client supplies a cursor, since there's no replay |
-| `deliveryStatus` | MAY | Designed | From Event Gateway delivery issues on the subscription's connection |
-| `-32013` on limits | MUST when limited | Designed (ported) | Event Gateway has no documented limits on the number of sources, connections or destinations, so limits are the bridge's own |
-| Unsubscribe by name, arguments and URL; stop delivery immediately | MUST | Designed (ported) | Deletes the connection and destination. In stage 3, deleting a connection canceled its scheduled retries |
-
-### Endpoint verification and SSRF
-
-| Requirement | Level | Status | Notes |
-| --- | --- | --- | --- |
-| Verify intent before delivering (challenge, allowlist, out-of-band or well-known) | MUST | Designed (ported) | Signed challenge sent by the bridge; `-32015` with `data.reason` on failure |
-| Cache verification per (principal, URL) | MUST | Designed (ported) | |
-| Validate callback URLs; reject non-global addresses | MUST; SHOULD | Designed | At subscribe, and for the challenge through `CallbackTransport` |
-| Validate at **delivery** time with a pinned IP (DNS rebinding) | MUST | Event Gateway | Deliveries are made by Event Gateway, which is responsible for delivery-time validation. The bridge checks callbacks at subscribe (`https`, public addresses only); a host allowlist is planned |
-| Don't follow redirects on delivery | MUST | Event Gateway | Redirect handling is performed by Event Gateway, which makes the deliveries |
-
-### Delivery
-
-| Requirement | Level | Status | Notes |
-| --- | --- | --- | --- |
-| Headers: `webhook-id` = `eventId`, `webhook-timestamp`, `webhook-signature` (`v1,`), `X-MCP-Subscription-Id`, `Content-Type: application/json` | MUST | Designed | Set by the relay; Event Gateway passes them through |
-| Envelope: `eventId`, `name`, `timestamp`, `data`, `cursor` | MUST | Designed | `cursor: null` |
-| `data` matches `payloadSchema`; minimal triage fields | MUST; SHOULD | Designed | Provider `summarize` |
-| Body at most 256 KiB | SHOULD (spec), hard limit for ChatGPT | Designed | The relay checks size before publishing |
-| **Each retry regenerates timestamp and signature** | MUST | **Gap** | Event Gateway redelivers the original headers. Mitigation: retries finish inside 5 minutes, the window inside which receivers SHOULD accept a timestamp. Inbound retries do re-sign, and so does the bridge's retry of a local agent's missed deliveries. Closes with Standard Webhooks destination signing |
-| Exponential backoff, bounded attempts | SHOULD | Designed | Event Gateway retry rule, exponential, inside 5 minutes |
-| Don't retry `410` or `413` | MUST | Designed | Retry rule `response_status_codes: [">=300", "!410", "!413"]`, verified in stage 3. Negations alone also retry `2xx` |
-| Stable `eventId`, duplicates and out-of-order delivery tolerated | MUST | Designed | Provider event id; dedupe is best-effort, receivers dedupe on `webhook-id` |
-| Event content treated as untrusted data | MUST | Designed | No instructions in payloads |
-
-### Optional parts of the spec not covered
-
-| Feature | Level | Status | Notes |
-| --- | --- | --- | --- |
-| `gap` and `terminated` control envelopes | MUST when used; `terminated` SHOULD on revocation or removed events | Not planned | ChatGPT doesn't support them. `bridge setup --prune` should send `terminated` if a client ever does |
-| Poll mode (`events/poll`) | Optional mode | Built (#26) | See "Poll mode": backed by Event Gateway's stored requests, so it also gives replay (`cursor`, `maxAgeMs`, `truncated`). Tools wrap it for hosts without MCP Events support |
-| Push mode (`events/stream`) | Optional mode | Not planned | Would bypass Event Gateway; only if a client needs it |
-| Replay: non-null `cursor`, `maxAgeMs` | MAY | Built, with poll (#26) | With poll mode: the cursor is a position in Event Gateway's request history. Webhook deliveries still carry `cursor: null` |
-| Asymmetric `v1a,` signatures and JWKS | MAY | Not planned | |
+Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode or option not offered, or a client/receiver-side rule), **Event Gateway-dependent** (delivery is performed by Event Gateway), **Unknown**.
 
 ### Summary
 
-- **Known gaps:** re-signing on every retry, per-principal authorization, and access re-checks. The first is a known limit of the relay and closes with Event Gateway destination signing. The other two come from single-tenant hosting and matter more for anything multi-tenant.
-- **Delegated to Event Gateway:** the delivery-time SSRF and no-redirect rules apply to whoever makes the deliveries, which is Event Gateway.
-- **Partial:** the authenticated principal. The secret URL authenticates one owner; OAuth tiers (stage 7) give token-based principals.
-- **ChatGPT:** stage 5 was verified with ChatGPT on 6 Oct: it subscribed, answered the challenge and received an email event (see "Verified facts").
+- **105 requirements:** 65 conform (6 of them on Event Gateway behavior recorded in "Verified facts"), 16 partly, 7 are gaps, 13 don't apply, 3 are unknown.
+- **Gaps that break clients, for 0.5.0:** the error codes (row 62, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37), with rows 36 and 101), and a `410` deleting the subscription (row 59, [#29](https://github.com/hookdeck/mcp-events-bridge/issues/29)).
+- **Other gaps and partials:** `terminated` when an event leaves the catalog (rows 13, 72, [#49](https://github.com/hookdeck/mcp-events-bridge/issues/49)); webhook and poll cursors, and `truncated` on subscribe (rows 33, 54, [#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)); a verification rate limit, `ttlMs` clamping, the rotation secret across restarts and IANA blocks (rows 44, 51, 79, 91, [#51](https://github.com/hookdeck/mcp-events-bridge/issues/51)); behaviors kept for clients built on the sketch, such as `{}` for an unknown unsubscribe and the top-level `events` capability (rows 5, 98, [#52](https://github.com/hookdeck/mcp-events-bridge/issues/52)); a delivery-time permission re-check (row 104, moot with one owner).
+- **Event Gateway:** retries reuse the first signature (row 56), which closes when Event Gateway signs deliveries itself. Its delivery-time SSRF, redirect and egress-IP behavior isn't recorded (rows 68, 80, 81). Features that would help: Standard Webhooks signing on destinations, a monotonic position in the request listing for poll (row 32), and `MCP_EVENTS` sources serving `/.well-known/mcp-webhook-receiver.json` (row 85).
+- **ChatGPT:** verified on 6 Oct (subscribe, challenge, an email event) and 9 Oct (seven GitHub subscriptions); see "Verified facts" and `SPIKES.md`.
+
+### Capability negotiation and protocol revision
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Specification (37) | Extension defined for `2026-07-28`+; relies on per-request caps, `server/discover`, `subscriptions/listen` | Scope | Conforms | SDK 2.3.1 serves 2026-07-28; `server/discover` asserted in `test/host/bridge.test.ts:234` | Note: `events/*` are also served on legacy 2025-11-25 sessions (SEP 865 says the extension isn't defined there). Deliberate, for ChatGPT |
+| 2 | Specification (41) | Every result is a `Result` with `resultType: "complete"` | MUST (convention) | Conforms | SDK `stampResultType` stamps every method on the 2026-07-28 wire (`node_modules/@modelcontextprotocol/server/dist/src-*.mjs`, `encodeResult`); `src/core/poll.ts:450,455` sets it explicitly | |
+| 3 | Capability Negotiation (56–58) | Declared as `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover` | MUST (definition) | Conforms | `src/core/mcp.ts:33`; `test/host/bridge.test.ts:235` | |
+| 4 | Capability Negotiation (75) | `listChanged` optional, default false; `{}` = support without list-change | | Conforms | `src/core/mcp.ts:33` advertises `{}`; catalog is fixed per process (`src/core/catalog.ts:22-32`) | |
+| 5 | Backward Compatibility (866) | Top-level `events` capability is not part of the extension; sketch implementations migrate to `extensions` | Informative | Partial | `src/core/mcp.ts:31-33` still advertises `events: {}` alongside (read by ChatGPT, pi-mcp-events) | Keep for compat; add a removal plan once ChatGPT/pi read `extensions` |
+| 6 | Dynamic event types (196–208) | `eventsListChanged` on `subscriptions/listen`; a server without `listChanged: true` omits it from the acknowledged filter | MUST (by "omits") | Conforms | SDK `honoredSubset` only echoes known fields (`server/dist/mcp-*.mjs:160-167`), so `eventsListChanged` is dropped | |
+| 7 | Dynamic event types (194) | Send `notifications/events/list_changed` when descriptors change | Conditional on `listChanged: true` | N/A | Not declared | |
+| 8 | Capability Negotiation (94) | Server not offering the extension answers `-32601` | MUST | N/A | Bridge offers it | |
+
+### `events/list` and schema evolution
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 9 | Listing (117–176) | `events[]` with `name`, `description`, `delivery`, `inputSchema`, `payloadSchema`; `nextCursor` when paged | MUST (shape) | Conforms | `src/core/catalog.ts:44-52`, `src/core/mcp.ts:179` (single page) | |
+| 10 | Listing (179) | `delivery` is a non-empty subset of poll/push/webhook | MUST | Conforms | `['webhook','poll']`, `src/core/catalog.ts:48`; `events/poll` always registered by the host (`src/host/server.ts:126,137`) | |
+| 11 | Schema evolution (183–188) | Evolve `inputSchema`/`payloadSchema` additively; don't remove, retype, narrow enums or tighten | SHOULD / SHOULD NOT | Partial | A convention for provider authors (`src/core/providers/*`); nothing enforces or tests it | State the rule in the provider guide (`docs/ARCHITECTURE.md` "Adding a provider") |
+| 12 | Schema evolution (190) | Breaking change under a new event name | SHOULD | Partial | Same as 11 | Same as 11 |
+| 13 | Removal and breaking changes (212–217) | On removal/incompatible change, end subscriptions with `terminated` (`NotFound {kind:"event"}` or `Unsupported {feature, reason:"schema_changed"}`) | SHOULD | **Gap** | `src/host/server.ts:101-104` only logs subscriptions to events no longer in the catalog; their Event Gateway connections live until expiry (default 30 d, `src/core/config.ts:99`) and receive nothing | At startup (and in `setup --prune`), POST a signed `terminated` envelope with `NotFound {kind:"event"}` to each orphaned subscription, then delete it |
+| 14 | Removal (219) | Purely additive changes MUST NOT terminate | MUST NOT | Conforms | The bridge never terminates | |
+| 15 | Removal (221) | Poll against a removed name returns `NotFound` | | Conforms | `src/core/poll.ts:263` | |
+
+### Event occurrences
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 16 | Event Occurrences (227–234) | `eventId`, `name`, `timestamp`, `data` (+ `cursor` for push/webhook only) | MUST (shape) | Conforms | Webhook body `src/core/relay.ts:127`; poll `PastEvent` `src/core/event-history.ts:11-16` (no per-event cursor) | |
+| 17 | Event Occurrences (236) | `eventId` SHOULD be the upstream's stable id | SHOULD | Conforms | Provider `eventId()` (e.g. `src/core/providers/resend.ts:61`); generic webhook falls back to Hookdeck's request id (`src/core/providers/webhook.ts:190-191`), which is stable across webhook and poll paths | |
+
+### Poll (`events/poll`)
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 18 | Poll (257) | One subscription per request | | Conforms | `src/core/poll.ts:260-277` | |
+| 19 | Poll (297), Cursor (690) | `cursor: null` = start from now: no events, fresh cursor | | Conforms | `src/core/poll.ts:288-292` | |
+| 20 | Poll (297) | Response `cursor` (MAY be null when no replay) | MAY | Conforms | Always non-null, `src/core/poll.ts:450` | |
+| 21 | Poll (298) | `maxEvents` caps; partial batch sets `hasMore: true`; default when omitted | | Conforms | Default 50, clamped to 100: `src/core/poll.ts:22-23,276,376-379` | |
+| 22 | Poll (299–300) | `hasMore` and `nextPollMs` semantics | | Conforms | `src/core/poll.ts:384-387,447-451`; back-off via `intervalFor` `:203-208` | |
+| 23 | Poll (302) | No protocol-required state; MAY hold ephemeral derived state | MAY | Conforms | Cursor carries all state (`CursorState`, `src/core/poll.ts:56-69`); shared listing is a rebuildable cache (`RequestWindow`, `:113-200`) | |
+| 24 | Poll (303) | Errors as JSON-RPC errors (`NotFound`, `Forbidden`, `InvalidParams`, `Unsupported`) | | Partial | Mechanism right; numbers are the sketch's (`src/core/errors.ts:4-12`) | See row 62 (#37) |
+| 25 | Cursor (692) | Absent `cursor` treated as `null`; receiver MUST NOT fail | MUST | Conforms | `src/core/poll.ts:276`; subscribe `src/core/subscriptions.ts:197` | |
+| 26 | Cursor (696) | `maxAgeMs`: replay from the later of cursor and now − `maxAgeMs` | | Conforms | `src/core/poll.ts:313-318` | |
+| 27 | Cursor (698) | `truncated: true` when the floor passes the cursor | SHOULD | Conforms | `src/core/poll.ts:315` | |
+| 28 | Cursor (700) | Server's own replay ceiling MUST be signaled with `truncated: true` | MUST | Conforms | Retention ceiling, `src/core/poll.ts:309-312` (3 d default, `:27`) | |
+| 29 | Cursor (701) | `maxAgeMs` ignored with a null cursor | | Conforms | `src/core/poll.ts:285-292` | |
+| 30 | Cursor (703, 707) | Poll gap is `truncated` in the result, never an error | | Conforms | `src/core/poll.ts:447-451` | |
+| 31 | Ordering (739) | Poll events in the order the server produces them | | Conforms | `created_at` order, `src/core/poll.ts:347-383` | |
+| 32 | Ordering (740), Gaps (703) | At-least-once with a durable upstream; skipped events signaled by `truncated` | Guarantee / "single signal" | Partial | A request that appears in Event Gateway's listing more than `LOOKBACK_MS` (60 s) after its `created_at` is skipped with no `truncated` (`src/core/poll.ts:17`; ARCHITECTURE "Poll mode": "missed, with no signal"). 15 s max measured, so rare | Hookdeck feature opportunity: a monotonic sequence on the request listing. Interim: none cheap |
+| 33 | Cursor (688) | An event type that ever returns a non-null cursor SHOULD always do so | SHOULD | Partial | Same event types return non-null cursors from poll (`src/core/poll.ts:450`) but `cursor: null` in webhook bodies (`src/core/relay.ts:127`) and subscribe responses (`src/core/subscriptions.ts:196`) | Use the poll cursor codec as the webhook watermark (Event Gateway request position), or document the per-mode difference |
+| 34 | PR #5 (not normative) | `waitMs` long poll on `events/poll` | | N/A | Equivalent tool exists: `wait_for_event` (`src/core/mcp.ts:114-137`, `src/core/poll.ts:402-423`) | If #5 merges, accept `waitMs` on `events/poll` by reusing `poll.wait` |
+
+### Push (`events/stream`)
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 35 | Push (307–387) | Confirmation, `subscriptionId` in `_meta`, heartbeat (MUST, ≤30 s SHOULD), cancellation (MUST), SDK concurrency exemption (MUST) | MUST/SHOULD | N/A | Not built and not advertised (`src/core/catalog.ts:48`) | |
+| 36 | Error Handling (758) | `Unsupported {feature:"deliveryMode", value}` for a mode the event type doesn't offer | (error table) | Partial | No `events/stream` handler, so the SDK answers `-32601` (`src/core/mcp.ts:179-184`) | Register `events/stream` that validates `name` and throws `unsupported('deliveryMode','push')` |
+
+### Webhook: subscribe, TTL, identity
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 37 | Subscribing (458) | `events/subscribe` is webhook-only; other `delivery.mode` → `Unsupported` | | Conforms | `src/core/subscriptions.ts:89` | |
+| 38 | Subscribing (459), Secret generation (645) | `delivery.secret` REQUIRED, `whsec_` + base64 of 24–64 bytes; reject otherwise with `InvalidParams` | MUST | Conforms | `src/core/secret.ts:12-18`; `src/core/subscriptions.ts:118-120` | |
+| 39 | Subscribing (460), Derived id (495) | `id` deterministic over the key, stable across refreshes and restarts, in `X-MCP-Subscription-Id` | | Conforms | `src/core/identity.ts:12-14` (truncated SHA-256 of canonical JSON); `src/core/relay.ts:153`; challenge `src/core/callback.ts:89` | |
+| 40 | Subscribing (461–462) | Request/response `cursor` (watermark; `null` when no replay) | | Conforms | Always `null`, `src/core/subscriptions.ts:196` | |
+| 41 | Subscribing (463), TTL (472) | `refreshBefore` always present (nullable) | | Conforms | `src/core/subscriptions.ts:195` | |
+| 42 | Subscribing (464) | Idempotent upsert; resets TTL, updates mutable fields; recreates if expired or lost | | Conforms | `store.update` read-modify-write, `src/core/subscriptions.ts:161-183` | |
+| 43 | Subscribing (465), Appendix A (998) | Long or no-expiry grants MUST be retained for the granted lifetime, across restarts | MUST | Conforms | Event Gateway connection is the store, reloaded at startup: `src/core/event-gateway-store.ts:71-87`, `src/host/server.ts:85`. Caveat: a connection whose metadata can't be decoded is listed as unreadable and silently gets no deliveries | Consider failing loudly (or `terminated`) for unreadable subscriptions |
+| 44 | TTL (472) | Grant SHOULD be ≤ suggestion; MAY clamp up to a floor; "no rejection path for TTL values" | SHOULD | Partial | Clamp is right (`src/core/subscriptions.ts:45-48`); but a negative or non-number `ttlMs` is rejected with `InvalidParams` (`:122-124`) | Clamp negatives to `minTtlMs`; treat non-numbers as "server default" |
+| 45 | TTL (473) | MUST NOT return `refreshBefore: null` unless `ttlMs: null` | MUST NOT | Conforms | Never returns null; `ttlMs: null` gets the finite default (`src/core/subscriptions.ts:44-46`) | |
+| 46 | TTL (475) | Recommended finite grants up to about a day | Guidance | Conforms | Default 30 d, max 90 d (`src/core/config.ts:99-101`). Allowed ("not a ceiling"); chosen because ChatGPT sends no `ttlMs` | |
+| 47 | TTL (479–481) | No-expiry obligations (persist, MAY drop after failure, SHOULD `terminated`) | MUST/MAY/SHOULD | N/A | No-expiry never granted | |
+| 48 | Identity (489) | `events/subscribe`/`unsubscribe` MUST have an authenticated principal; reject with `Forbidden` | MUST | Partial | Secret-URL auth sets principal `owner` (`src/host/server.ts:148-152`); handlers reject a missing principal (`src/core/subscriptions.ts:106,211`). Behavior conforms; the code is `-32012`, not `-32024` | Row 62 (#37) |
+| 49 | Identity (491) | Key = `(principal, delivery.url, name, arguments)`, arguments by canonical JSON | | Conforms | `src/core/identity.ts:12-14`, `src/core/canonical-json.ts`. URL normalized through `URL.href` | |
+| 50 | Identity (493) | All four immutable; a change addresses a different subscription | | Conforms | Inherent in the derived id | |
+| 51 | Identity table (501), Rotation (647) | Secret replaced on refresh; SHOULD dual-sign old and new for a grace window | SHOULD | Partial | Dual-signs for 10 min (`src/core/relay.ts:142-145`, `src/core/config.ts:105`), but the previous secret is only in memory (`src/core/event-gateway-store.ts:33-34,59`), so a restart inside the window ends dual-signing | Persist the previous secret (e.g. sealed in the description, or a second credential) |
+| 52 | Identity table (503–504) | TTL granted again; `active` set true on refresh | | Conforms | `src/core/subscriptions.ts:159,178` | |
+| 53 | Identity (506) | Derived `id` not accepted as input to any method | | Conforms | No method or tool takes it | |
+| 54 | Gaps (711) | For non-replay types (`cursor` always null), `truncated` SHOULD be false | SHOULD | Partial | Subscribe returns `truncated: true` whenever the client passes a non-null cursor (`src/core/subscriptions.ts:197`), although webhook cursors are always null. Defensible because the same event types replay in poll (row 33) | Resolve together with row 33: either replay webhook from the cursor, or return `false` |
+
+### Webhook: delivery, retries, status codes
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 55 | Delivery (533), Signature (638) | Every delivery has `webhook-id` (= `eventId`), `webhook-timestamp` (seconds), `webhook-signature` | MUST | Conforms (via Event Gateway) | Relay signs at publish, `src/core/relay.ts:149-155`, `src/core/sign.ts:14-27`; Event Gateway passes published headers through unchanged (ARCHITECTURE "Verified facts", Publish API pass-through) | |
+| 56 | Delivery (533), Signature (642) | Each retry attempt MUST regenerate timestamp and signature | MUST | **Gap** (Event Gateway-dependent) | Event Gateway retries resend the original headers (`src/core/hookdeck.ts:132-149`; ARCHITECTURE "Outbound retries carry the first signature"). Mitigation: 3 exponential retries from 20 s. Inbound retries and the tunnel-URL recovery path re-sign (`src/core/callbacks.ts` `retryMissed`) | Hookdeck feature: Standard Webhooks signing on Event Gateway destinations. Interim: measure actual retry spacing stays under 5 min |
+| 57 | Delivery (535) | Body `cursor` is a safe watermark; MAY be null | MAY | Conforms | `cursor: null`, `src/core/relay.ts:127` | |
+| 58 | Delivery (536) | Retry each event independently, exponential backoff on non-`2xx`; SHOULD cap attempts and window (3–5 over ≤10–15 min) | SHOULD | Conforms (Event Gateway-dependent) | Retry rule: exponential, 3 attempts, 20 s, `[">=300","!410","!413"]` (`src/core/hookdeck.ts:143-149`) | Exact Event Gateway spacing not measured in repo (Unknown) |
+| 59 | Delivery (536) | `410` is non-retryable **for that delivery, without affecting the subscription** | MUST | **Gap** | Retry rule excludes 410 (OK), but a 410 delivery issue deletes the subscription (`src/core/relay.ts:185-187`) | Treat 410 like 413: no retry, keep the subscription (optionally record nothing). Issue #29 |
+| 60 | Delivery profile (658) | `413` non-retryable for that event | MUST | Conforms (Event Gateway) | `!413` in the retry rule (verified stage 3). A 413 is recorded as `lastError: http_4xx` | |
+| 61 | Delivery profile (658), Payload minimality (903) | Bodies ≤ 256 KiB; payloads minimal | SHOULD | Conforms | `src/core/relay.ts:23,127-131` (oversize dropped with a log); provider `summarize`. Generic webhook passes the whole JSON body unless `fields` is set (Partial for that provider) | Default generic-webhook `fields` guidance in docs |
+| 62 | Error Handling (752–763) | Codes `NotFound -32023`, `Forbidden -32024`, `ResourceExhausted -32025`, `Unsupported -32026`, `CallbackEndpointError -32027` | Normative table (provisional) | **Gap** | `src/core/errors.ts:4-12` uses -32011..-32015; tests and docs assert the old numbers | Renumber (issue #37; ext-triggers-events#11 merged 9 Oct). Breaking for clients matching numbers |
+| 63 | Delivery profile (655–657) | POST, `application/json`, required headers on every delivery | | Conforms (Event Gateway) | `content-type` set at publish (`src/core/relay.ts:150`); Event Gateway HTTP destination POSTs and passes headers through | |
+| 64 | Signature (643) | `X-MCP-Subscription-Id` on every delivery | MUST | Conforms | `src/core/relay.ts:153`; Event Gateway connection filter keys on it (`src/core/event-gateway-store.ts:152`) | |
+| 65 | Signature (639–641) | HMAC-SHA256 over `id.timestamp.body`, `v1,` base64, secret is base64-decoded `whsec_` | MUST | Conforms | `standardwebhooks` lib, `src/core/sign.ts:21` | |
+| 66 | Signature (641) | Several space-delimited signatures during rotation | MAY | Conforms | `src/core/sign.ts:21-25` | |
+| 67 | Delivery (539) | Suspension after sustained failure | MAY | N/A | Bridge never suspends; Event Gateway keeps delivering new events | |
+| 68 | Delivery profile (661) | Servers SHOULD document egress ranges | SHOULD | Unknown | Not documented; depends on Event Gateway's egress IPs | Link Hookdeck's egress IP docs (if any) in README security |
+
+### Webhook: control envelopes and delivery status
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 69 | Non-event bodies (543) | Control envelopes signed and headed like deliveries; `webhook-id` = `msg_<type>_<random>` | MUST (by "are") | Conforms | `verification` only: `src/core/callback.ts:84-90`. `gap`/`terminated` never sent | |
+| 70 | Non-event bodies (543), **c47fd24** | Endpoint MUST forward `gap`/`terminated`; `verification` is consumed by the endpoint, not forwarded | MUST (receiver) | Conforms / Unknown | For bridge tunnel URLs, Event Gateway's `MCP_EVENTS` source answers the challenge and the agent never sees it (`skills/mcp-events-bridge/references/receiving-deliveries.md:14`; ARCHITECTURE "MCP Events source type"). Whether that source forwards `type: gap/terminated` bodies is untested (the bridge never sends them) | Probe `MCP_EVENTS` with a signed `terminated` body before row 13 ships |
+| 71 | Non-event bodies (547), Gaps (709) | `gap` envelope for gaps detected between refreshes | Conditional | N/A | No webhook cursor | |
+| 72 | Termination (715–721), Authorization (909) | `terminated` envelope when access is revoked or the type is removed | SHOULD | **Gap** | Never sent (see row 13). Revocation has no source in a single-owner deployment | Row 13 |
+| 73 | Delivery status (606) | `deliveryStatus` OPTIONAL on refresh | MAY | Conforms | Only on refresh of an existing subscription, `src/core/subscriptions.ts:198-204` | |
+| 74 | Delivery status (608) | `active: false` = retries suspended; the returning refresh has reactivated it | | Partial | Always reports `active: true` (`src/core/subscriptions.ts:200`), though the store records `active: false` on failure (`src/core/relay.ts:195`). Literally accurate (Event Gateway never suspends), but the "was failing" signal is only in `lastError`/`failedSince` | Report the recorded `active` value, or document that `lastError` is the signal |
+| 75 | Delivery status (609) | `lastError` MUST be one of six categories, never raw response data | MUST | Conforms | `src/core/relay.ts:48-55`; `src/core/errors.ts:15-21` | |
+| 76 | Delivery status (610–613) | `throttled` / `retryAfterMs` only when rate-limiting outbound | Optional | Conforms (by omission) | Subscription destinations have no rate limit, so never sent | If Event Gateway destination rate limits are added, map Event Gateway backpressure to `throttled` |
+| 77 | Delivery status (565) | `lastDeliveryAt` | Optional | N/A | Not sent | Could come from Event Gateway's last successful attempt on the connection |
+
+### Webhook security: SSRF, verification, TLS
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 78 | SSRF (617) | Server MUST validate callback URLs | MUST | Conforms | `src/core/callback.ts:26-39`; `src/host/callback-transport.ts:78-85` | |
+| 79 | SSRF (617) | Reject non-globally-routable resolved IPs | SHOULD | Conforms | `src/host/callback-transport.ts:14-42`. Minor: a few small IANA v4 blocks absent (e.g. 192.31.196.0/24, 192.52.193.0/24, 192.175.48.0/24) | Add the missing blocks |
+| 80 | SSRF (617) | Validate at **delivery** time against a pinned IP (DNS rebinding) | MUST | Event Gateway-dependent (Unknown) | Deliveries are made by Event Gateway; nothing in the repo shows Event Gateway's private-address or rebinding policy | Confirm with Hookdeck and document |
+| 81 | SSRF (617) | Deliveries MUST NOT follow redirects | MUST | Event Gateway-dependent (Unknown) | As 80. The bridge's own challenge never follows (node:http) | Confirm with Hookdeck |
+| 82 | SSRF (617) | Callback URL allowlist | MAY | N/A | Planned, not built | |
+| 83 | Endpoint verification (619) | MUST NOT deliver until intent is confirmed by one of four paths | MUST | Conforms | Challenge runs before the Event Gateway connection is created: `src/core/subscriptions.ts:138-157` then `:163` | |
+| 84 | Endpoint verification (621) | Single-use short-lived nonce, signed; echo in `2xx` body; constant-time compare | MUST | Conforms | `src/core/callback.ts:82-115` (24 random bytes, 5 s timeout, `timingSafeEqual`) | |
+| 85 | Endpoint verification (624) | Well-known receiver document `/.well-known/mcp-webhook-receiver.json` | Option (one of four) | N/A | Not implemented; the challenge path satisfies row 83. A receiver that relies only on the well-known document would fail to subscribe | Hookdeck opportunity: Event Gateway `MCP_EVENTS` sources could publish it on their origin |
+| 86 | Endpoint verification (626) | Reachable endpoint that fails to echo → `challenge_failed`; unreachable → connection category | | Partial | A reachable endpoint answering 4xx/5xx is reported as `http_4xx`/`http_5xx` (`src/core/callback.ts:99-101`). SEP 609 also lists `http_4xx`/`http_5xx` as valid `data.reason`, so this is ambiguous | Map non-2xx from a reachable endpoint to `challenge_failed`, or raise the ambiguity on the SEP |
+| 87 | Endpoint verification (628) | First-subscribe challenge carries the not-yet-known `id`; non-2xx fails subscribe with `CallbackEndpointError` | | Conforms | `src/core/callback.ts:89`; `src/core/subscriptions.ts:151-154` | |
+| 88 | Endpoint verification (630) | Cache per `(principal, url)`, in-memory TTL soft state, re-verify after restart | | Conforms | `src/core/subscriptions.ts:70,140-157`; `src/core/identity.ts:17-19`. Tunnel URLs always re-verified | |
+| 89 | Endpoint verification (630) | Persist verification with persisted no-expiry subscriptions | MUST | N/A | No no-expiry grants | |
+| 90 | Endpoint verification (630) | Verification POST MUST use the SSRF-hardened path | MUST | Conforms | `safeLookup` pins the validated IP, SNI keeps the hostname, no redirects: `src/host/callback-transport.ts:55-67,87-98` | |
+| 91 | Endpoint verification (630) | Verification POSTs SHOULD be rate-limited per destination host | SHOULD | **Gap** | No per-host limit; the only bound is the 24 h `(principal,url)` cache (single principal) | Per-host token bucket before `verify` |
+| 92 | Endpoint verification (630) | Failures surface only as categories, never raw responses | MUST (by "only") | Conforms | Body read only to compare the echo (`src/core/callback.ts:103-115`) | |
+| 93 | Server identity (632) | Asymmetric `v1a,` signing | MAY | N/A | Not built | |
+| 94 | TLS (634) | `https` only; reject others with `InvalidParams` | MUST | Conforms | `src/core/callback.ts:34`; `src/core/subscriptions.ts:95` | |
+| 95 | Callback auth (649) | HMAC is the only callback authentication | | Conforms | Event Gateway's `CUSTOM_SIGNATURE` also adds `x-mcp-bridge-hmac` (`src/core/event-gateway-store.ts:42,150`), a side effect of using it as secret storage; receivers ignore it | |
+
+### Unsubscribe, errors, authorization
+
+| # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 96 | Unsubscribe (665) | Stops deliveries immediately | | Conforms (Event Gateway) | Deletes connection and destination (`src/core/event-gateway-store.ts:172-181`); stage 3: deleting a connection canceled scheduled retries | |
+| 97 | Unsubscribe (680) | Resolved by the same key; principal from auth; id not accepted; empty `Result` | | Conforms | `src/core/subscriptions.ts:209-222` | |
+| 98 | Error Handling (755) | `NotFound` for no matching subscription on `events/unsubscribe` | Error table | Partial | Returns `{}` for an unknown subscription (OpenAI guidance; `src/core/subscriptions.ts:208`) | Decide: keep idempotent `{}` (document), or return `NotFound {kind:"subscription"}`. Changing it could break ChatGPT |
+| 99 | Error Handling (755) | `NotFound` `data.kind` MAY disambiguate | MAY | Conforms | `src/core/errors.ts:26-27` | |
+| 100 | Error Handling (757) | `ResourceExhausted` with `data.limit` when a limit is hit | Conditional | N/A | No subscription limits; `resourceExhausted` is defined (`src/core/errors.ts:32`) but never raised | |
+| 101 | Error Handling (754, 757) | `InvalidParams` is for statically invalid requests; limits are `ResourceExhausted` | | Partial | Arguments too large for Event Gateway's 500-char description return `InvalidParams` (`src/core/subscriptions.ts:185`, `src/core/event-gateway-store.ts:141`), though they may match `inputSchema` | Return `ResourceExhausted {limit:"argumentsSize", max}` |
+| 102 | Error Handling (758–759) | `Unsupported` and `CallbackEndpointError` `data` shapes | | Conforms | `src/core/errors.ts:35-39` | |
+| 103 | Authorization (907) | Verify the principal may subscribe to the event with these arguments | MUST | Partial | Single owner principal who configured every provider, so it holds trivially; no model for multi-tenant | Needed only with OAuth/multi-tenant (stage 7) |
+| 104 | Authorization (909) | Re-verify permissions at delivery time; terminate on revocation | SHOULD | **Gap** | No re-check; no revocation source | With row 13's `terminated` path, once tokens exist |
+| 105 | Reservations (767–770) | Reserved method prefixes, label, filter field, header and well-known paths | | Conforms | No collisions | |
 
 ## Verified facts
 
