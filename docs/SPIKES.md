@@ -168,3 +168,36 @@ Run on 8 Oct 2026, for [#26](https://github.com/hookdeck/mcp-events-bridge/issue
 ### Resources
 
 No Event Gateway resources were created: the fills went to the existing `bridge-fills` source. The test scripts and logs are in the session scratchpad, not the repo.
+
+## GitHub provider: live
+
+Run on 9 Oct 2026 against a local bridge (CLI inbound) in the development project, with automatic registration on five `hookdeck/*` repositories (`hookdeck-demos`, `website`, `mcp-events-bridge`, `webhook-skills`, `agent-skills`). Until then the GitHub provider had only unit tests. **Passed, after one fix it found.**
+
+### What we ran
+
+1. **`setup`** with a token allowed to manage the repositories' webhooks. The dev project's `bridge-github` source was still in manual mode from 6 Oct, so this also switched modes.
+2. **Real events in `hookdeck-demos`:** an issue opened, commented on and closed, and a draft pull request opened and closed. Cursors were taken first through `events/poll` for `github.issues`, `github.issue_comment` and `github.pull_request`, filtered to `{ "repository": "hookdeck/hookdeck-demos" }`, plus one filtered to another repository.
+3. **`list_events` and `get_event`** for the issue.
+4. **A redelivery** of the "issue opened" webhook from GitHub's API, and **two forged requests** to the source URL: one with a wrong `X-Hub-Signature-256`, one with none.
+5. **Claude Code** (2.1.295, `claude -p` with Haiku 4.5, the bridge as an HTTP MCP server) told to call `wait_for_event` for `github.issue_comment` on `hookdeck-demos`, while a comment was posted 25 seconds later.
+
+### What we saw
+
+- **`setup`:** the first run reported the webhook "updated", but no webhooks existed afterward. Switching from manual mode changed the registration id, so `setup` unregistered the old one, and GitHub's `unregister` deletes webhooks by source URL: the five it had just created. Fixed in [#39](https://github.com/hookdeck/mcp-events-bridge/pull/39), with a regression test. After the fix: five webhooks, active, with the 7 default event types, and each `ping` answered `200`.
+- **`setup` trusts the source's description:** after the bug, the description said the webhooks were registered, and a rerun skipped them ([#41](https://github.com/hookdeck/mcp-events-bridge/issues/41)).
+- **A token GitHub refused:** a fine-grained token with "Public repositories" access and the organization Webhooks permission gets `403` on every repository's hooks (it needs the repository Webhooks permission, which only appears once repositories are selected), and `403` on the organization's hooks for an organization member (organization webhooks need an owner). `setup` printed GitHub's raw error ([#38](https://github.com/hookdeck/mcp-events-bridge/issues/38)).
+- **Events:** every event arrived once, with the expected summary: 2 issue events (opened, closed), 1 comment (with its text), 2 pull request events (opened as a draft, closed unmerged, with branches). The filter for another repository got none. `list_events` and `get_event` returned the issue events.
+- **GitHub's payload is a snapshot:** the "opened" event for an issue closed within a second already said `"state": "closed"`. That's GitHub's payload, not the bridge.
+- **Redelivery:** accepted, verified, with no events and one ignored event (Event Gateway's dedupe on `X-GitHub-Delivery`); the bridge relayed nothing and no poll returned it again.
+- **Forged requests:** both answered `401` and recorded as `VERIFICATION_FAILED`; the bridge's issue trigger notified it.
+- **Real traffic:** pushes, pull requests and workflow runs from merges on `mcp-events-bridge` arrived alongside, including those sent while the bridge was stopped, recovered when it started.
+- **Claude Code:** one `wait_for_event` call waited inside the call and returned the comment (event id, sender, issue number and text) about 15 seconds in.
+
+### What it means for the design
+
+- The GitHub provider works end to end with automatic registration, its summaries are what an agent needs, and Event Gateway's verification and dedupe behave as designed.
+- `setup` needs to say which permission a token lacks (#38), and to check webhooks at the provider rather than trust its own record (#41).
+
+### Resources
+
+Webhooks on the five repositories deliver to the development project's `bridge-github` source, kept for dogfooding. The test issue (`hookdeck-demos#25`) and draft pull request (`hookdeck-demos#26`) are closed; the pull request's branch is deleted.
