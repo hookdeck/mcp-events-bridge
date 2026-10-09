@@ -113,6 +113,8 @@ With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Crea
 
 When an event arrives, the task runs with it, as in the screenshot at the top.
 
+ChatGPT keeps the list of events it can subscribe to from when you added the plugin. After you upgrade the bridge or add a provider, refresh the plugin in Plugins, or ChatGPT can't subscribe to the new or renamed events (it may still list them, since that call goes to the bridge). Then ask it to subscribe again.
+
 The MCP URL is a credential: anyone with it can use the bridge. Keep it private (see [Security and limitations](#security-and-limitations)).
 
 ## Webhook providers
