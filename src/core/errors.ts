@@ -1,17 +1,20 @@
 import { ProtocolError } from '@modelcontextprotocol/server';
 
-/** JSON-RPC error codes from the MCP Events design sketch. */
+/** JSON-RPC error codes from SEP-3415's error table (provisional until the SEP is accepted). */
 export const EventsErrorCode = {
   InvalidParams: -32602,
-  NotFound: -32011,
-  Forbidden: -32012,
-  ResourceExhausted: -32013,
-  Unsupported: -32014,
-  CallbackEndpointError: -32015,
+  NotFound: -32023,
+  Forbidden: -32024,
+  ResourceExhausted: -32025,
+  Unsupported: -32026,
+  CallbackEndpointError: -32027,
   InternalError: -32603,
 } as const;
 
-/** Categories the sketch allows in `data.reason` and `deliveryStatus.lastError`. */
+/** The design sketch's `NotFound`, which bridges before 0.5.0 return. */
+export const LEGACY_NOT_FOUND = -32011;
+
+/** Categories the SEP allows in `data.reason` and `deliveryStatus.lastError`. */
 export type CallbackFailureReason =
   | 'connection_refused'
   | 'timeout'

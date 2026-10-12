@@ -1,7 +1,7 @@
 import { CallbackUrlError, parseCallbackUrl, verifyEndpoint, type CallbackTransport, type VerificationResult, type VerifyEndpointOptions } from './callback.js';
 import type { Catalog } from './catalog.js';
 import type { SubscriptionSettings } from './config.js';
-import { callbackEndpointError, forbidden, internalError, invalidParams, notFound, unsupported, type CallbackFailureReason } from './errors.js';
+import { callbackEndpointError, forbidden, internalError, invalidParams, notFound, resourceExhausted, unsupported, type CallbackFailureReason } from './errors.js';
 import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
 import type { CallbackRegistry } from './callbacks.js';
@@ -182,7 +182,7 @@ export class SubscriptionService {
         };
       });
     } catch (error) {
-      if (error instanceof SubscriptionTooLargeError) throw invalidParams('arguments are too large', { field: 'arguments' });
+      if (error instanceof SubscriptionTooLargeError) throw resourceExhausted('argumentsSize', 'arguments are too large to store');
       this.log(`Event Gateway error for ${id}: ${(error as Error).message}`);
       throw internalError('Failed to configure delivery');
     }
