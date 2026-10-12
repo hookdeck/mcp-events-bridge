@@ -56,8 +56,9 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       for another symbol don't
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
- *                                                       delivery, a 410 deleting a subscription, and
- *                                                       deliveryStatus for a failing callback
+ *                                                       delivery, a 410 rejecting a delivery without
+ *                                                       ending its subscription, and deliveryStatus
+ *                                                       for a failing callback
  */
 
 process.loadEnvFile();
@@ -706,13 +707,17 @@ async function extended(ctx: {
     record('a duplicate provider delivery reaches the subscriber once', false, 'inbound event not found');
   }
 
-  // C. A callback answering 410: the delivery issue makes the bridge delete the subscription.
+  // C. A callback answering 410 rejects that delivery only (SEP-3415): it isn't retried, and the subscription stays, healthy.
+  //    Waits well past the first retry (20 s) and for the bridge to handle the delivery issue it opens.
   if (gone) {
     const id = gone.subscription!.id;
-    const deleted = await until(async () => (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length === 0, 300_000, 5000);
-    record('a 410 from the callback deletes the subscription', Boolean(deleted), `${(attempts.get('gone') ?? []).length} attempt(s)`);
-    await gone.stop({ unsubscribe: false });
-    subscribers.splice(subscribers.indexOf(gone), 1);
+    await until(() => (attempts.get('gone') ?? []).length >= 1, 300_000, 5000);
+    await wait(120_000);
+    const count = (attempts.get('gone') ?? []).length;
+    record('a 410 from the callback is not retried', count === 1, `${count} attempt(s)`);
+    const kept = (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length === 1;
+    const refreshed = kept ? await gone.refresh() : undefined;
+    record('a 410 keeps the subscription, with no delivery error', kept && !refreshed?.deliveryStatus?.lastError, JSON.stringify(refreshed?.deliveryStatus ?? (kept ? null : 'deleted')));
   }
 
   // D. A callback that keeps failing shows in deliveryStatus on the next refresh. Also measures Event Gateway's retry spacing.

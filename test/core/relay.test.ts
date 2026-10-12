@@ -203,12 +203,12 @@ describe('Relay: issue notifications', () => {
     return relay.handle('/inbound/hookdeck', signed(raw), raw);
   };
 
-  it('deletes a subscription whose callback returned 410, then resolves the issue', async () => {
+  it('keeps a subscription whose callback returned 410, with its delivery state unchanged, and resolves the issue', async () => {
     const { relay, store, gateway } = setup();
     const record = await store.put(subscription());
     gateway.issues.set('iss_1', { id: 'iss_1', type: 'delivery', status: 'OPENED', aggregation_keys: { webhook_id: [record.connectionId], response_status: [410], error_code: [] } });
-    expect((await notify(relay, 'iss_1')).body).toEqual({ handled: 'deleted' });
-    expect(store.get(record.id)).toBeUndefined();
+    expect((await notify(relay, 'iss_1')).body).toEqual({ handled: 'rejected' });
+    expect(store.get(record.id)).toEqual(record);
     expect(gateway.issues.get('iss_1')!.status).toBe('RESOLVED');
   });
 
