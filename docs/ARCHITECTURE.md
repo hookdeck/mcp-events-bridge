@@ -637,7 +637,7 @@ Planned (stage 7): `bridge setup --prune` handles instances that are in the stor
 
 1. Validate the event name, arguments and `whsec_` secret.
 2. Check the callback: `https`, and resolving only to public addresses. The challenge goes over a pinned connection that never follows redirects. (A host allowlist, such as ChatGPT's receiver host, is planned.)
-3. Send the signed challenge directly and check the echo. On failure return `-32015`.
+3. Send the signed challenge directly and check the echo. On failure return `CallbackEndpointError` (`-32027`).
 4. Derive the subscription id. Upsert the topic source if it's the first subscription to this event, then the subscription's destination and connection.
 5. Store and return `id` and `refreshBefore`. Use a long default lifetime: ChatGPT sent no `ttlMs` in the 1 Oct test.
 
@@ -682,8 +682,8 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 
 ### Summary
 
-- **105 requirements:** 65 conform (6 of them on Event Gateway behavior recorded in "Verified facts"), 16 partly, 7 are gaps, 13 don't apply, 3 are unknown.
-- **Gaps that break clients, for 0.5.0:** the error codes (row 62, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37), with rows 36 and 101), and a `410` deleting the subscription (row 59, [#29](https://github.com/hookdeck/mcp-events-bridge/issues/29)).
+- **105 requirements:** 69 conform (6 of them on Event Gateway behavior recorded in "Verified facts"), 13 partly, 6 are gaps, 13 don't apply, 3 are unknown.
+- **Gaps that break clients, for 0.5.0:** the error codes (row 62, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37), with rows 36 and 101; fixed), and a `410` deleting the subscription (row 59, [#29](https://github.com/hookdeck/mcp-events-bridge/issues/29)).
 - **Other gaps and partials:** `terminated` when an event leaves the catalog (rows 13, 72, [#49](https://github.com/hookdeck/mcp-events-bridge/issues/49)); webhook and poll cursors, and `truncated` on subscribe (rows 33, 54, [#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)); a verification rate limit, `ttlMs` clamping, the rotation secret across restarts and IANA blocks (rows 44, 51, 79, 91, [#51](https://github.com/hookdeck/mcp-events-bridge/issues/51)); behaviors kept for clients built on the sketch, such as `{}` for an unknown unsubscribe and the top-level `events` capability (rows 5, 98, [#52](https://github.com/hookdeck/mcp-events-bridge/issues/52)); a delivery-time permission re-check (row 104, moot with one owner).
 - **Event Gateway:** retries reuse the first signature (row 56), which closes when Event Gateway signs deliveries itself. Its delivery-time SSRF, redirect and egress-IP behavior isn't recorded (rows 68, 80, 81). Features that would help: Standard Webhooks signing on destinations, a monotonic position in the request listing for poll (row 32), and `MCP_EVENTS` sources serving `/.well-known/mcp-webhook-receiver.json` (row 85).
 - **ChatGPT:** verified on 6 Oct (subscribe, challenge, an email event) and 9 Oct (seven GitHub subscriptions); see "Verified facts" and `SPIKES.md`.
@@ -730,7 +730,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 21 | Poll (298) | `maxEvents` caps; partial batch sets `hasMore: true`; default when omitted | | Conforms | Default 50, clamped to 100: `src/core/poll.ts:22-23,276,376-379` | |
 | 22 | Poll (299–300) | `hasMore` and `nextPollMs` semantics | | Conforms | `src/core/poll.ts:384-387,447-451`; back-off via `intervalFor` `:203-208` | |
 | 23 | Poll (302) | No protocol-required state; MAY hold ephemeral derived state | MAY | Conforms | Cursor carries all state (`CursorState`, `src/core/poll.ts:56-69`); shared listing is a rebuildable cache (`RequestWindow`, `:113-200`) | |
-| 24 | Poll (303) | Errors as JSON-RPC errors (`NotFound`, `Forbidden`, `InvalidParams`, `Unsupported`) | | Partial | Mechanism right; numbers are the sketch's (`src/core/errors.ts:4-12`) | See row 62 (#37) |
+| 24 | Poll (303) | Errors as JSON-RPC errors (`NotFound`, `Forbidden`, `InvalidParams`, `Unsupported`) | | Conforms | JSON-RPC errors with the SEP's codes (`src/core/errors.ts`) | |
 | 25 | Cursor (692) | Absent `cursor` treated as `null`; receiver MUST NOT fail | MUST | Conforms | `src/core/poll.ts:276`; subscribe `src/core/subscriptions.ts:197` | |
 | 26 | Cursor (696) | `maxAgeMs`: replay from the later of cursor and now − `maxAgeMs` | | Conforms | `src/core/poll.ts:313-318` | |
 | 27 | Cursor (698) | `truncated: true` when the floor passes the cursor | SHOULD | Conforms | `src/core/poll.ts:315` | |
@@ -747,7 +747,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 35 | Push (307–387) | Confirmation, `subscriptionId` in `_meta`, heartbeat (MUST, ≤30 s SHOULD), cancellation (MUST), SDK concurrency exemption (MUST) | MUST/SHOULD | N/A | Not built and not advertised (`src/core/catalog.ts:48`) | |
-| 36 | Error Handling (758) | `Unsupported {feature:"deliveryMode", value}` for a mode the event type doesn't offer | (error table) | Partial | No `events/stream` handler, so the SDK answers `-32601` (`src/core/mcp.ts:179-184`) | Register `events/stream` that validates `name` and throws `unsupported('deliveryMode','push')` |
+| 36 | Error Handling (758) | `Unsupported {feature:"deliveryMode", value}` for a mode the event type doesn't offer | (error table) | Conforms | `events/stream` checks `name` (`NotFound` if unknown), then returns `Unsupported {feature:"deliveryMode", value:"push"}` (`src/core/mcp.ts`) | |
 
 ### Webhook: subscribe, TTL, identity
 
@@ -783,7 +783,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 59 | Delivery (536) | `410` is non-retryable **for that delivery, without affecting the subscription** | MUST | **Gap** | Retry rule excludes 410 (OK), but a 410 delivery issue deletes the subscription (`src/core/relay.ts:185-187`) | Treat 410 like 413: no retry, keep the subscription (optionally record nothing). Issue #29 |
 | 60 | Delivery profile (658) | `413` non-retryable for that event | MUST | Conforms (Event Gateway) | `!413` in the retry rule (verified stage 3). A 413 is recorded as `lastError: http_4xx` | |
 | 61 | Delivery profile (658), Payload minimality (903) | Bodies ≤ 256 KiB; payloads minimal | SHOULD | Conforms | `src/core/relay.ts:23,127-131` (oversize dropped with a log); provider `summarize`. Generic webhook passes the whole JSON body unless `fields` is set (Partial for that provider) | Default generic-webhook `fields` guidance in docs |
-| 62 | Error Handling (752–763) | Codes `NotFound -32023`, `Forbidden -32024`, `ResourceExhausted -32025`, `Unsupported -32026`, `CallbackEndpointError -32027` | Normative table (provisional) | **Gap** | `src/core/errors.ts:4-12` uses -32011..-32015; tests and docs assert the old numbers | Renumber (issue #37; ext-triggers-events#11 merged 9 Oct). Breaking for clients matching numbers |
+| 62 | Error Handling (752–763) | Codes `NotFound -32023`, `Forbidden -32024`, `ResourceExhausted -32025`, `Unsupported -32026`, `CallbackEndpointError -32027` | Normative table (provisional) | Conforms | `src/core/errors.ts` uses -32023..-32027 (0.5.0, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37)); `watch` also accepts the sketch's `NotFound` (-32011) from older bridges | Provisional until the SEP is accepted |
 | 63 | Delivery profile (655–657) | POST, `application/json`, required headers on every delivery | | Conforms (Event Gateway) | `content-type` set at publish (`src/core/relay.ts:150`); Event Gateway HTTP destination POSTs and passes headers through | |
 | 64 | Signature (643) | `X-MCP-Subscription-Id` on every delivery | MUST | Conforms | `src/core/relay.ts:153`; Event Gateway connection filter keys on it (`src/core/event-gateway-store.ts:152`) | |
 | 65 | Signature (639–641) | HMAC-SHA256 over `id.timestamp.body`, `v1,` base64, secret is base64-decoded `whsec_` | MUST | Conforms | `standardwebhooks` lib, `src/core/sign.ts:21` | |
@@ -837,7 +837,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 98 | Error Handling (755) | `NotFound` for no matching subscription on `events/unsubscribe` | Error table | Partial | Returns `{}` for an unknown subscription (OpenAI guidance; `src/core/subscriptions.ts:208`) | Decide: keep idempotent `{}` (document), or return `NotFound {kind:"subscription"}`. Changing it could break ChatGPT |
 | 99 | Error Handling (755) | `NotFound` `data.kind` MAY disambiguate | MAY | Conforms | `src/core/errors.ts:26-27` | |
 | 100 | Error Handling (757) | `ResourceExhausted` with `data.limit` when a limit is hit | Conditional | N/A | No subscription limits; `resourceExhausted` is defined (`src/core/errors.ts:32`) but never raised | |
-| 101 | Error Handling (754, 757) | `InvalidParams` is for statically invalid requests; limits are `ResourceExhausted` | | Partial | Arguments too large for Event Gateway's 500-char description return `InvalidParams` (`src/core/subscriptions.ts:185`, `src/core/event-gateway-store.ts:141`), though they may match `inputSchema` | Return `ResourceExhausted {limit:"argumentsSize", max}` |
+| 101 | Error Handling (754, 757) | `InvalidParams` is for statically invalid requests; limits are `ResourceExhausted` | | Conforms | Arguments too large for Event Gateway's 500-char description return `ResourceExhausted {limit:"argumentsSize"}` (`src/core/subscriptions.ts`) | |
 | 102 | Error Handling (758–759) | `Unsupported` and `CallbackEndpointError` `data` shapes | | Conforms | `src/core/errors.ts:35-39` | |
 | 103 | Authorization (907) | Verify the principal may subscribe to the event with these arguments | MUST | Partial | Single owner principal who configured every provider, so it holds trivially; no model for multi-tenant | Needed only with OAuth/multi-tenant (stage 7) |
 | 104 | Authorization (909) | Re-verify permissions at delivery time; terminate on revocation | SHOULD | **Gap** | No re-check; no revocation source | With row 13's `terminated` path, once tokens exist |
@@ -941,7 +941,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 **MCP Events,** from the demo and OpenAI's plugin docs:
 
 - The MCP TypeScript SDK has no MCP Events support. Register `events/list`, `events/subscribe` and `events/unsubscribe` by hand, and cast the `events` capability, as `src/server/mcp.ts` in the demo does.
-- Subscribe sends a signed challenge to the callback and must check the echo; a failure returns `-32015`.
+- Subscribe sends a signed challenge to the callback and must check the echo; a failure returns `CallbackEndpointError` (`-32015` in the sketch then, `-32027` in SEP-3415).
 - Deliveries are Standard Webhooks with the subscriber's `whsec_` secret. The envelope's `eventId` stays the same across retries.
 - Don't retry `410` or `413`. Keep payloads under 256 KiB.
 - ChatGPT sent no `ttlMs` in the 1 Oct test.

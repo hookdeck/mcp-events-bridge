@@ -2,6 +2,7 @@ import { McpServer, type ServerCapabilities } from '@modelcontextprotocol/server
 import * as z from 'zod';
 import { CallbackInputError, DEFAULT_AGENT_PORT, DEFAULT_CALLBACK_PATH, type CallbackRecord, type CallbackRegistry } from './callbacks.js';
 import type { Catalog } from './catalog.js';
+import { invalidParams, notFound, unsupported } from './errors.js';
 import type { EventHistory } from './event-history.js';
 import { MAX_EVENTS, type PollService } from './poll.js';
 import type { SubscriptionService } from './subscriptions.js';
@@ -182,6 +183,12 @@ export function buildMcpServer(deps: {
   }));
   if (poll) server.server.setRequestHandler('events/poll', { params: anyParams }, async (params) => ({ ...(await poll.poll(params)) }));
   server.server.setRequestHandler('events/unsubscribe', { params: anyParams }, async (params) => subscriptions.unsubscribe(principal, params));
+  // No event type offers push, so a well-formed events/stream is Unsupported (SEP-3415's error table), not method-not-found.
+  server.server.setRequestHandler('events/stream', { params: anyParams }, async (params) => {
+    if (typeof params.name !== 'string') throw invalidParams('name is required');
+    if (!catalog.get(params.name)) throw notFound('event', `Unknown event: ${params.name}`);
+    throw unsupported('deliveryMode', 'push');
+  });
 
   return server;
 }

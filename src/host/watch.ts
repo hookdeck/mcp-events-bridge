@@ -1,4 +1,4 @@
-import { EventsErrorCode } from '../core/errors.js';
+import { EventsErrorCode, LEGACY_NOT_FOUND } from '../core/errors.js';
 import type { PastEvent } from '../core/event-history.js';
 import type { PollResult } from '../core/poll.js';
 
@@ -32,7 +32,7 @@ export interface WatchDeps {
 /** Errors a retry can't fix: an unknown event name, arguments that don't match its inputSchema, a bad cursor. */
 export function isFatal(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
-  return code === EventsErrorCode.InvalidParams || code === EventsErrorCode.NotFound;
+  return code === EventsErrorCode.InvalidParams || code === EventsErrorCode.NotFound || code === LEGACY_NOT_FOUND;
 }
 
 /** events/poll rejected the cursor (invalid params with `data.field: 'cursor'`). */

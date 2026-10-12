@@ -123,6 +123,7 @@ describe('watch helpers', () => {
   it('treats only bad requests as fatal', () => {
     expect(isFatal(notFound('event', 'x'))).toBe(true);
     expect(isFatal(invalidParams('x'))).toBe(true);
+    expect(isFatal({ code: -32011, message: 'Unknown event' })).toBe(true); // NotFound from a bridge before 0.5.0
     expect(isFatal(new Error('fetch failed'))).toBe(false);
   });
 
