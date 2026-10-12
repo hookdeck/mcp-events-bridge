@@ -40,4 +40,4 @@ A line like `{"problem": "..."}` means something is wrong. Tell the user:
 
 - `stopped watching: ...` with a `watch`: that watch can't run (for example, the event no longer exists). Suggest removing it.
 - `this watch keeps failing, still retrying: ...` with a `watch`: the bridge answers, but not for that watch (for example, its provider isn't set up). It's still retried.
-- `can't reach the bridge, still retrying: ...`: events will arrive once the bridge is reachable again. If it says `no MCP URL yet`, the plugin's MCP URL isn't set: the user sets it in `/plugin` (configure the MCP Events bridge plugin), then starts a new session.
+- `can't reach the bridge, still retrying: ...`: events will arrive once the bridge is reachable again. If it says `no MCP URL yet`, the plugin's MCP URL isn't set: the user sets it with `/plugin configure mcp-events-bridge@hookdeck`, then starts a new session.

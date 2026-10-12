@@ -125,6 +125,8 @@ Claude Code doesn't support MCP Events yet, so it polls. Install the plugin, whi
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
+If you skip the URL (Esc), the plugin still installs. Set it later with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session.
+
 Then, in any project, ask Claude to watch for events your bridge offers ("what events can the bridge give me?" lists them). For example, with the [GitHub provider](#github) set up for a repository, "watch `<owner>/<repo>` for new issues and comments"; with [Resend](#resend), "tell me when an email arrives". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). It needs no public URL, so it works with a local bridge.
 
 Without the plugin, add the bridge as an MCP server and ask Claude to wait for events with the poll tools (see [Polling](#polling)). The [Claude Code guide](skills/mcp-events-bridge/references/claude-code.md) has both.
@@ -385,7 +387,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 | `serve` logs `0/0 published` | No subscription matches the event's name or filters | Check the subscription's name and arguments with `list_providers` |
 | An event takes a minute or two | `hookdeck listen` occasionally takes ~30s to connect, and Event Gateway occasionally queues a CLI delivery | Wait: the bridge re-sends missed deliveries itself |
 | The same event twice | Two bridges in one Hookdeck project, or a retry | One Hookdeck project per bridge; receivers dedupe by `webhook-id` |
-| Claude Code (plugin) reports `{"problem": "can't reach the bridge, still retrying: no MCP URL yet ..."}` | The plugin's MCP URL isn't set, or was set during this session | Set it in `/plugin` (or `claude plugin configure mcp-events-bridge@hookdeck`), then start a new session |
+| Claude Code (plugin) reports `{"problem": "can't reach the bridge, still retrying: no MCP URL yet ..."}` | The plugin's MCP URL isn't set, or was set during this session | Set it with `/plugin configure mcp-events-bridge@hookdeck` in Claude Code (or pipe it to `claude plugin configure mcp-events-bridge@hookdeck --values-stdin`), then start a new session |
 | Claude Code (plugin) never reports events | The session isn't interactive (`claude -p`), or nothing is watched in this project | Ask "what am I watching?"; plugin monitors run only in interactive sessions |
 | Claude Code (plugin) reports events cut off | Monitor notifications shorten long lines | Nothing: Claude reads the whole event with `get_event` |
 
