@@ -73,7 +73,7 @@ Done when (all verified live: `E2E_EXTENDED=1 npm run e2e`, and ChatGPT on 6 Oct
 - A forced publish failure for one of two subscribers makes the inbound event retry, and each subscriber receives the email once.
 - A duplicate provider delivery doesn't reach a subscriber twice.
 - `get_event` returns the summary.
-- A subscription whose callback returns `410` is deleted from an Event Gateway delivery issue; one that keeps failing otherwise is recorded and returned in `deliveryStatus` on its next refresh.
+- A subscription whose callback returns `410` is deleted from an Event Gateway delivery issue (until 0.5.0: since then a `410` rejects only that delivery, as SEP-3415 requires; [#29](https://github.com/hookdeck/mcp-events-bridge/issues/29)); one that keeps failing otherwise is recorded and returned in `deliveryStatus` on its next refresh.
 - A request to the MCP endpoint without the secret is rejected.
 - The bridge runs on Fly.io, and ChatGPT subscribes through the secret URL and receives an email event.
 - `npm test` passes, and the end-to-end steps are in the README.
