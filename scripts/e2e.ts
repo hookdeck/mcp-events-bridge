@@ -312,6 +312,8 @@ async function main() {
     ...(EXTENDED ? [{ name: 'gone', respondWith: () => 410 }, { name: 'failing', respondWith: () => 500 }] : []),
   ];
   const attempts = new Map<string, number[]>();
+  // Event ids per attempt, to tell a retry from a new event.
+  const attemptEvents = new Map<string, string[]>();
   // Each setup catches its own errors, so one failing doesn't abandon the others mid-way (and leak what they create).
   const started = await Promise.all(
     plan.map(async ({ name, eventName, arguments: args, respondWith }, i) => {
@@ -333,7 +335,10 @@ async function main() {
           receiverPort: port,
           ...('url' in callback ? { callbackUrl: callback.url, secret: callback.secret } : callback),
           respondWith,
-          onAttempt: () => attempts.set(name, [...(attempts.get(name) ?? []), Date.now()]),
+          onAttempt: (event) => {
+            attempts.set(name, [...(attempts.get(name) ?? []), Date.now()]);
+            attemptEvents.set(name, [...(attemptEvents.get(name) ?? []), event.eventId]);
+          },
           log: (m) => console.log(`[subscriber:${name}] ${m}`),
         });
         const ok = await subscriber.start().then(
@@ -405,7 +410,7 @@ async function main() {
 
   if (EXTENDED) {
     await extended({
-      hookdeck, subs, attempts, events, sourceId: source.id,
+      hookdeck, subs, attempts, attemptEvents, events, sourceId: source.id,
       inboundConnectionName: providerConnectionName(events.providerId, deployment),
       failNextPublish: (id) => (failNextPublishFor = id),
     });
@@ -656,12 +661,13 @@ async function extended(ctx: {
   hookdeck: HookdeckClient;
   subs: Map<string, Subscriber>;
   attempts: Map<string, number[]>;
+  attemptEvents: Map<string, string[]>;
   events: TestEvents;
   sourceId: string;
   inboundConnectionName: string;
   failNextPublish: (subscriptionId: string) => void;
 }) {
-  const { hookdeck, subs, attempts, events } = ctx;
+  const { hookdeck, subs, attempts, attemptEvents, events } = ctx;
   const countSubject = (subscriber: Subscriber, tag: string) => countTag(events, subscriber, tag);
   const main = subs.get('main')!;
   const second = subs.get('second');
@@ -711,13 +717,17 @@ async function extended(ctx: {
   //    Waits well past the first retry (20 s) and for the bridge to handle the delivery issue it opens.
   if (gone) {
     const id = gone.subscription!.id;
-    await until(() => (attempts.get('gone') ?? []).length >= 1, 300_000, 5000);
+    await until(() => (attemptEvents.get('gone') ?? []).length >= 1, 300_000, 5000);
     await wait(120_000);
-    const count = (attempts.get('gone') ?? []).length;
-    record('a 410 from the callback is not retried', count === 1, `${count} attempt(s)`);
+    // The callback may get more than one event (each section sends some); each must arrive once.
+    const ids = attemptEvents.get('gone') ?? [];
+    const retried = ids.filter((eventId, i) => ids.indexOf(eventId) !== i);
+    record('a 410 from the callback is not retried', ids.length >= 1 && retried.length === 0, `${ids.length} attempt(s) for ${new Set(ids).size} event(s)`);
     const kept = (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length === 1;
-    const refreshed = kept ? await gone.refresh() : undefined;
-    record('a 410 keeps the subscription, with no delivery error', kept && !refreshed?.deliveryStatus?.lastError, JSON.stringify(refreshed?.deliveryStatus ?? (kept ? null : 'deleted')));
+    // A refresh re-runs the challenge, so a quick tunnel that has dropped fails it: record that, and carry on to D.
+    const refreshed = kept ? await gone.refresh().catch((error: Error) => ({ error: error.message })) : undefined;
+    const status = refreshed && 'error' in refreshed ? `refresh failed: ${refreshed.error}` : JSON.stringify(refreshed?.deliveryStatus ?? (kept ? null : 'deleted'));
+    record('a 410 keeps the subscription, with no delivery error', kept && !!refreshed && !('error' in refreshed) && !refreshed.deliveryStatus?.lastError, status);
   }
 
   // D. A callback that keeps failing shows in deliveryStatus on the next refresh. Also measures Event Gateway's retry spacing.
