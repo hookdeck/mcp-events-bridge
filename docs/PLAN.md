@@ -18,6 +18,7 @@ Design and rationale are in [`ARCHITECTURE.md`](ARCHITECTURE.md). Update the sta
 | 5 | Hosted bridge | Build | Done: `E2E_EXTENDED=1 npm run e2e` passes 13/13 locally and 11/11 against Fly.io; ChatGPT received an email event on 6 Oct |
 | 6 | Local agents | Build | In progress: tunnel URLs, with the bridge running `listen` and catching up by itself, built (`E2E_LOCAL=1`, PR #12); Hermes Agent's MCP Events pull request works end to end with the bridge, unpatched (7 Oct; [guide](../skills/mcp-events-bridge/references/hermes-agent.md), experimental); poll mode and the poll tools (#26, 0.3.0, 9 Oct) instead of a Claude Code channel; then `watch` and the Claude Code plugin (#26, #45, #47, 9 Oct), which wakes Claude Code for events between prompts |
 | 7 | Production readiness and reach | Build | Started: the GitHub provider, the generic webhook provider, the npm package (0.1.0) and the README done early; 0.2.0 (8 Oct): local agents (#12), generic webhooks (#14), `{id}.{event}` names (#17) and an agent skill (#16) |
+| 8 | Event Gateway delivers | Build | Planned: designed and probed on 22 Oct ([results](SPIKES.md#stage-8-event-gateway-delivers)), after Event Gateway shipped Standard Webhooks destination auth |
 | Later | Depends on Event Gateway features or later decisions | | |
 
 ## Stage 1: Repo setup
@@ -126,12 +127,27 @@ Done when: the mock agent, given only a tunnel URL, receives an email; adding a 
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.
 
+## Stage 8: Event Gateway delivers (build)
+
+Event Gateway delivers every MCP Event straight from the provider's source, signing every attempt with the subscriber's secret, and the bridge leaves the data path. Design in `ARCHITECTURE.md`, "Next: Event Gateway delivers"; probes in `SPIKES.md`. Breaking, accepted while the bridge is in beta. It replaces two items that were under "Later": Standard Webhooks destination signing then publishing once per topic (dropped), and delivering straight from the provider source.
+
+In order:
+
+1. **Docs and probes** (22 Oct): the mental model, the design and the verified facts in `ARCHITECTURE.md`, and the probes in `SPIKES.md`.
+2. **Provider manifests.** `eventId`, `occurredAt` and `summarize` as self-contained functions; `filter(args)` returning a Hookdeck filter in place of `accepts()`; each instance's transformation bundled from them, with the `x-mcp-skip` markers; tests running the bundled code in `node:vm` against the fixtures, and matching what the bridge computes for poll mode.
+3. **Subscriptions as connections on the provider's source:** the transformation, filter, dedupe and retry rules, and a `STANDARD_WEBHOOKS` destination with the subscriber's secret. Expiry by a timer per subscription and a sweep at startup. Migration of existing subscriptions, and deletion of the topic sources. Subscribe refuses an instance whose source has no secret yet.
+4. **Remove the relay's delivery path:** the topic sources, the Publish API calls, the bridge's inbound connection and route for provider events, and their recovery. Signing stays only for the challenge.
+5. **Callback URLs:** `create_tunnel_url` becomes `create_callback_url` with a required `secret`, its source and its CLI destination holding that secret; `mcp-events-bridge callback-url create`, reading the secret from an environment variable; missed deliveries recovered by `InboundRecovery` on each callback URL's connection; the dual signing and re-sending removed.
+6. **Delivery status:** `TRANSFORMATION_FAILED` and `DESTINATION_AUTH_FAILED` as failure categories, and a transformation issue trigger.
+7. **Docs, skill and changelog:** "callback URL" throughout what users see; the Hermes guide using `callback-url create`; a breaking release.
+
+Done when: `E2E_EXTENDED=1`, `E2E_LOCAL=1` and `E2E_SOURCE=webhook` pass, with retries arriving freshly signed; Hermes Agent receives an event through a callback URL made with `callback-url create`, including one sent while its `listen` was down; ChatGPT receives an event from the deployed bridge; and no request passes through the bridge on its way to a subscriber.
+
 ## Later
 
 Depends on Event Gateway features, a client that needs it, or later decisions:
 
-- Standard Webhooks destination signing, then publish once per topic.
-- Delivering straight from the provider source.
+- A second, expiring key on Event Gateway's Standard Webhooks destinations, for the rotation grace window and for rotating a callback URL's secret in place.
 - Outpost for spec-conformant delivery, as an option.
 - Poll mode (`events/poll`) from Event Gateway's stored requests, with cursor replay, for clients that can't receive webhooks. Tools wrapping it for hosts without MCP Events support.
 - Push mode (`events/stream`). With a bridge on the same machine, a push-only client would connect over `localhost` and need no tunnel.
