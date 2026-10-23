@@ -161,16 +161,16 @@ The further step: attach each subscription's connection to the RESEND source its
 
 Nothing in MCP Events requires the MCP server to be the sender. A delivery is a webhook signed with the subscriber's secret; the signature is what the subscriber checks. The problems are practical:
 
-- **Signing.** Blocked until Standard Webhooks destination auth exists. The interim workaround, signing inside a transformation, is poor: the runtime has no crypto (a pure-JS HMAC would have to be bundled), is synchronous with a 1-second limit, keeps the secret in transformation environment variables, and runs once per event so retries reuse the first timestamp.
-- **Per-subscription values.** `X-MCP-Subscription-Id` differs per subscription, so each connection needs its own transformation (or some per-destination header). That's one transformation per subscription to create, update and delete.
-- **Mapping runs in the transformation sandbox.** The manifest's `summarize` has to exist as transformation code: no IO, no async, 1 second. Providers whose webhook is too thin and needs an API call to build the event can't use this path; they keep the relay. Resend's `email.received` is metadata-only and would fit.
+- **Signing.** Best done by Standard Webhooks destination auth, which doesn't exist yet. Signing inside a transformation is possible: the runtime has the `crypto` built-in (`createHmac`, and WebCrypto's `crypto.subtle`), and handlers can be async within the 1-second limit (re-checked 13 Oct). It still falls short: the transformation runs once per event, so retries reuse the first timestamp and signature, and the subscriber's secret has to reach the transformation, for example as an environment variable.
+- **Per-subscription values.** One shared transformation is enough. Transformations can be shared between connections, and the handler's `context.connection` is the connection object (as `GET /connections/:id` returns it). So it reads the subscription ID for `X-MCP-Subscription-Id` from the connection's name (`mcp-sub-<id>`), and the subscription's event name and arguments from its description, the metadata the bridge already writes there.
+- **Mapping runs in the transformation sandbox.** The manifest's `summarize` has to exist as transformation code: no IO, and 1 second including time spent awaiting. Providers whose webhook is too thin and needs an API call to build the event can't use this path; they keep the relay. Resend's `email.received` is metadata-only and would fit.
 - **Two copies of the mapping.** The TypeScript manifest (catalog, schemas, tests) and the transformation code must agree. Lean: generate the transformation from the manifest and run the same code under vitest.
-- **Failures happen outside the bridge.** A transformation error becomes a `TRANSFORMATION_FAILED` ignored event; nothing tells the subscriber. The bridge learns of it through Event Gateway issue notifications (see "Problem feedback from Event Gateway").
+- **Failures happen outside the bridge, and notifications bring them back.** A transformation error becomes a `TRANSFORMATION_FAILED` ignored event and opens a transformation issue. With a transformation issue trigger, the bridge hears about it through the issue notifications it already receives (see "Problem feedback from Event Gateway"), and can tell the subscriber, for example with a `gap` control envelope, since events were skipped. To check: whether a transformation issue identifies the connection, which a shared transformation needs.
 - **Filter expressiveness.** As above: arguments must map to Hookdeck filters, with normalization done in the transformation (rule order: transformation, filter, dedupe, retry).
 - **Size.** The 256 KiB payload limit has to be enforced in the transformation.
 - **What stays the same:** `get_event` and `list_events` already read from Event Gateway; the challenge is already sent by the bridge; expiry and unsubscribe already delete connections.
 
-To answer before committing to it: whether a destination can carry a per-subscription static header, whether a transformation can be shared across connections with per-connection values, and how transformation failures are surfaced through the API. (Event Gateway documents no limits on the number of connections.)
+To answer before committing to it: whether a transformation issue identifies the failing connection, and where a transformation gets each subscriber's secret until Event Gateway signs Standard Webhooks. Answered (13 Oct): a transformation can be shared across connections and reads per-connection values from `context.connection`, so a per-subscription static header isn't needed. (Event Gateway documents no limits on the number of connections.)
 
 ## Problem feedback from Event Gateway
 
@@ -188,7 +188,7 @@ Issue triggers, scoped by name pattern:
 | Delivery, `final_attempt` | connections `mcp-sub-*` | A subscriber's callback is failing, with the response status (in practice from the project's default `first_attempt` trigger; see "Verified facts") | `410`: nothing, since the receiver rejected that one delivery and SEP-3415 says it MUST NOT affect the subscription (the retry rule already skips it). Otherwise record it on the subscription, surface it in `list_providers` and `bridge doctor`, and return it in `deliveryStatus`. Then resolve the issue so the next failure notifies again |
 | Request, rejection causes | sources `bridge-*` | The provider's requests fail verification, e.g. a rotated Resend secret | Mark the provider unhealthy; `bridge doctor` suggests re-running `bridge setup` |
 | Backpressure | destinations `bridge-*` | The bridge is slow or down | Operator alert only |
-| Transformation, `log_level` `fatal` | transformations `mcp-sub-*` (direct path, later) | Mapping is broken for a subscription | Mark the subscription unhealthy |
+| Transformation, `log_level` `fatal` | the direct path's transformations (later) | Mapping failed, so a subscriber missed events | Mark the subscription unhealthy, and tell the subscriber (for example a `gap` control envelope) |
 
 Notes:
 
@@ -197,9 +197,9 @@ Notes:
 - `issue.opened` carries the connection (`trigger_webhook`, including its `name`, which identifies the subscription), the failing attempt with its `response_status`, and the event (stage 4, `test/fixtures/hookdeck/issue-opened-delivery.json`). Resolving an issue sends `issue.updated`.
 - Notifications are Hookdeck-signed deliveries like any other, so the inbound route verifies them the same way.
 - New projects come with default issue triggers. `bridge setup` adds its own, scoped by name pattern; the most specific trigger wins.
-- To check: whether every `TRANSFORMATION_FAILED` ignored event opens a transformation issue (direct path only).
+- To check: whether every `TRANSFORMATION_FAILED` ignored event opens a transformation issue, and whether the issue identifies the connection (direct path only).
 
-Nothing goes back to the subscriber: if its callback is failing, there's no channel to reach it. Issue notifications are for the bridge and its operator.
+A failing callback can't be told through that callback, so the bridge reports the failure in `deliveryStatus` when the subscriber refreshes. A problem with a working callback, such as a transformation failure on the direct path, can reach the subscriber as a control envelope.
 
 ## Local agents and the bridge on a laptop
 
@@ -915,7 +915,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - Dedupe ([docs](https://hookdeck.com/docs/deduplication)) is a connection rule with `include_fields` or `exclude_fields` (paths start with `headers`, `body`, `query` or `path`) and a window of 1 minute to 1 hour. Duplicates become ignored events. Best-effort. Rule order is configurable.
 - Ignored event causes ([docs](https://hookdeck.com/docs/requests)): `DISABLED`, `FILTERED`, `TRANSFORMATION_FAILED`, `CLI_DISCONNECTED`, and `DUPLICATE` for a dedupe hit (stage 4; not in the docs' list). A non-matching filter records one per connection per request.
 - Destination auth ([docs](https://hookdeck.com/docs/authentication)): Hookdeck Signature, Custom SHA-256, Basic, API key, Bearer. No Standard Webhooks.
-- Transformations ([docs](https://hookdeck.com/docs/transformations)): no IO, no async, 1-second limit, 5 MB code, environment variables for secrets, can set headers, no built-in crypto.
+- Transformations ([docs](https://hookdeck.com/docs/transformations)): no IO, 1-second limit including time spent awaiting, 5 MB code, environment variables for secrets, can set headers. Re-checked 13 Oct: handlers can be async; the `crypto` built-in is available (Hash and Hmac, sign and verify, `webcrypto` and `subtle`); a transformation can be shared between connections; the handler gets `context.connection`, the connection object as `GET /connections/:id` returns it.
 
 **Issues and notifications** ([issue triggers](https://hookdeck.com/docs/issue-triggers), [issues](https://hookdeck.com/docs/issues)):
 
