@@ -1,15 +1,17 @@
 # MCP Events bridge: architecture
 
-Status: draft, revised 7 Oct 2026. Repo `hookdeck/mcp-events-bridge`, npm package `@hookdeck/mcp-events-bridge`.
+Status: draft, revised 22 Oct 2026. Repo `hookdeck/mcp-events-bridge`, npm package `@hookdeck/mcp-events-bridge`.
 
-This is the design. The staged plan and its status are in [`PLAN.md`](PLAN.md), and spike results in [`SPIKES.md`](SPIKES.md). Agents working on the repo should also read `AGENTS.md` at the repo root.
+This is the design. The staged plan and its status are in [`PLAN.md`](PLAN.md), and spike results in [`SPIKES.md`](SPIKES.md). Agents working on the repo should also read `AGENTS.md` at the repo root. Read "Mental model" first: the rest of this document assumes it.
+
+Stage 8 changes how events are delivered: Event Gateway delivers each one straight from the provider's source, and the bridge leaves the data path (see "Next: Event Gateway delivers"). It's designed and probed but not built, so "Delivery: the relay" and "Event Gateway topology" still describe the running code.
 
 ## What it does
 
 The bridge turns a service's ordinary webhooks into MCP Events, for services whose MCP servers don't implement MCP Events yet. In the bridge, each service is a provider.
 
 - **Hookdeck Event Gateway** receives and verifies the provider's webhooks, and delivers every MCP Event to every subscriber with retries and a record of each attempt.
-- **The bridge** is the MCP side: the event catalog, subscriptions, the challenge, and turning a provider webhook into signed MCP Events.
+- **The bridge** is the MCP server: the event catalog, subscriptions and the challenge. Until stage 8 it also turns each provider webhook into signed MCP Events (the relay).
 - **The Hookdeck CLI** is how anything local takes part: a local agent receiving events, or the bridge itself running on a laptop. The hosted path came first (stage 5); local agents are stage 6.
 
 Worked example: Resend inbound email. Someone emails an address on Resend, Resend sends `email.received`, and a ChatGPT dot (or a local agent) subscribed to that event wakes up and acts.
@@ -33,6 +35,35 @@ Non-goals for now:
 - **Hosting the bridge for other people.** That's the multi-tenant product and a separate decision.
 - **A required identity provider or tunnel service.** Authentication starts with a secret URL; OAuth and tunnels are optional (see "Authentication").
 
+## Mental model
+
+Two vocabularies meet in the bridge. Keep them apart: MCP Events terms in everything users and agents see (tools, README, skill), Event Gateway terms in this document.
+
+**MCP Events** ([SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415)). An MCP client subscribes with `events/subscribe`, giving a **callback URL** (public, `https`) and a **secret** it generated. The MCP server sends a challenge to the callback URL, signed with the secret, and delivers nothing until the echo comes back. It signs every delivery with the secret (Standard Webhooks), so the client can check where it came from. The spec doesn't say how a client gets its callback URL.
+
+**The bridge is the MCP server.** It serves the event catalog, takes subscriptions and sends the challenge.
+
+**Event Gateway.** A **source** is a public URL that receives requests and verifies them, by type (`RESEND`, `GITHUB`, `WEBHOOK`, `MCP_EVENTS`, and others). A **destination** is where events go: an HTTP URL, or a **CLI destination**, which `hookdeck listen` forwards to a local port. A **connection** joins a source to a destination, with rules (transformation, filter, dedupe, retry). Each request at a source becomes one event on each connection whose rules it passes.
+
+How they map from stage 8 (until then, see "Delivery: the relay"):
+
+| MCP Events | Event Gateway |
+| --- | --- |
+| A provider's webhooks | The provider's source, `bridge-<instance id>` |
+| A subscription | One connection from the provider's source, `mcp-sub-<id>`: a transformation that builds the envelope, a filter for the subscription's arguments, dedupe and retry |
+| The callback URL and secret | That connection's HTTP destination, which signs every attempt with the secret |
+
+Every callback URL is public, and from stage 8 the bridge treats them all alike.
+
+**Callback URLs for clients that can't provide one** (local development, behind NAT). The bridge has a utility for them: `create_tunnel_url` today, `create_callback_url` from stage 8. It creates an `MCP_EVENTS` source, whose public URL is the callback URL, with a connection to a CLI destination; `hookdeck listen`, run by the bridge, forwards that to the agent's local port. The source answers the challenge and verifies each delivery. To the MCP server it's an ordinary callback URL: a delivery to it is an HTTP delivery to a source URL.
+
+```text
+MCP server:  provider ──→ bridge-<instance id> (source) ── mcp-sub-<id> (connection) ──→ HTTP destination: the callback URL
+Receiver:    the callback URL (MCP_EVENTS source) ── connection ──→ CLI destination ── hookdeck listen ──→ the agent's port
+```
+
+"Tunnel URL", the current tool's name for such a callback URL, isn't a tunnel in the cloudflared or ngrok sense: only requests signed with the right secret get through, and Event Gateway keeps every request and retries. Until stage 8 its source holds a secret the bridge generates and the bridge signs everything to it twice (see "A local agent receiving events"); from stage 8 the source holds the client's own secret (see "Callback URLs from the bridge").
+
 ## System overview
 
 ```mermaid
@@ -49,6 +80,8 @@ flowchart TB
 The challenge at subscribe time is the one thing the bridge sends straight to a callback, because it needs the echo back synchronously.
 
 ## Delivery: the relay
+
+The running design until stage 8, which replaces it (see "Next: Event Gateway delivers").
 
 The bridge sits between two Event Gateway sources and holds no event state. Event Gateway is the durable store on both sides.
 
@@ -71,6 +104,8 @@ Rules that make it correct:
 Both rules on dedupe come from the same caveat in the Event Gateway docs: "Deduplication is a best-effort feature and is not guaranteed."
 
 ## Event Gateway topology
+
+The running topology until stage 8. Stage 8 keeps the provider's source, drops the inbound connection and the topic sources, and moves each subscription's connection onto the provider's source.
 
 Per provider instance (see "Configuration file"):
 
@@ -107,24 +142,88 @@ Why this shape:
 - **One topic source per MCP event name,** not one shared source and not one source per subscription. A shared source records a `FILTERED` ignored event for every other subscription on every publish. A source per subscription has no filter noise but can't move to publish-once later. The topic source keeps the noise to that topic's subscribers and changes in place when Event Gateway can sign (below).
 - **One destination per subscription,** even when two subscriptions share a callback URL. Today a destination has no auth, so sharing would work. Once Event Gateway signs, the subscriber's secret lives on the destination, and secrets are per subscription.
 
+## Next: Event Gateway delivers
+
+Stage 8. Status: planned; designed and probed on 22 Oct 2026, after Event Gateway shipped Standard Webhooks destination auth (see `SPIKES.md`, "Stage 8: Event Gateway delivers", and "Verified facts").
+
+Event Gateway delivers every MCP Event itself, straight from the provider's source, signed on every attempt with the subscriber's secret. The bridge leaves the data path. It serves the catalog, takes subscriptions, sends the challenge, and manages the connections.
+
+### A subscription is one connection
+
+```text
+connection:  mcp-sub-<id>, on the provider's source bridge-<instance id> (RESEND, GITHUB, WEBHOOK)
+  rules:     transform    bridge-<instance id>-envelope, one per provider instance, shared by its subscriptions
+             filter       headers: x-mcp-skip absent; body: { name: <event name>, data: <the arguments> }
+             deduplicate  headers.webhook-id, 1 hour
+             retry        exponential, [">=300", "!410", "!413"]
+destination: mcp-sub-<id>, HTTP, the callback URL; auth STANDARD_WEBHOOKS with the subscriber's secret
+```
+
+- **The transformation** builds the envelope, `{ eventId, name, timestamp, data, cursor: null }`, from the provider's request. It sets `webhook-id` to the provider's event id, and `X-MCP-Subscription-Id` from the connection's name (`context.connection.name`). One transformation serves every subscription on the source: it runs for each subscription's connection, before the filter, so each gets its own `X-MCP-Subscription-Id` (verified).
+- **The filter** holds the subscription's arguments, matched against the normalized fields the transformation produces, since string matching is case-sensitive. Every provider's `accepts()` today is equality or list membership, which filters express: Resend's `to` as "the array contains", GitHub's `actions` as `$or` (verified).
+- **Skipped events.** The transformation adds an `x-mcp-skip` header to anything that can't be delivered, and every filter requires it to be absent: an event type the instance doesn't offer, an event id containing a period (Standard Webhooks ids can't have one, and Event Gateway fails such an attempt with `DESTINATION_AUTH_FAILED`), and an envelope over 256 KiB. They're recorded as `FILTERED` (verified). A thrown transformation error would instead open an issue for every subscription on every request.
+- **The destination** signs each attempt with `webhook-id`, a fresh `webhook-timestamp`, and a `webhook-signature` over the exact body (verified, including manual retries and request retries). That closes the retry gap (conformance row 56), and subscription retries no longer have to fit inside 5 minutes; the SEP's own SHOULD (3 to 5 attempts within 10 to 15 minutes, row 58) still applies.
+
+### What the bridge stops doing
+
+- The relay's delivery path, the topic sources (`bridge-out-*`) and the Publish API.
+- Its own inbound connection for provider events, its inbound route for them, and their recovery. Poll mode, `get_event` and `list_events` already read Event Gateway's request listing and don't change. Issue notifications keep `/inbound/hookdeck`.
+- Signing deliveries, holding subscribers' secrets in memory, and reading them at startup. A secret lives only in its destination's auth.
+- `CUSTOM_SIGNATURE` destinations, and with them the `x-mcp-bridge-hmac` header.
+
+### What the bridge starts doing
+
+- **Generating transformations from the provider manifests.** `eventId`, `occurredAt` and `summarize` become self-contained functions, bundled into each instance's transformation; the bridge calls the same functions for poll mode and `get_event`, so the mapping has one copy. Tests run the bundled code in `node:vm` against the fixtures. `accepts(args, summary)` becomes `filter(args)`, which returns a Hookdeck filter. This changes the provider manifest's shape (breaking). A provider that needs an API call to build its event can't be supported this way; none does today.
+- **Expiring subscriptions on time.** The relay checked `expiresAt` for every event; now the connection has to be deleted when the subscription expires, by a timer per subscription plus a sweep at startup. A bridge that's asleep sweeps late, so until it wakes its expired subscriptions keep receiving.
+- **Refusing subscriptions before a provider's secret is set.** The relay's check of `x-hookdeck-verified` for the generic webhook provider goes, so subscribe refuses an instance whose source has no secret yet.
+- **Migrating at startup.** Each existing subscription is re-created on its provider's source, with the secret from its old destination, and the topic sources are deleted.
+- **Reporting two more failures** in `deliveryStatus`: `TRANSFORMATION_FAILED` and `DESTINATION_AUTH_FAILED`.
+
+### The secret
+
+1. The client calls `events/subscribe` with its callback URL and its secret.
+2. The bridge, as the MCP server, sends the challenge to the callback URL, signed with that secret only. No callback URL is a special case.
+3. The secret goes on the subscription's destination (`STANDARD_WEBHOOKS`, `webhook_secret_key`), and Event Gateway signs every attempt with it.
+4. A refresh with a new secret updates the destination's key. The SEP's SHOULD, signing with the old and new secrets for a grace window (row 51), needs Event Gateway to accept a second, expiring key on a destination (its signer already takes several); until then the switch is immediate.
+
+### Callback URLs from the bridge
+
+`create_tunnel_url` becomes `create_callback_url`, with a required `secret`, the one the client subscribes with (breaking). Its caller is the client's own code or a setup step, not the model: tool arguments are written by the model, and MCP has no way to keep one from it (the spec's channel for sensitive values, URL-mode elicitation, collects them from a person). `mcp-events-bridge callback-url create` wraps the tool for setups like Hermes's, reading the secret from an environment variable so it never appears in a command line.
+
+1. `create_callback_url` creates an `MCP_EVENTS` source with the client's secret, and a connection to a CLI destination that signs again with the same secret. A new source's secret works at once.
+2. The client subscribes with that URL and the same secret, and the source answers the challenge.
+3. Each delivery reaches the source signed with the client's secret. The source verifies it, and its connection forwards it to the CLI destination, which `listen` forwards to the agent's port.
+4. Deliveries missed while the agent's `listen` is down (the laptop asleep) wait on that connection as `CLI_DISCONNECTED`. The bridge retries them after every reconnect and on a timer with `InboundRecovery`, the code that recovers its own inbound today, unchanged. The CLI destination signs each retry afresh, so the bridge no longer re-signs or re-sends anything (verified).
+5. A client that subscribes with a different secret fails the challenge, and gets `CallbackEndpointError`.
+
+- **Rotation means a new callback URL, for now.** A changed source secret takes about 61 seconds to reach Event Gateway's edge, and deliveries signed with the new secret are refused until it does. A new source's secret works at once, and the old URL is deleted after an hour unused. Once destinations accept a second key, rotation becomes: update the callback URL's secret, refresh with the new one, and sign with both for the grace window, which outlasts the propagation.
+- **One callback URL holds one secret.** A client with one secret for everything (Hermes) uses one URL as its base; a client with a secret per subscription uses a URL per subscription.
+- **Recovery cost.** A CLI connection records `CLI_DISCONNECTED` before its rules run, so recovery retries every request that arrived while the agent was offline and the rules decide afterwards (verified): the same API cost as the bridge's inbound recovery today.
+
+### Not taken
+
+- **Publish once per topic** (planned under "Evolution"): it needs the same transformation and filters as delivering from the provider's source, and keeps the relay.
+- **A subscription connected straight to a CLI destination:** it skips the callback URL the client gave.
+- **Loopback callback URLs:** the SEP requires `https` (row 94), and there's no need, since a callback URL the bridge creates is a source's public URL.
+
 ## Evolution
 
 ### When Event Gateway signs Standard Webhooks
 
-This needs a Standard Webhooks destination auth type in Event Gateway. Today's destination auth methods are Hookdeck Signature, Custom SHA-256, Basic, API key and Bearer; both signature methods sign the body only.
+This needed a Standard Webhooks destination auth type in Event Gateway.
 
-Status: not available today. The subscription's secret already lives in its destination's auth config, so enabling it would be a switch of `auth_type`. Event Gateway already verifies Standard Webhooks on inbound sources; outbound signing would need the signer itself, per-destination secret rotation, and a choice of where `webhook-id` comes from.
+Status: shipped on 21 Oct 2026, for HTTP and CLI destinations (`auth_type: STANDARD_WEBHOOKS`, `auth: { webhook_secret_key }`), and verified in production on 22 Oct (see "Verified facts"). Stage 8 builds on it and goes further than the plan below: it skips publishing once per topic and delivers straight from the provider's source (see "Next: Event Gateway delivers").
 
-What the feature has to do, for this design:
+What the feature had to do, for this design, and what shipped:
 
-- sign `webhook-id.webhook-timestamp.body` with a `whsec_` secret held on the destination, producing `webhook-id`, `webhook-timestamp` and `webhook-signature`;
-- sign fresh on every attempt, with `webhook-id` stable across attempts;
-- take `webhook-id` from the request (a header such as `webhook-id`, or a body field), so it stays the provider's event id; Event Gateway's own event id differs per connection, so it can't be used when one request fans out to several subscribers;
-- sign with both the old and new secret for a grace window after rotation (space-separated `v1,` signatures);
-- allow a header prefix other than `webhook-`, as Standard Webhooks permits;
-- validate the destination address at delivery time and not follow redirects, per the spec's SSRF rules.
+- sign `webhook-id.webhook-timestamp.body` with a `whsec_` secret held on the destination, producing `webhook-id`, `webhook-timestamp` and `webhook-signature`: **shipped**;
+- sign fresh on every attempt, with `webhook-id` stable across attempts: **shipped**;
+- take `webhook-id` from the request (a header such as `webhook-id`, or a body field), so it stays the provider's event id; Event Gateway's own event id differs per connection, so it can't be used when one request fans out to several subscribers: **shipped**, from the request's `webhook-id` header (which a transformation can set), else Event Gateway's event id;
+- sign with both the old and new secret for a grace window after rotation (space-separated `v1,` signatures): **not yet**, one key per destination;
+- allow a header prefix other than `webhook-`, as Standard Webhooks permits: **not yet**, and MCP Events doesn't need it;
+- validate the destination address at delivery time and not follow redirects, per the spec's SSRF rules: **unknown**, as before (conformance rows 80 and 81).
 
-Then the topology changes in place:
+The plan before stage 8 was to change the topology in place:
 
 | | Now | With destination signing |
 | --- | --- | --- |
@@ -142,7 +241,8 @@ Matching moves into Hookdeck filter syntax, which has no regex and no documented
 
 | Capability | What it would replace or enable |
 | --- | --- |
-| Standard Webhooks destination auth in Event Gateway | Spec-conformant re-signing on every retry; publish once per topic (above) |
+| Standard Webhooks destination auth in Event Gateway | Shipped 21 Oct 2026. Spec-conformant signing on every attempt, and delivery straight from the provider's source (stage 8) |
+| A second, expiring key on Standard Webhooks destinations | Signing with the old and new secrets after a rotation (row 51), and rotating a callback URL's secret without creating a new URL |
 | An MCP Events source type, answering the challenge at the source | Shipped 6 Oct 2026. Local agents receiving through the Hookdeck CLI, and the e2e test subscribers without a tunnel (see "Local agents and the bridge on a laptop") |
 | CLI redelivery of events missed while a session was disconnected | The bridge's retry of missed deliveries, which re-sends each one with a fresh signature (see "Missed deliveries") |
 | CLI sessions that pick up newly matching sources ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)) | Restarting `listen` after each new tunnel URL, and the retry that covers the restart |
@@ -157,20 +257,22 @@ Hookdeck Outpost already delivers Standard Webhooks with a fresh signature on ev
 
 ### Research: deliver straight from the provider source
 
+Status: answered on 22 Oct 2026, and adopted as stage 8 (see "Next: Event Gateway delivers"). Signing is solved by Standard Webhooks destination auth. A transformation shared by every subscription's connection reads the connection's name, so it can set each subscription's `X-MCP-Subscription-Id`, and filters on its output express every provider's arguments today. A transformation error becomes a `TRANSFORMATION_FAILED` ignored event, which a transformation issue trigger can report to the bridge (not yet tried). The original analysis follows.
+
 The further step: attach each subscription's connection to the RESEND source itself, with a transformation that builds the envelope. Resend then reaches the agent through Event Gateway alone, and the bridge is control plane only (catalog, subscribe, challenge, connection lifecycle).
 
 Nothing in MCP Events requires the MCP server to be the sender. A delivery is a webhook signed with the subscriber's secret; the signature is what the subscriber checks. The problems are practical:
 
-- **Signing.** Blocked until Standard Webhooks destination auth exists. The interim workaround, signing inside a transformation, is poor: the runtime has no crypto (a pure-JS HMAC would have to be bundled), is synchronous with a 1-second limit, keeps the secret in transformation environment variables, and runs once per event so retries reuse the first timestamp.
-- **Per-subscription values.** `X-MCP-Subscription-Id` differs per subscription, so each connection needs its own transformation (or some per-destination header). That's one transformation per subscription to create, update and delete.
-- **Mapping runs in the transformation sandbox.** The manifest's `summarize` has to exist as transformation code: no IO, no async, 1 second. Providers whose webhook is too thin and needs an API call to build the event can't use this path; they keep the relay. Resend's `email.received` is metadata-only and would fit.
+- **Signing.** Best done by Standard Webhooks destination auth, which doesn't exist yet. Signing inside a transformation is possible: the runtime has the `crypto` built-in (`createHmac`, and WebCrypto's `crypto.subtle`), and handlers can be async within the 1-second limit (re-checked 13 Oct). It still falls short: the transformation runs once per event, so retries reuse the first timestamp and signature, and the subscriber's secret has to reach the transformation, for example as an environment variable.
+- **Per-subscription values.** One shared transformation is enough. Transformations can be shared between connections, and the handler's `context.connection` is the connection object (as `GET /connections/:id` returns it). So it reads the subscription ID for `X-MCP-Subscription-Id` from the connection's name (`mcp-sub-<id>`), and the subscription's event name and arguments from its description, the metadata the bridge already writes there.
+- **Mapping runs in the transformation sandbox.** The manifest's `summarize` has to exist as transformation code: no IO, and 1 second including time spent awaiting. Providers whose webhook is too thin and needs an API call to build the event can't use this path; they keep the relay. Resend's `email.received` is metadata-only and would fit.
 - **Two copies of the mapping.** The TypeScript manifest (catalog, schemas, tests) and the transformation code must agree. Lean: generate the transformation from the manifest and run the same code under vitest.
-- **Failures happen outside the bridge.** A transformation error becomes a `TRANSFORMATION_FAILED` ignored event; nothing tells the subscriber. The bridge learns of it through Event Gateway issue notifications (see "Problem feedback from Event Gateway").
+- **Failures happen outside the bridge, and notifications bring them back.** A transformation error becomes a `TRANSFORMATION_FAILED` ignored event and opens a transformation issue. With a transformation issue trigger, the bridge hears about it through the issue notifications it already receives (see "Problem feedback from Event Gateway"), and can tell the subscriber, for example with a `gap` control envelope, since events were skipped. To check: whether a transformation issue identifies the connection, which a shared transformation needs.
 - **Filter expressiveness.** As above: arguments must map to Hookdeck filters, with normalization done in the transformation (rule order: transformation, filter, dedupe, retry).
 - **Size.** The 256 KiB payload limit has to be enforced in the transformation.
 - **What stays the same:** `get_event` and `list_events` already read from Event Gateway; the challenge is already sent by the bridge; expiry and unsubscribe already delete connections.
 
-To answer before committing to it: whether a destination can carry a per-subscription static header, whether a transformation can be shared across connections with per-connection values, and how transformation failures are surfaced through the API. (Event Gateway documents no limits on the number of connections.)
+To answer before committing to it: whether a transformation issue identifies the failing connection, and where a transformation gets each subscriber's secret until Event Gateway signs Standard Webhooks. Answered (13 Oct): a transformation can be shared across connections and reads per-connection values from `context.connection`, so a per-subscription static header isn't needed. (Event Gateway documents no limits on the number of connections.)
 
 ## Problem feedback from Event Gateway
 
@@ -185,10 +287,10 @@ Issue triggers, scoped by name pattern:
 
 | Issue type | Scope | What it tells the bridge | Bridge action |
 | --- | --- | --- | --- |
-| Delivery, `final_attempt` | connections `mcp-sub-*` | A subscriber's callback is failing, with the response status (in practice from the project's default `first_attempt` trigger; see "Verified facts") | `410`: delete the subscription. Otherwise record it on the subscription, surface it in `list_providers` and `bridge doctor`, and return it in `deliveryStatus`. Then resolve the issue so the next failure notifies again |
+| Delivery, `final_attempt` | connections `mcp-sub-*` | A subscriber's callback is failing, with the response status (in practice from the project's default `first_attempt` trigger; see "Verified facts") | `410`: nothing, since the receiver rejected that one delivery and SEP-3415 says it MUST NOT affect the subscription (the retry rule already skips it). Otherwise record it on the subscription, surface it in `list_providers` and `bridge doctor`, and return it in `deliveryStatus`. Then resolve the issue so the next failure notifies again |
 | Request, rejection causes | sources `bridge-*` | The provider's requests fail verification, e.g. a rotated Resend secret | Mark the provider unhealthy; `bridge doctor` suggests re-running `bridge setup` |
 | Backpressure | destinations `bridge-*` | The bridge is slow or down | Operator alert only |
-| Transformation, `log_level` `fatal` | transformations `mcp-sub-*` (direct path, later) | Mapping is broken for a subscription | Mark the subscription unhealthy |
+| Transformation, `log_level` `fatal` | the direct path's transformations (later) | Mapping failed, so a subscriber missed events | Mark the subscription unhealthy, and tell the subscriber (for example a `gap` control envelope) |
 
 Notes:
 
@@ -197,9 +299,9 @@ Notes:
 - `issue.opened` carries the connection (`trigger_webhook`, including its `name`, which identifies the subscription), the failing attempt with its `response_status`, and the event (stage 4, `test/fixtures/hookdeck/issue-opened-delivery.json`). Resolving an issue sends `issue.updated`.
 - Notifications are Hookdeck-signed deliveries like any other, so the inbound route verifies them the same way.
 - New projects come with default issue triggers. `bridge setup` adds its own, scoped by name pattern; the most specific trigger wins.
-- To check: whether every `TRANSFORMATION_FAILED` ignored event opens a transformation issue (direct path only).
+- To check: whether every `TRANSFORMATION_FAILED` ignored event opens a transformation issue, and whether the issue identifies the connection (direct path only).
 
-Nothing goes back to the subscriber: if its callback is failing, there's no channel to reach it. Issue notifications are for the bridge and its operator.
+A failing callback can't be told through that callback, so the bridge reports the failure in `deliveryStatus` when the subscriber refreshes. A problem with a working callback, such as a transformation failure on the direct path, can reach the subscriber as a control envelope.
 
 ## Local agents and the bridge on a laptop
 
@@ -210,6 +312,8 @@ Local delivery goes through Event Gateway and the Hookdeck CLI, so a laptop gets
 **Status.** Built (PR #12): tunnel URLs, dual signing, the bridge running `listen` for agents and retrying their missed deliveries by itself, recovery of its own missed inbound, and cleanup. Not yet: a real local agent (`PLAN.md`, stage 6, step 3).
 
 ### A local agent receiving events
+
+This section describes the running code. Stage 8 keeps the shape (an `MCP_EVENTS` source whose URL is the callback URL, a connection to a CLI destination, and the bridge running `listen` and recovering missed deliveries), but the source holds the client's secret, the tool becomes `create_callback_url`, and the dual signing and re-sending below go (see "Callback URLs from the bridge").
 
 A local agent subscribes like any other subscriber, with webhook delivery. The catch is that it has no public URL, and the challenge needs a synchronous answer. A plain Hookdeck source answers immediately with its own response, so the echo never comes back and subscribe fails with `-32015`. Local agents therefore receive through Event Gateway's MCP Events source type (`MCP_EVENTS`, shipped 6 Oct 2026) and the Hookdeck CLI, and the bridge creates the public URLs for them.
 
@@ -226,7 +330,7 @@ agent-<agent>-<name>     MCP Events source + connection to that destination, one
 - **Only the bridge's deliveries get through.** Unlike a general tunnel (cloudflared, ngrok), the source rejects anything not signed with its secret, so the URL can't be used to reach the agent's port.
 - **The bridge runs `hookdeck listen` for the agent** (`src/host/local-runtime.ts`): one process per agent port, at most 10 sources each, with the bridge's own CLI login, so the agent needs no Hookdeck CLI or credentials. A running `listen` only receives the connections it resolved at startup ([hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467) proposes sessions that pick up new sources), so the bridge restarts it when URLs are created or deleted (debounced, and the old process exits before the new one starts, so sessions never overlap), and retries what arrived in between. A process that exits is started again with backoff.
 - **One local port and path per agent.** The first URL sets them (default `3000` and `/events`; the path is the shared destination's) and different ones are refused. At most 50 URLs per agent.
-- **Status codes stop at the source.** The source acknowledges each delivery, so the agent's own response (a `410` to stop, a `5xx` to retry) never reaches the bridge's delivery. The agent unsubscribes instead.
+- **Status codes stop at the source.** The source acknowledges each delivery, so the agent's own response (a `410` to reject an event, a `5xx` to retry) never reaches the bridge's delivery. The agent unsubscribes instead.
 - **Cleanup.** The sweeper deletes a URL's source and connection once no subscription has used it for an hour, not the moment one ends: an agent changing a subscription's arguments unsubscribes and subscribes again on the same URL, and an agent may create a URL before subscribing. The agent's destination stays. Tunnel URLs are always verified at subscribe (never from the verification cache), and a deleted URL's cached verification is dropped, so a subscription can't be recreated on a deleted source.
 - **Identity.** An agent name is a label, not an identity: any client of the owner can create, list or retry for any agent name. That suits one bridge per machine.
 
@@ -637,7 +741,7 @@ Planned (stage 7): `bridge setup --prune` handles instances that are in the stor
 
 1. Validate the event name, arguments and `whsec_` secret.
 2. Check the callback: `https`, and resolving only to public addresses. The challenge goes over a pinned connection that never follows redirects. (A host allowlist, such as ChatGPT's receiver host, is planned.)
-3. Send the signed challenge directly and check the echo. On failure return `-32015`.
+3. Send the signed challenge directly and check the echo. On failure return `CallbackEndpointError` (`-32027`).
 4. Derive the subscription id. Upsert the topic source if it's the first subscription to this event, then the subscription's destination and connection.
 5. Store and return `id` and `refreshBefore`. Use a long default lifetime: ChatGPT sent no `ttlMs` in the 1 Oct test.
 
@@ -682,10 +786,10 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 
 ### Summary
 
-- **105 requirements:** 65 conform (6 of them on Event Gateway behavior recorded in "Verified facts"), 16 partly, 7 are gaps, 13 don't apply, 3 are unknown.
-- **Gaps that break clients, for 0.5.0:** the error codes (row 62, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37), with rows 36 and 101), and a `410` deleting the subscription (row 59, [#29](https://github.com/hookdeck/mcp-events-bridge/issues/29)).
+- **105 requirements:** 70 conform (6 of them on Event Gateway behavior recorded in "Verified facts"), 13 partly, 5 are gaps, 13 don't apply, 3 are unknown.
+- **Gaps that break clients, for 0.5.0:** the error codes (row 62, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37), with rows 36 and 101; fixed), and a `410` deleting the subscription (row 59, [#29](https://github.com/hookdeck/mcp-events-bridge/issues/29); fixed).
 - **Other gaps and partials:** `terminated` when an event leaves the catalog (rows 13, 72, [#49](https://github.com/hookdeck/mcp-events-bridge/issues/49)); webhook and poll cursors, and `truncated` on subscribe (rows 33, 54, [#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)); a verification rate limit, `ttlMs` clamping, the rotation secret across restarts and IANA blocks (rows 44, 51, 79, 91, [#51](https://github.com/hookdeck/mcp-events-bridge/issues/51)); behaviors kept for clients built on the sketch, such as `{}` for an unknown unsubscribe and the top-level `events` capability (rows 5, 98, [#52](https://github.com/hookdeck/mcp-events-bridge/issues/52)); a delivery-time permission re-check (row 104, moot with one owner).
-- **Event Gateway:** retries reuse the first signature (row 56), which closes when Event Gateway signs deliveries itself. Its delivery-time SSRF, redirect and egress-IP behavior isn't recorded (rows 68, 80, 81). Features that would help: Standard Webhooks signing on destinations, a monotonic position in the request listing for poll (row 32), and `MCP_EVENTS` sources serving `/.well-known/mcp-webhook-receiver.json` (row 85).
+- **Event Gateway:** retries reuse the first signature (row 56). Event Gateway can now sign every attempt itself (Standard Webhooks destination auth, 21 Oct), and stage 8 uses it to close this gap. Its delivery-time SSRF, redirect and egress-IP behavior isn't recorded (rows 68, 80, 81). Features that would help: a second, expiring key on Standard Webhooks destinations (row 51), a monotonic position in the request listing for poll (row 32), and `MCP_EVENTS` sources serving `/.well-known/mcp-webhook-receiver.json` (row 85).
 - **ChatGPT:** verified on 6 Oct (subscribe, challenge, an email event) and 9 Oct (seven GitHub subscriptions); see "Verified facts" and `SPIKES.md`.
 
 ### Capability negotiation and protocol revision
@@ -730,7 +834,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 21 | Poll (298) | `maxEvents` caps; partial batch sets `hasMore: true`; default when omitted | | Conforms | Default 50, clamped to 100: `src/core/poll.ts:22-23,276,376-379` | |
 | 22 | Poll (299–300) | `hasMore` and `nextPollMs` semantics | | Conforms | `src/core/poll.ts:384-387,447-451`; back-off via `intervalFor` `:203-208` | |
 | 23 | Poll (302) | No protocol-required state; MAY hold ephemeral derived state | MAY | Conforms | Cursor carries all state (`CursorState`, `src/core/poll.ts:56-69`); shared listing is a rebuildable cache (`RequestWindow`, `:113-200`) | |
-| 24 | Poll (303) | Errors as JSON-RPC errors (`NotFound`, `Forbidden`, `InvalidParams`, `Unsupported`) | | Partial | Mechanism right; numbers are the sketch's (`src/core/errors.ts:4-12`) | See row 62 (#37) |
+| 24 | Poll (303) | Errors as JSON-RPC errors (`NotFound`, `Forbidden`, `InvalidParams`, `Unsupported`) | | Conforms | JSON-RPC errors with the SEP's codes (`src/core/errors.ts`) | |
 | 25 | Cursor (692) | Absent `cursor` treated as `null`; receiver MUST NOT fail | MUST | Conforms | `src/core/poll.ts:276`; subscribe `src/core/subscriptions.ts:197` | |
 | 26 | Cursor (696) | `maxAgeMs`: replay from the later of cursor and now − `maxAgeMs` | | Conforms | `src/core/poll.ts:313-318` | |
 | 27 | Cursor (698) | `truncated: true` when the floor passes the cursor | SHOULD | Conforms | `src/core/poll.ts:315` | |
@@ -747,7 +851,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 35 | Push (307–387) | Confirmation, `subscriptionId` in `_meta`, heartbeat (MUST, ≤30 s SHOULD), cancellation (MUST), SDK concurrency exemption (MUST) | MUST/SHOULD | N/A | Not built and not advertised (`src/core/catalog.ts:48`) | |
-| 36 | Error Handling (758) | `Unsupported {feature:"deliveryMode", value}` for a mode the event type doesn't offer | (error table) | Partial | No `events/stream` handler, so the SDK answers `-32601` (`src/core/mcp.ts:179-184`) | Register `events/stream` that validates `name` and throws `unsupported('deliveryMode','push')` |
+| 36 | Error Handling (758) | `Unsupported {feature:"deliveryMode", value}` for a mode the event type doesn't offer | (error table) | Conforms | `events/stream` checks `name` (`NotFound` if unknown), then returns `Unsupported {feature:"deliveryMode", value:"push"}` (`src/core/mcp.ts`) | |
 
 ### Webhook: subscribe, TTL, identity
 
@@ -767,7 +871,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 48 | Identity (489) | `events/subscribe`/`unsubscribe` MUST have an authenticated principal; reject with `Forbidden` | MUST | Partial | Secret-URL auth sets principal `owner` (`src/host/server.ts:148-152`); handlers reject a missing principal (`src/core/subscriptions.ts:106,211`). Behavior conforms; the code is `-32012`, not `-32024` | Row 62 (#37) |
 | 49 | Identity (491) | Key = `(principal, delivery.url, name, arguments)`, arguments by canonical JSON | | Conforms | `src/core/identity.ts:12-14`, `src/core/canonical-json.ts`. URL normalized through `URL.href` | |
 | 50 | Identity (493) | All four immutable; a change addresses a different subscription | | Conforms | Inherent in the derived id | |
-| 51 | Identity table (501), Rotation (647) | Secret replaced on refresh; SHOULD dual-sign old and new for a grace window | SHOULD | Partial | Dual-signs for 10 min (`src/core/relay.ts:142-145`, `src/core/config.ts:105`), but the previous secret is only in memory (`src/core/event-gateway-store.ts:33-34,59`), so a restart inside the window ends dual-signing | Persist the previous secret (e.g. sealed in the description, or a second credential) |
+| 51 | Identity table (501), Rotation (647) | Secret replaced on refresh; SHOULD dual-sign old and new for a grace window | SHOULD | Partial | Dual-signs for 10 min (`src/core/relay.ts:142-145`, `src/core/config.ts:105`), but the previous secret is only in memory (`src/core/event-gateway-store.ts:33-34,59`), so a restart inside the window ends dual-signing | Persist the previous secret (e.g. sealed in the description, or a second credential). Stage 8: Event Gateway signs, so this needs a second, expiring key on the destination (an Event Gateway feature); until then a refresh switches the secret at once |
 | 52 | Identity table (503–504) | TTL granted again; `active` set true on refresh | | Conforms | `src/core/subscriptions.ts:159,178` | |
 | 53 | Identity (506) | Derived `id` not accepted as input to any method | | Conforms | No method or tool takes it | |
 | 54 | Gaps (711) | For non-replay types (`cursor` always null), `truncated` SHOULD be false | SHOULD | Partial | Subscribe returns `truncated: true` whenever the client passes a non-null cursor (`src/core/subscriptions.ts:197`), although webhook cursors are always null. Defensible because the same event types replay in poll (row 33) | Resolve together with row 33: either replay webhook from the cursor, or return `false` |
@@ -777,13 +881,13 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 55 | Delivery (533), Signature (638) | Every delivery has `webhook-id` (= `eventId`), `webhook-timestamp` (seconds), `webhook-signature` | MUST | Conforms (via Event Gateway) | Relay signs at publish, `src/core/relay.ts:149-155`, `src/core/sign.ts:14-27`; Event Gateway passes published headers through unchanged (ARCHITECTURE "Verified facts", Publish API pass-through) | |
-| 56 | Delivery (533), Signature (642) | Each retry attempt MUST regenerate timestamp and signature | MUST | **Gap** (Event Gateway-dependent) | Event Gateway retries resend the original headers (`src/core/hookdeck.ts:132-149`; ARCHITECTURE "Outbound retries carry the first signature"). Mitigation: 3 exponential retries from 20 s. Inbound retries and the tunnel-URL recovery path re-sign (`src/core/callbacks.ts` `retryMissed`) | Hookdeck feature: Standard Webhooks signing on Event Gateway destinations. Interim: measure actual retry spacing stays under 5 min |
+| 56 | Delivery (533), Signature (642) | Each retry attempt MUST regenerate timestamp and signature | MUST | **Gap** (Event Gateway-dependent) | Event Gateway retries resend the original headers (`src/core/hookdeck.ts:132-149`; ARCHITECTURE "Outbound retries carry the first signature"). Mitigation: 3 exponential retries from 20 s. Inbound retries and the tunnel-URL recovery path re-sign (`src/core/callbacks.ts` `retryMissed`) | Stage 8: Standard Webhooks destination auth, shipped 21 Oct, signs every attempt afresh (verified 22 Oct). Interim: measure actual retry spacing stays under 5 min |
 | 57 | Delivery (535) | Body `cursor` is a safe watermark; MAY be null | MAY | Conforms | `cursor: null`, `src/core/relay.ts:127` | |
 | 58 | Delivery (536) | Retry each event independently, exponential backoff on non-`2xx`; SHOULD cap attempts and window (3–5 over ≤10–15 min) | SHOULD | Conforms (Event Gateway-dependent) | Retry rule: exponential, 3 attempts, 20 s, `[">=300","!410","!413"]` (`src/core/hookdeck.ts:143-149`) | Exact Event Gateway spacing not measured in repo (Unknown) |
-| 59 | Delivery (536) | `410` is non-retryable **for that delivery, without affecting the subscription** | MUST | **Gap** | Retry rule excludes 410 (OK), but a 410 delivery issue deletes the subscription (`src/core/relay.ts:185-187`) | Treat 410 like 413: no retry, keep the subscription (optionally record nothing). Issue #29 |
+| 59 | Delivery (536) | `410` is non-retryable **for that delivery, without affecting the subscription** | MUST | Conforms | Retry rule excludes 410; a 410 delivery issue only logs and resolves the issue, so the subscription and its `deliveryStatus` are unchanged (`src/core/relay.ts`, 0.5.0) | |
 | 60 | Delivery profile (658) | `413` non-retryable for that event | MUST | Conforms (Event Gateway) | `!413` in the retry rule (verified stage 3). A 413 is recorded as `lastError: http_4xx` | |
 | 61 | Delivery profile (658), Payload minimality (903) | Bodies ≤ 256 KiB; payloads minimal | SHOULD | Conforms | `src/core/relay.ts:23,127-131` (oversize dropped with a log); provider `summarize`. Generic webhook passes the whole JSON body unless `fields` is set (Partial for that provider) | Default generic-webhook `fields` guidance in docs |
-| 62 | Error Handling (752–763) | Codes `NotFound -32023`, `Forbidden -32024`, `ResourceExhausted -32025`, `Unsupported -32026`, `CallbackEndpointError -32027` | Normative table (provisional) | **Gap** | `src/core/errors.ts:4-12` uses -32011..-32015; tests and docs assert the old numbers | Renumber (issue #37; ext-triggers-events#11 merged 9 Oct). Breaking for clients matching numbers |
+| 62 | Error Handling (752–763) | Codes `NotFound -32023`, `Forbidden -32024`, `ResourceExhausted -32025`, `Unsupported -32026`, `CallbackEndpointError -32027` | Normative table (provisional) | Conforms | `src/core/errors.ts` uses -32023..-32027 (0.5.0, [#37](https://github.com/hookdeck/mcp-events-bridge/issues/37)); `watch` also accepts the sketch's `NotFound` (-32011) from older bridges | Provisional until the SEP is accepted |
 | 63 | Delivery profile (655–657) | POST, `application/json`, required headers on every delivery | | Conforms (Event Gateway) | `content-type` set at publish (`src/core/relay.ts:150`); Event Gateway HTTP destination POSTs and passes headers through | |
 | 64 | Signature (643) | `X-MCP-Subscription-Id` on every delivery | MUST | Conforms | `src/core/relay.ts:153`; Event Gateway connection filter keys on it (`src/core/event-gateway-store.ts:152`) | |
 | 65 | Signature (639–641) | HMAC-SHA256 over `id.timestamp.body`, `v1,` base64, secret is base64-decoded `whsec_` | MUST | Conforms | `standardwebhooks` lib, `src/core/sign.ts:21` | |
@@ -826,7 +930,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 92 | Endpoint verification (630) | Failures surface only as categories, never raw responses | MUST (by "only") | Conforms | Body read only to compare the echo (`src/core/callback.ts:103-115`) | |
 | 93 | Server identity (632) | Asymmetric `v1a,` signing | MAY | N/A | Not built | |
 | 94 | TLS (634) | `https` only; reject others with `InvalidParams` | MUST | Conforms | `src/core/callback.ts:34`; `src/core/subscriptions.ts:95` | |
-| 95 | Callback auth (649) | HMAC is the only callback authentication | | Conforms | Event Gateway's `CUSTOM_SIGNATURE` also adds `x-mcp-bridge-hmac` (`src/core/event-gateway-store.ts:42,150`), a side effect of using it as secret storage; receivers ignore it | |
+| 95 | Callback auth (649) | HMAC is the only callback authentication | | Conforms | Event Gateway's `CUSTOM_SIGNATURE` also adds `x-mcp-bridge-hmac` (`src/core/event-gateway-store.ts:42,150`), a side effect of using it as secret storage; receivers ignore it | Goes in stage 8, with `CUSTOM_SIGNATURE` |
 
 ### Unsubscribe, errors, authorization
 
@@ -837,7 +941,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 98 | Error Handling (755) | `NotFound` for no matching subscription on `events/unsubscribe` | Error table | Partial | Returns `{}` for an unknown subscription (OpenAI guidance; `src/core/subscriptions.ts:208`) | Decide: keep idempotent `{}` (document), or return `NotFound {kind:"subscription"}`. Changing it could break ChatGPT |
 | 99 | Error Handling (755) | `NotFound` `data.kind` MAY disambiguate | MAY | Conforms | `src/core/errors.ts:26-27` | |
 | 100 | Error Handling (757) | `ResourceExhausted` with `data.limit` when a limit is hit | Conditional | N/A | No subscription limits; `resourceExhausted` is defined (`src/core/errors.ts:32`) but never raised | |
-| 101 | Error Handling (754, 757) | `InvalidParams` is for statically invalid requests; limits are `ResourceExhausted` | | Partial | Arguments too large for Event Gateway's 500-char description return `InvalidParams` (`src/core/subscriptions.ts:185`, `src/core/event-gateway-store.ts:141`), though they may match `inputSchema` | Return `ResourceExhausted {limit:"argumentsSize", max}` |
+| 101 | Error Handling (754, 757) | `InvalidParams` is for statically invalid requests; limits are `ResourceExhausted` | | Conforms | Arguments too large for Event Gateway's 500-char description return `ResourceExhausted {limit:"argumentsSize"}` (`src/core/subscriptions.ts`) | |
 | 102 | Error Handling (758–759) | `Unsupported` and `CallbackEndpointError` `data` shapes | | Conforms | `src/core/errors.ts:35-39` | |
 | 103 | Authorization (907) | Verify the principal may subscribe to the event with these arguments | MUST | Partial | Single owner principal who configured every provider, so it holds trivially; no model for multi-tenant | Needed only with OAuth/multi-tenant (stage 7) |
 | 104 | Authorization (909) | Re-verify permissions at delivery time; terminate on revocation | SHOULD | **Gap** | No re-check; no revocation source | With row 13's `terminated` path, once tokens exist |
@@ -868,6 +972,8 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 **ChatGPT** (stage 5, 6 Oct): with the plugin created as "No Authentication" and the secret MCP URL, a Work chat request ("I'd like to know about all inbound emails") subscribed to `email.received` with `arguments: {}`, no `ttlMs`, and `cursor: null`. The callback was `https://connectors.api.openai.com/webhook/mcp-events/<id>`, and it answered the challenge. A Resend email was delivered with `200` on the first attempt, and the task showed the sender, recipient and subject.
 
 **MCP Events source type** (6 Oct, probed in production): a `MCP_EVENTS` source takes `config.auth.webhook_secret_key` (a `whsec_` secret). The bridge's challenge, signed with that secret, was answered on the first try straight after the source was created, so no wait for the secret to reach the edge; a challenge signed with another secret got a 4xx, and (from the request counts) was recorded as a request rejected as `VERIFICATION_FAILED`. A passing challenge creates no request. Deliveries get HTTP 200 whether or not the signature matches; matching ones are `verified: true`, others are rejected as `VERIFICATION_FAILED`. On 7 Oct: changing an existing source's secret took **61 seconds** to reach the edge (the old secret kept working until then; a new source's works at once). A challenge or delivery signed with two `v1,` entries, one of them the source's secret, is accepted in either order; signed with the other secret only, it's rejected (401 for the challenge).
+
+Changed by 22 Oct (probed in production): deliveries are now verified at the edge as well, so a delivery with a wrong signature gets **401** (still recorded as `VERIFICATION_FAILED`), and its sender sees the failure and retries, instead of getting 200. The 5-minute timestamp window applies to the challenge only: a delivery signed 10 minutes earlier with the right secret was accepted and verified, while a challenge signed 10 minutes earlier got 401. Only `webhook-*` headers are read on an `MCP_EVENTS` source.
 
 **Path forwarding on an `MCP_EVENTS` source** (probed 7 Oct): a verification challenge posted to a sub-path of the source URL (`<url>/mcp/events/webhook/abc`) is answered at the edge like one at the root, and a delivery to a sub-path is forwarded through `hookdeck listen` with the sub-path appended to the CLI destination's path: `/base` gives `/base/mcp/events/webhook/abc`, and `/` gives `/mcp/events/webhook/abc` exactly. So one tunnel URL can serve a receiver that routes by path.
 
@@ -901,6 +1007,21 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 
 **Destination auth as credential storage** (stage 5, verified live): a `CUSTOM_SIGNATURE` destination stores `auth.signing_secret`; the value is masked (`auth: {}`) in create, get and list responses, and returned only by `GET /destinations/{id}?include=config.auth` (listings don't return it even with `include`). Event Gateway adds the configured header with an HMAC of the body to each delivery.
 
+**Standard Webhooks destination auth** (shipped 21 Oct 2026; probed in production 22 Oct, see `SPIKES.md`, "Stage 8"):
+
+- `auth_type: STANDARD_WEBHOOKS` with `auth: { webhook_secret_key }`, accepted on HTTP and CLI destinations. The secret must be `whsec_` followed by base64 of 24 to 64 bytes; a 16-byte one is refused with `422`. One key per destination.
+- Every attempt gets `webhook-id`, a fresh `webhook-timestamp` and one `webhook-signature` over the exact body, and these replace any headers of the same names on the request: a published request carrying an old timestamp and signature arrived with only the new ones.
+- `webhook-id` is the request's own `webhook-id` header (or one a transformation set), else Event Gateway's event id. An id containing a period fails the event with `DESTINATION_AUTH_FAILED`, and nothing is sent.
+- A manual retry of an event kept its `webhook-id` and arrived with a timestamp 18 seconds later. A request retry (after an ignored event) and a recovered CLI delivery were signed fresh too (timestamps 0 to 1 seconds old on arrival).
+- An `MCP_EVENTS` source holding the same secret verified every delivery from such a destination; with a different secret it answered `401`.
+
+**Transformations and rules per connection** (22 Oct, probed in production):
+
+- A transformation shared by several connections gets `context.connection` (with `name`) when it runs on an event, and runs for each connection, so each produced its own header value from its own name.
+- Filters match the transformation's output: on the event name, on an array containing a value, and on `$or` across values. `$exist: false` on a header the transformation sets drops the event as `FILTERED`. Dedupe on a header the transformation set (`headers.webhook-id`) drops a repeated provider request as `DUPLICATE`.
+- A request retry (`POST /requests/{id}/retry` with `webhook_ids`) runs the transformation and rules again for that connection: a request first filtered out was delivered after the filter was widened, with the right per-connection header.
+- A CLI connection records `CLI_DISCONNECTED` before its rules run: with no `listen` session, every request was ignored that way, including ones its filter would drop. Retried once `listen` was back, the filter and dedupe then dropped those.
+
 **Retry rules** (stage 3, [docs](https://hookdeck.com/docs/retries)): `response_status_codes` takes codes, ranges (`500-599`), comparisons (`>=500`) and negations (`!410`), evaluated last match wins. A list of negations alone (`["!410", "!413"]`) matches every other status, `2xx` included, so a successful attempt is retried again until the count runs out; use `[">=300", "!410", "!413"]`. Unset, any non-`2xx` is retried. The CLI's `--rule-retry-response-status-codes` accepts integers only.
 
 **Publish API pass-through** (stage 3): published headers and body reach the destination unchanged on every attempt, including `webhook-id`, `webhook-timestamp` and `webhook-signature`. Between attempts only `x-hookdeck-attempt-count` and `x-hookdeck-attempt-trigger` change. Event Gateway adds `idempotency-key`, the `x-hookdeck-*` headers, and `sentry-trace` and `baggage` tracing headers.
@@ -914,8 +1035,8 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - Filters ([docs](https://hookdeck.com/docs/filters)) apply to body, headers, query and path. Operators: `$eq`, `$neq`, `$in`, `$nin`, `$startsWith`, `$endsWith`, `$gt`, `$gte`, `$lt`, `$lte`, `$exist`, `$and`, `$or`, `$not`, `$ref`. No regex. Verified in stage 4: `$in` on a string is a substring match; an array in a filter matches when the array contains all the values; string matching is case-sensitive.
 - Dedupe ([docs](https://hookdeck.com/docs/deduplication)) is a connection rule with `include_fields` or `exclude_fields` (paths start with `headers`, `body`, `query` or `path`) and a window of 1 minute to 1 hour. Duplicates become ignored events. Best-effort. Rule order is configurable.
 - Ignored event causes ([docs](https://hookdeck.com/docs/requests)): `DISABLED`, `FILTERED`, `TRANSFORMATION_FAILED`, `CLI_DISCONNECTED`, and `DUPLICATE` for a dedupe hit (stage 4; not in the docs' list). A non-matching filter records one per connection per request.
-- Destination auth ([docs](https://hookdeck.com/docs/authentication)): Hookdeck Signature, Custom SHA-256, Basic, API key, Bearer. No Standard Webhooks.
-- Transformations ([docs](https://hookdeck.com/docs/transformations)): no IO, no async, 1-second limit, 5 MB code, environment variables for secrets, can set headers, no built-in crypto.
+- Destination auth ([docs](https://hookdeck.com/docs/authentication)): Hookdeck Signature, Custom SHA-256, Basic, API key, Bearer, and since 21 Oct 2026 Standard Webhooks (above).
+- Transformations ([docs](https://hookdeck.com/docs/transformations)): no IO, 1-second limit including time spent awaiting, 5 MB code, environment variables for secrets, can set headers. Re-checked 13 Oct: handlers can be async; the `crypto` built-in is available (Hash and Hmac, sign and verify, `webcrypto` and `subtle`); a transformation can be shared between connections; the handler gets `context.connection`, the connection object as `GET /connections/:id` returns it. Verified at runtime on 22 Oct (see "Transformations and rules per connection").
 
 **Issues and notifications** ([issue triggers](https://hookdeck.com/docs/issue-triggers), [issues](https://hookdeck.com/docs/issues)):
 
@@ -929,7 +1050,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 - `hookdeck listen <port> <source> <connection> --output compact --device-name <name> --hookdeck-config <path>`, with the exact connection name. If that connection doesn't exist, `listen` creates a shared `cli-<source>` connection.
 - "Connected" on stdout means the session is up; that's the recovery trigger. It's printed again after every websocket reconnect inside a running process ("Connection lost, reconnecting..." before it), from the CLI's source (`renderer_simple.go`, used for `--output compact`).
 - A running `listen` session only covers the connections resolved at startup, even with `'*'`: a request to a CLI connection created later is ignored as `CLI_DISCONNECTED` until `listen` restarts (verified live and in the CLI's code, 7 Oct; [hookdeck-cli#467](https://github.com/hookdeck/hookdeck-cli/issues/467)).
-- The CLI forwards each attempt to its local URL plus the destination's `cli_path`, with no filtering of its own.
+- The CLI forwards each attempt with no filtering of its own. Given a port, it sends to `http://localhost:<port>` plus the event's path; given a URL, to the URL's scheme and host, plus the URL's own path, plus the event's path. The event's path is the destination's `cli_path` plus any path under the source URL. A trailing slash on the URL gives `//` ([hookdeck-cli#475](https://github.com/hookdeck/hookdeck-cli/issues/475)), and the startup output leaves the URL's path out ([hookdeck-cli#476](https://github.com/hookdeck/hookdeck-cli/issues/476)) (code, and live on 22 Oct).
 - Relevant `gateway connection upsert` flags: `--source-type`, `--source-webhook-secret`, `--destination-type`, `--destination-cli-path`, `--destination-url`, `--rule-filter-headers`, `--rule-retry-strategy`, `--rule-retry-count`, `--rule-retry-interval`, `--rule-retry-response-status-codes`. The last accepts integers only, so negated codes have to be set through the API (stage 3).
 
 **CLI destination behavior:**
@@ -941,7 +1062,7 @@ Checked during design on 4 and 5 Oct 2026. If one turns out wrong, fix it here a
 **MCP Events,** from the demo and OpenAI's plugin docs:
 
 - The MCP TypeScript SDK has no MCP Events support. Register `events/list`, `events/subscribe` and `events/unsubscribe` by hand, and cast the `events` capability, as `src/server/mcp.ts` in the demo does.
-- Subscribe sends a signed challenge to the callback and must check the echo; a failure returns `-32015`.
+- Subscribe sends a signed challenge to the callback and must check the echo; a failure returns `CallbackEndpointError` (`-32015` in the sketch then, `-32027` in SEP-3415).
 - Deliveries are Standard Webhooks with the subscriber's `whsec_` secret. The envelope's `eventId` stays the same across retries.
 - Don't retry `410` or `413`. Keep payloads under 256 KiB.
 - ChatGPT sent no `ttlMs` in the 1 Oct test.
@@ -982,20 +1103,26 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - **5 Oct, `core/` boundary.** `node:crypto` allowed; callback sending behind `CallbackTransport` in `host/`.
 - **6 Oct, MCP Events source.** Event Gateway's `MCP_EVENTS` source answers the challenge, so test subscribers and local agents receive through it and `hookdeck listen` instead of a cloudflared tunnel.
 - **7 Oct, tunnel URLs per subscription.** One MCP Events source per subscription with a shared CLI destination per agent; the agent routes by `X-MCP-Subscription-Id`. Chosen over one source per agent for separate history and controls, accepting a `listen` restart per new subscription until hookdeck-cli#467.
-- **7 Oct, dual signing.** The bridge signs deliveries to a tunnel URL with its source's secret and the agent's, rather than updating the source's secret (61 seconds to take effect) or passing secrets through tools.
+- **7 Oct, dual signing.** The bridge signs deliveries to a tunnel URL with its source's secret and the agent's, rather than updating the source's secret (61 seconds to take effect) or passing secrets through tools. Superseded by stage 8 (22 Oct).
 - **7 Oct, retry, not replay.** Missed deliveries are re-sent by the bridge with a fresh signature; cursor replay is a separate, later feature.
 - **7 Oct, event names.** MCP events are named `{instance id}.{provider event name}` (#15). Chosen over merging same-named events across instances with an `instance` argument: simpler, no schema merging, and the catalog shows each provider. Breaking, and accepted, with no migration: 0.1.0 was an early demo release, as far as we know used only by this project. Resend's `email.received` became `resend.email.received`, configs use the provider's own event names (`issues`, not `github.issues`), and 0.1.0 subscriptions aren't carried over (the client subscribes again; the bridge logs subscriptions to events it doesn't offer). The name identifies the instance (ids have no dots), so subscriptions match on name alone. `get_event` takes the name as well as the id, since an event id is the provider's own and two instances can share one; `list_recent_events` became `list_events`.
 - **7 Oct, deployment names.** `deployment` is optional: `BRIDGE_DEPLOYMENT`, else `local` (CLI inbound) or `public` (HTTP inbound). It was `dev` in the examples, which read as "not for real use" once a bridge on a laptop became the setup for local agents.
-- **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions.
+- **7 Oct, sources and secrets.** Every tunnel source has its own secret, generated by the bridge; a client's secret is never set on a source. A tunnel URL covers the paths under it, so a client with one base URL (Hermes) uses one tunnel URL for all its subscriptions. The secret half is superseded by stage 8 (22 Oct): a callback URL's source holds the client's secret.
 - **7 Oct, local scope.** One bridge per machine, with one owner and its own Hookdeck project, running alongside the agent. The bridge runs `listen` and catches up by itself; the agent-facing tool becomes `create_tunnel_url`. Poll, push and cursor replay aren't local requirements and move to later (supersedes the 5 Oct poll fallback for local agents).
 - **9 Oct, Claude Code in the background.** A `watch` command run by a Claude Code plugin monitor, with a per-project watch list and saved cursors, rather than a channel (a research preview) or MCP Events support in Claude Code (not there yet). Two sessions in one project both hear every event, rather than one holding a lock.
 - **8 Oct, poll mode.** `events/poll` proxies to Event Gateway's request listing, with no event store in the bridge; an in-memory buffer only if usage shows latency problems. Polls share one listing of the polled sources, fetched on demand at most every 2 seconds, with back-off on the API rate limit. The cursor re-reads the last 60 seconds and carries the ids it has returned, because requests appear in the listing late and out of order. Tools (`poll_events`, `wait_for_event`) for hosts without MCP Events support; no Claude Code channel (see #26).
 - **7 Oct, generic webhooks.** A built-in `webhook()` provider on a `WEBHOOK` source with required verification (HMAC, Standard Webhooks, Basic auth or API key), static mapping config, and equality filters on declared fields. Until its secret is set, the source exists without an inbound connection (not a disabled or paused one: an upsert re-enables a disabled connection, and a paused one delivers its held events), and the bridge relays only requests marked `x-hookdeck-verified: true`. `providers add webhook <id>` creates the source and the config entry; it edits `bridge.config.ts` only on request, and only shapes it can edit safely.
+- **22 Oct, Event Gateway delivers (stage 8).** Each subscription becomes one connection on the provider's source, with a transformation generated from the provider's manifest, a filter, dedupe and retry, and a destination that signs every attempt with the subscriber's secret. Chosen over publishing once per topic, which needs the same transformation and filters but keeps the relay. Breaking (the manifest shape, the tool name, the subscription resources), and accepted while the bridge is in beta.
+- **22 Oct, callback URLs.** "Callback URL", the spec's term, in everything users and agents see; Event Gateway terms stay in this document. `create_tunnel_url` becomes `create_callback_url`, with a required secret supplied by the client's code or a setup step, never the model; a CLI command wraps it. A callback URL's source holds the client's secret, so the MCP server needs no special case for its own URLs.
+- **22 Oct, recovery stays in the bridge.** The bridge that runs `listen` for an agent also retries the agent's missed deliveries, with the inbound recovery it already has, rather than the Hookdeck CLI doing it.
+- **22 Oct, rotating a callback URL's secret.** Create a new callback URL, until Event Gateway destinations accept a second key. Not a faster secret lookup at Event Gateway's edge.
 
 ## Open questions
 
-- [ ] Standard Webhooks destination auth in Event Gateway: not planned yet. Decides when the re-sign gap closes and publish-once can happen. Needs per-destination secret rotation as well as signing.
-- [ ] Delivering straight from the provider source: the research questions in "Evolution".
+- [x] Standard Webhooks destination auth in Event Gateway: shipped 21 Oct 2026, verified 22 Oct. Closes the re-sign gap and leads to stage 8; publishing once per topic was dropped.
+- [ ] A second, expiring key on Standard Webhooks destinations: for the SEP's rotation grace window (row 51), and to rotate a callback URL's secret without creating a new URL.
+- [x] Delivering straight from the provider source: yes, as stage 8; the research questions in "Evolution" are answered there.
+- [ ] Expiry while a bridge on a laptop sleeps: in stage 8 an expired subscription keeps receiving until the bridge wakes and deletes its connection. Lean: acceptable, since the owner's own agent is the subscriber.
 - [ ] Adding a provider: gap 4 (thin webhooks) in "Adding a provider". Gaps 1 and 2 are solved by the generic webhook provider and `providers add webhook`; the manual paste in gap 1 remains.
 - [ ] Deployments sharing a Hookdeck project: `local` and `fly` share the provider source (each gets its own inbound connection, so each email goes to both) and the subscription connections, which every running bridge loads. Decided for now: one Hookdeck project per bridge, documented in the README. An optional namespace is [#13](https://github.com/hookdeck/mcp-events-bridge/issues/13).
 - [x] Tunnel URLs: one source per subscription, or one per agent with a path per subscription? Both: one per subscription by default, and paths under a tunnel URL for clients that use one base URL (Hermes). Every source keeps its own bridge-generated secret (7 Oct).
@@ -1005,7 +1132,7 @@ The staged build plan and its status are in [`PLAN.md`](PLAN.md); spike results 
 - [x] Poll mode with a local bridge: while it's disconnected, a request has no events and a `CLI_DISCONNECTED` ignored event; while the inbound recovery retries it, none of either; delivered, `cli_events_count: 1` (acceptance run, 8 Oct).
 - [ ] Event Gateway retention for this project's plan, to check `truncated` against a real cutoff.
 - [ ] Smithery triggers (`ai.smithery/events/*`): an experiment after the listing, if there's interest.
-- [x] Delivery issue notifications carry the failing response status, so the bridge deletes a subscription on `410` (stage 4).
+- [x] Delivery issue notifications carry the failing response status (stage 4). The bridge deleted a subscription on `410` until 0.5.0; now a `410` changes nothing ([#29](https://github.com/hookdeck/mcp-events-bridge/issues/29)).
 - [x] Stage 3: bodies are byte-identical across attempts and match the publisher's, and the signature headers don't change between attempts (see `SPIKES.md`).
 - [ ] What ChatGPT does when a refresh fails while the bridge is offline. Lean: long default lifetime until tested.
 - [ ] Testing with a dot (needs a ChatGPT plan above Plus). Not needed for stage 5.

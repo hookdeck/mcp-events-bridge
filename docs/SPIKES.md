@@ -244,3 +244,39 @@ Run on 9 Oct 2026 with Claude Code 2.1.295 (interactive, Opus 5.5) against the F
 ### Resources
 
 Test issues `hookdeck-demos#27`, `#28` and `#29` (closed). The test plugin install and its data were removed. Screenshots: `docs/images/claude-code-wait-for-event.png` and `docs/images/claude-code-watch.png`.
+
+## Stage 8: Event Gateway delivers
+
+Run on 22 Oct 2026, in production, after Event Gateway shipped Standard Webhooks destination auth. **Passed:** Event Gateway can deliver every MCP Event itself, signed on every attempt, straight from the provider's source.
+
+### What we ran
+
+1. **Standard Webhooks destination auth.** An `MCP_EVENTS` source with secret A stood in for a subscriber, since it verifies signatures and records headers. A `PUBLISH_API` source fanned out to two HTTP destinations at its URL, one with `STANDARD_WEBHOOKS` auth and secret A, one with secret B. Publishes carried a `webhook-id`, or none, or one containing a period, and every publish also carried an old `webhook-timestamp` and a bogus `webhook-signature`, as the relay's would. One event was retried by hand. A CLI destination with the same auth was created, and so was one with a 16-byte secret. Requests straight to the `MCP_EVENTS` source: a delivery signed 10 minutes earlier with A, a delivery signed with B, and a challenge signed now and one signed 10 minutes earlier.
+2. **Delivering straight from a provider's source.** A `WEBHOOK` source with two subscription connections sharing one transformation, which built the envelope from a Resend-shaped request and set `X-MCP-Subscription-Id` from `context.connection.name`. One subscription filtered on `to` (an array containing an address), the other on `from` with `$or` over two addresses; both deduped on `headers.webhook-id` and signed with `STANDARD_WEBHOOKS` to an `MCP_EVENTS` source. Four requests were sent, then the first again.
+3. **A request retry re-running the transformation.** A request was filtered out, the filter was widened, and the request was retried for that connection (`POST /requests/{id}/retry` with `webhook_ids`).
+4. **Example connections for review** (`spike-demo-*`, left in the project). `RESEND` and `GITHUB` sources, with test requests signed as Resend (Svix) and GitHub sign them; one transformation per provider, ported from `src/core/providers/resend.ts` and `github.ts`, adding `x-mcp-skip` for anything undeliverable, with every filter requiring it absent. Three subscriptions: a ChatGPT-like one with a callback URL on `mock.hookdeck.com`, and two for a Hermes-like agent whose callback URL was its own `MCP_EVENTS` source, holding the agent's secret, connected to a CLI destination that signed again with that secret.
+5. **Recovering missed deliveries.** Events were sent with no `listen` running. Then `listen` was started, forwarding to a local receiver that verified each request with the agent's secret and a 5-minute timestamp window, as a Standard Webhooks library does, and the bridge's `InboundRecovery`, unchanged, was run against the agent's connection. A second connection went from the provider's source straight to a CLI destination, a shape we then rejected (see "Not taken" in `ARCHITECTURE.md`); it showed how a CLI connection's rules interact with `CLI_DISCONNECTED`.
+6. **`listen` to a forwarding URL with a path:** `hookdeck listen http://127.0.0.1:<port>/base/ <source>`, with requests to the source URL and to a path under it.
+
+### What we saw
+
+- **Signing.** Every attempt carried `webhook-id`, a fresh `webhook-timestamp` and one `webhook-signature`, replacing the published ones, and the `MCP_EVENTS` source verified each one signed with its own secret. `webhook-id` was the published one when present, else Event Gateway's event id. An id containing a period failed with `DESTINATION_AUTH_FAILED` and nothing was sent. The manual retry kept the id, with a timestamp 18 seconds later. The CLI destination was accepted; the 16-byte secret was refused with `422`.
+- **The `MCP_EVENTS` source** answered the delivery signed with B with `401`, and recorded it as `VERIFICATION_FAILED`: the sender now sees a bad signature, where on 6 Oct it got `200`. The delivery signed 10 minutes earlier was accepted and verified; the challenge signed 10 minutes earlier got `401`. The window applies to challenges only.
+- **Straight from the provider's source.** Each subscription got its own `X-MCP-Subscription-Id` from the one transformation. The envelope arrived as `{ eventId, name, timestamp, data, cursor }`, with addresses normalized (`Alice <Alice@Example.com>` became `alice@example.com`). The filters did what the bridge's `accepts()` does: one email reached both subscriptions, one each, one neither, and the repeated request was ignored as `DUPLICATE` on both.
+- **Request retry.** The retried request was transformed again and delivered, with the right subscription id, and verified.
+- **The example connections** behaved the same with real provider signatures. The period-containing id was dropped as `FILTERED` by `$exist: false` on `x-mcp-skip`. GitHub's `ping`, an `issues` event and a `pull_request` labeled event were filtered; `pull_request` opened was delivered.
+- **Recovery.** `InboundRecovery` retried 11 requests. Every recovered delivery passed the receiver's checks, with one signature and a timestamp 0 to 1 seconds old, so the CLI destination signed each retry afresh. On the CLI connection with a filter, every request sent while `listen` was down had been ignored as `CLI_DISCONNECTED`, including ones its filter would drop; when retried, the filter and dedupe dropped those.
+- **`listen` with a URL** sent to `/base//webhook` and `/base//webhook/mcp/events/webhook/abc`: the URL's path is kept, the CLI destination's path and the path under the source URL are appended, and a trailing slash gives `//`. The startup output said `http://127.0.0.1:<port>/webhook`, leaving the URL's path out.
+
+### What it means for the design
+
+- The retry gap (conformance row 56) can close: Event Gateway signs each attempt itself.
+- The relay can go. A transformation on the provider's source, shared by every subscription, plus filters and dedupe, does what the relay does. That's stage 8 in `PLAN.md`, designed in `ARCHITECTURE.md`, "Next: Event Gateway delivers". Publishing once per topic, the earlier plan, keeps the relay for no gain, so it's dropped.
+- A destination signs with one key, so a callback URL the bridge creates has to hold the client's own secret: `create_callback_url` takes it, from the client's code. Rotating it means a new URL until destinations take a second key, because changing a source's secret still takes about a minute.
+- Recovery for local agents needs no new code: `InboundRecovery` works on a callback URL's connection, and the bridge's own re-sending goes.
+- A mis-signed delivery to an `MCP_EVENTS` source is now a delivery failure the bridge hears about, not a silent `200`.
+- `ARCHITECTURE.md` is updated: a "Mental model" section, the stage 8 design, the corrected `MCP_EVENTS` behavior, and new verified facts.
+
+### Resources
+
+The `spike-sw-*` and `spike-direct-*` sources, connections, destinations and transformations were deleted (none left, checked). The `spike-demo-*` resources were left in the project for review, minus the straight-to-CLI connection, which was deleted. Filed [hookdeck-cli#475](https://github.com/hookdeck/hookdeck-cli/issues/475) (the `//`) and [hookdeck-cli#476](https://github.com/hookdeck/hookdeck-cli/issues/476) (the startup output, the interactive view and `--help` leave out the forwarding URL's path). No Resend or GitHub webhooks were created: the provider requests were signed locally.

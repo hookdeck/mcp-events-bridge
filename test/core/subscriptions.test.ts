@@ -3,6 +3,7 @@ import { CallbackUrlError, type CallbackTransport, type VerificationResult } fro
 import { Catalog } from '../../src/core/catalog.js';
 import { DEFAULT_SUBSCRIPTION_SETTINGS, defineConfig, resolveConfig } from '../../src/core/config.js';
 import { MemoryStore } from '../../src/core/memory-store.js';
+import { SubscriptionTooLargeError } from '../../src/core/store.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { SubscriptionService, describeParams } from '../../src/core/subscriptions.js';
 import { resend } from '../../src/providers.js';
@@ -58,12 +59,12 @@ describe('SubscriptionService.subscribe', () => {
   });
 
   it.each([
-    ['no principal', undefined, params(), -32012],
-    ['an unknown event', 'owner', params({ name: 'email.sent' }), -32011],
+    ['no principal', undefined, params(), -32024],
+    ['an unknown event', 'owner', params({ name: 'email.sent' }), -32023],
     ['an http callback', 'owner', params({ delivery: { url: 'http://receiver.example.com/hook', secret: generateWebhookSecret() } }), -32602],
     ['a bad secret', 'owner', params({ delivery: { url: 'https://receiver.example.com/hook', secret: 'nope' } }), -32602],
     ['unknown arguments', 'owner', params({ arguments: { subject: 'x' } }), -32602],
-    ['a push delivery mode', 'owner', params({ delivery: { mode: 'push', url: 'https://receiver.example.com/hook', secret: generateWebhookSecret() } }), -32014],
+    ['a push delivery mode', 'owner', params({ delivery: { mode: 'push', url: 'https://receiver.example.com/hook', secret: generateWebhookSecret() } }), -32026],
   ])('rejects %s', async (_label, principal, request, code) => {
     await expect(setup().service.subscribe(principal, request)).rejects.toMatchObject({ code });
   });
@@ -72,9 +73,17 @@ describe('SubscriptionService.subscribe', () => {
     await expect(setup({ publicHost: false }).service.subscribe('owner', params())).rejects.toMatchObject({ code: -32602 });
   });
 
-  it('returns -32015 with the reason when verification fails, and stores nothing', async () => {
+  it('returns ResourceExhausted when the arguments are too large to store', async () => {
+    const { service, store } = setup();
+    store.put = async () => {
+      throw new SubscriptionTooLargeError('too large');
+    };
+    await expect(service.subscribe('owner', params())).rejects.toMatchObject({ code: -32025, data: { limit: 'argumentsSize' } });
+  });
+
+  it('returns -32027 with the reason when verification fails, and stores nothing', async () => {
     const { service, store } = setup({ verifyResult: { ok: false, reason: 'challenge_failed' } });
-    await expect(service.subscribe('owner', params())).rejects.toMatchObject({ code: -32015, data: { reason: 'challenge_failed' } });
+    await expect(service.subscribe('owner', params())).rejects.toMatchObject({ code: -32027, data: { reason: 'challenge_failed' } });
     expect(store.list()).toEqual([]);
   });
 

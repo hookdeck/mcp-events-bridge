@@ -263,8 +263,13 @@ describe('poll mode over MCP', () => {
       expect(typeof waited.structuredContent?.cursor).toBe('string');
 
       // Errors: NotFound over the protocol; a readable tool error for the model.
-      await expect(poll({ name: 'email.received', arguments: {}, cursor: null })).rejects.toMatchObject({ code: -32011 });
+      await expect(poll({ name: 'email.received', arguments: {}, cursor: null })).rejects.toMatchObject({ code: -32023 });
       expect((await client.callTool({ name: 'poll_events', arguments: { name: 'email.received' } })).isError).toBe(true);
+
+      // Push isn't offered: events/stream is Unsupported for a known event, NotFound for an unknown one.
+      const stream = (name: string) => client.request({ method: 'events/stream', params: { name, arguments: {} } } as never, anyResult);
+      await expect(stream('resend.email.received')).rejects.toMatchObject({ code: -32026, data: { feature: 'deliveryMode', value: 'push' } });
+      await expect(stream('email.received')).rejects.toMatchObject({ code: -32023 });
     } finally {
       await client.close();
     }

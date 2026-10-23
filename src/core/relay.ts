@@ -160,10 +160,12 @@ export class Relay {
    * notifications source, so the issue is re-read from the Event Gateway API
    * before acting on it.
    *
-   * Delivery issue on a subscription connection: a 410 means the subscriber
-   * has gone, so the subscription is deleted; anything else is recorded as
-   * failing delivery (reported as deliveryStatus). The issue is then resolved,
-   * so the next failure notifies again.
+   * Delivery issue on a subscription connection: a 410 is the receiver
+   * rejecting that one delivery, which SEP-3415 says MUST NOT affect the
+   * subscription (Event Gateway's retry rule already skips it), so it changes
+   * nothing; anything else is recorded as failing delivery (reported as
+   * deliveryStatus). The issue is then resolved, so the next failure notifies
+   * again.
    */
   private async handleNotification(notification: IssueNotification): Promise<InboundResponse> {
     const issueId = notification.issue?.id;
@@ -183,8 +185,7 @@ export class Relay {
     const status = issue.aggregation_keys?.response_status?.[0] as number | undefined;
     const errorCode = issue.aggregation_keys?.error_code?.[0] as string | undefined;
     if (status === 410) {
-      await this.deps.store.delete(subscription.id);
-      this.log(`${subscription.id}: callback returned 410, subscription deleted`);
+      this.log(`${subscription.id}: callback rejected a delivery (410), not retried`);
     } else {
       const now = this.now().toISOString();
       // Read and written in the store's queue, so a refresh in flight (a rotated secret, a new expiry) isn't undone.
@@ -200,7 +201,7 @@ export class Relay {
       this.log(`${subscription.id}: delivery failing (${status ?? errorCode ?? 'unknown'})`);
     }
     await this.deps.hookdeck.updateIssueStatus(issue.id, 'RESOLVED');
-    return { status: 200, body: { handled: status === 410 ? 'deleted' : 'recorded' } };
+    return { status: 200, body: { handled: status === 410 ? 'rejected' : 'recorded' } };
   }
 }
 
