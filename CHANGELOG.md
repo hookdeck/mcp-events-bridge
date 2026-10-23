@@ -14,6 +14,7 @@ Breaking, for clients that match on error code numbers, and for anyone relying o
 
 ### Fixed
 
+- **Hermes Agent guide:** Hermes keeps the bridge's MCP URL, secret included, in a subscriptions file other users can read, so the guide now makes `$HERMES_HOME` private. It said the URL was only in Hermes's `.env`.
 - **Docs:** how to set the plugin's MCP URL after skipping it ([#54](https://github.com/hookdeck/mcp-events-bridge/pull/54)); how the bridge conforms to SEP-3415, row by row ([#53](https://github.com/hookdeck/mcp-events-bridge/pull/53)); the transformation research ([#57](https://github.com/hookdeck/mcp-events-bridge/pull/57)); and the design for the next stage, where Event Gateway delivers each event itself and signs every attempt (`docs/ARCHITECTURE.md`).
 
 ## 0.4.0 (2026-10-09)

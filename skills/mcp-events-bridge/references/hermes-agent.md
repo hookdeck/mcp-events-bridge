@@ -4,7 +4,7 @@
 
 **Status: experimental.** Released Hermes (v0.21.5 and earlier) has no MCP Events support. It's in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908). These steps install that pull request at commit `8813311330`, the version tested with this bridge. The pull request may change or may not be merged, and these steps will change with it.
 
-The bridge is configured in Hermes as a **named emitter**: its MCP URL, which contains `BRIDGE_MCP_SECRET`, lives only in Hermes's `.env`, and the agent, its sessions and its logs see the name. (Earlier commits took the URL in the tool call, which sent the secret to the model; [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909) and fixed there.)
+The bridge is configured in Hermes as a **named emitter**: its MCP URL, which contains `BRIDGE_MCP_SECRET`, is set in Hermes's `.env`, and the agent, its sessions and its logs see only the name. Hermes also saves the URL with each subscription, in `$HERMES_HOME/mcp_events_subscriptions.json`, a file other users on the machine can read, so keep `$HERMES_HOME` private (step 4). (Earlier commits took the URL in the tool call, which sent the secret to the model; [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909) and fixed there.)
 
 ## 1. Install Hermes from the pull request
 
@@ -57,6 +57,12 @@ npx -y @modelcontextprotocol/inspector --cli "http://127.0.0.1:8080/mcp/$BRIDGE_
 
 ## 4. Configure Hermes
 
+Keep `$HERMES_HOME` readable by you alone: Hermes saves the bridge's MCP URL, secret included, in a file there that it creates readable by everyone (`mcp_events_subscriptions.json`).
+
+```sh
+chmod 700 "${HERMES_HOME:-$HOME/.hermes}"
+```
+
 In `$HERMES_HOME/.env` (by default `~/.hermes/.env`), the model provider's key, a webhook secret for Hermes, and the bridge's MCP URL for the emitter named `mcp-events-bridge`:
 
 ```sh
@@ -107,7 +113,7 @@ Trigger a real event for the subscription (for example, send an email to the Res
 **Success:**
 
 - `serve` logs `[listen] agent hermes: ... [200] POST http://localhost:9901/mcp/events/webhook/<id>`;
-- `gateway.log` has `inbound message: platform=mcp_events user=mcp-events-bridge` and then `response ready`: the agent ran a session on the event. The bridge's MCP URL appears nowhere under `$HERMES_HOME` except `.env`.
+- `gateway.log` has `inbound message: platform=mcp_events user=mcp-events-bridge` and then `response ready`: the agent ran a session on the event. The bridge's MCP URL appears in no log or session under `$HERMES_HOME`, only in `.env` and `mcp_events_subscriptions.json`.
 
 To stop, ask Hermes to unsubscribe (`mcp_events_unsubscribe` with the subscription id). The bridge deletes the tunnel URL an hour after no subscription uses it.
 
