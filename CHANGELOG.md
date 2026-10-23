@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 (2026-10-23)
+
+Breaking, for clients that match on error code numbers, and for anyone relying on a `410` to end a subscription. Both changes follow [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415), the MCP Events proposal.
+
+### Changed
+
+- **Error codes are SEP-3415's** ([#37](https://github.com/hookdeck/mcp-events-bridge/issues/37), [#55](https://github.com/hookdeck/mcp-events-bridge/pull/55)): `NotFound` is `-32023`, `Forbidden` `-32024`, `ResourceExhausted` `-32025`, `Unsupported` `-32026` and `CallbackEndpointError` `-32027` (they were `-32011` to `-32015`). The `data` shapes are unchanged. `watch` still treats `-32011` as `NotFound`, so it works with older bridges.
+- **A `410` from a callback rejects that delivery only, and keeps the subscription** ([#29](https://github.com/hookdeck/mcp-events-bridge/issues/29), [#56](https://github.com/hookdeck/mcp-events-bridge/pull/56)). The bridge used to delete the subscription. A `410` still isn't retried; a receiver that has gone for good unsubscribes, or its subscription expires.
+- **`events/stream` answers `Unsupported`** (`{ feature: "deliveryMode", value: "push" }`), or `NotFound` for an unknown event name, instead of method not found: the bridge offers webhook and poll delivery, not push ([#55](https://github.com/hookdeck/mcp-events-bridge/pull/55)).
+- **Arguments too large to store answer `ResourceExhausted`** (`{ limit: "argumentsSize" }`), not `InvalidParams` ([#55](https://github.com/hookdeck/mcp-events-bridge/pull/55)).
+- **The Claude Code plugin runs 0.5.0.**
+
+### Fixed
+
+- **Docs:** how to set the plugin's MCP URL after skipping it ([#54](https://github.com/hookdeck/mcp-events-bridge/pull/54)); how the bridge conforms to SEP-3415, row by row ([#53](https://github.com/hookdeck/mcp-events-bridge/pull/53)); the transformation research ([#57](https://github.com/hookdeck/mcp-events-bridge/pull/57)); and the design for the next stage, where Event Gateway delivers each event itself and signs every attempt (`docs/ARCHITECTURE.md`).
+
 ## 0.4.0 (2026-10-09)
 
 ### Added
