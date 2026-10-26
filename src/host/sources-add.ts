@@ -31,10 +31,12 @@ function literal(value: unknown): string {
   throw new Error(`can't write ${typeof value} into the config`);
 }
 
-/** The `source({...})` call for bridge.config.ts, one option per line, `id` and `type` first. */
+/** The `source({...})` call for bridge.config.ts, one option per line: `id`, `type`, its credentials, then the rest. */
 export function sourceSnippet(options: SourceOptions): string {
   const { id, type, ...rest } = options;
-  const lines = Object.entries({ id, type, ...rest })
+  const credentialKeys = type === 'webhook' ? ['verification'] : Object.keys(SOURCE_TYPES[type as SourceTypeName].auth);
+  const credentials = Object.fromEntries(credentialKeys.filter((key) => key in rest).map((key) => [key, (rest as Record<string, unknown>)[key]]));
+  const lines = Object.entries({ id, type, ...credentials, ...rest })
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `  ${key}: ${literal(value)},`);
   return `source({\n${lines.join('\n')}\n})`;
