@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { Webhook } from 'standardwebhooks';
 
 export interface SignedHeaders {
@@ -6,14 +5,6 @@ export interface SignedHeaders {
   'webhook-timestamp': string;
   'webhook-signature': string;
 }
-
-/**
- * A new `webhook-id` for one delivered message: one event on one subscription.
- * SEP-3415 has the server generate it (high-entropy, letters, digits, `_` and
- * `-` only) and not derive it from `eventId`, which is the upstream's and is
- * shared by every subscription the event matches. Retries of the message keep it.
- */
-export const newMessageId = () => `msg_${randomBytes(16).toString('base64url')}`;
 
 /**
  * Builds Standard Webhooks headers for a body. With more than one secret the

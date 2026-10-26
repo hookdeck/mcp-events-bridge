@@ -148,8 +148,8 @@ export const SUBSCRIPTION_RETRY_RULE: Rule = {
   response_status_codes: ['>=300', '!410', '!413'],
 };
 
-/** Dedupe on the MCP event's eventId: per connection, so per subscription, as SEP-3415 scopes it. Best-effort, window of at most 1 hour. */
-export const EVENT_ID_DEDUPE_RULE = { type: 'deduplicate', include_fields: ['body.eventId'], window: 3_600_000 } satisfies Rule;
+/** Dedupe on the MCP event id. Best-effort, window of at most 1 hour. */
+export const WEBHOOK_ID_DEDUPE_RULE: Rule = { type: 'deduplicate', include_fields: ['headers.webhook-id'], window: 3_600_000 };
 
 /**
  * Event statuses, and which of them are settled.

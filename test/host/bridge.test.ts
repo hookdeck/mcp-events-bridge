@@ -135,7 +135,7 @@ describe('bridge server', () => {
     await client.close();
   });
 
-  it('delivers a Resend email end to end, with eventId equal to the svix-id', async () => {
+  it('delivers a Resend email end to end, with webhook-id equal to the svix-id', async () => {
     const { gateway, port, bridge } = await startBridge();
     const subscriber = await startSubscriber(port, { from: 'Sender@Example.com' });
     expect(bridge.store.list()).toHaveLength(1);

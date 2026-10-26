@@ -17,7 +17,7 @@ The verification challenge is answered by Event Gateway at the tunnel URL; the r
 
 Each delivery is a `POST` to `http://localhost:<port><path>` (plus any sub-path) with:
 
-- `webhook-id`: this delivery's message id, new for each event on each subscription and the same on every retry of it. **Dedupe on it**: delivery is at least once. It isn't the event's id: that's `eventId` in the body, which is the same on every subscription the event matches.
+- `webhook-id`: the event id. **Dedupe on it**: delivery is at least once.
 - `webhook-timestamp`, `webhook-signature`: [Standard Webhooks](https://www.standardwebhooks.com). The signature header carries **several** space-separated `v1,` entries (one is for Event Gateway's source); accept the request if **any** verifies with your secret, as standard libraries do. Reject timestamps more than 5 minutes old.
 - `X-MCP-Subscription-Id`: which subscription it's for, so you can pick the secret (or route by path instead).
 - Body: `{ "eventId", "name", "timestamp", "data", "cursor": null }`, at most 256 KiB.

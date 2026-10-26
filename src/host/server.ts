@@ -88,11 +88,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const hookdeck = options.hookdeck ?? new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const store = options.store ?? new EventGatewayStore(hookdeck);
   const loaded = await store.load();
-  log(
-    `loaded ${loaded.loaded} subscription(s) from Event Gateway` +
-      (loaded.upgraded ? `; ${loaded.upgraded} updated to dedupe by eventId` : '') +
-      (loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''),
-  );
+  log(`loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}`);
 
   const callbacks = new CallbackRegistry({
     hookdeck,

@@ -5,7 +5,7 @@ import { verifyHookdeckSignature } from './hookdeck-signature.js';
 import { topicSourceName } from './names.js';
 import type { InboundRequest } from './providers/types.js';
 import type { CallbackRegistry } from './callbacks.js';
-import { newMessageId, signStandardWebhook } from './sign.js';
+import { signStandardWebhook } from './sign.js';
 import type { SubscriptionRecord, SubscriptionStore } from './store.js';
 
 /*
@@ -148,10 +148,8 @@ export class Relay {
     if (callbackSecret) secrets.push(callbackSecret);
     const headers = {
       'content-type': 'application/json',
-      // Signed at the real time of publishing; `now` (injectable) only drives expiry and grace windows. A new
-      // webhook-id per subscription: Event Gateway's retries keep it, and the subscription connection drops a
-      // republish of the same event (after a partial failure) by its eventId.
-      ...signStandardWebhook(secrets, newMessageId(), body),
+      // Signed at the real time of publishing; `now` (injectable) only drives expiry and grace windows.
+      ...signStandardWebhook(secrets, eventId, body),
       'X-MCP-Subscription-Id': subscription.id,
     };
     return this.deps.hookdeck.publish(topicSourceName(subscription.name), headers, body);

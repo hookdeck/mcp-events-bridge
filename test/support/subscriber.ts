@@ -79,8 +79,6 @@ export class Subscriber {
   /** Secrets the receiver accepts: the current one plus a recently rotated-out one. */
   private accepted: Array<{ secret: string; until: number }> = [];
   private readonly seenIds = new Set<string>();
-  /** Each event's webhook-id, from its first delivery: one per message, so it differs from the eventId. */
-  readonly webhookIds = new Map<string, string>();
   private refreshTimer?: NodeJS.Timeout;
   private readonly callbackPath = `/mcp-events/${randomBytes(8).toString('hex')}`;
   private readonly log: (message: string) => void;
@@ -302,7 +300,7 @@ export class Subscriber {
     this.seenIds.add(webhookId);
 
     const event = body as unknown as McpEvent;
-    if (!this.webhookIds.has(event.eventId)) this.webhookIds.set(event.eventId, webhookId);
+    if (event.eventId !== webhookId) this.log(`warning: eventId ${event.eventId} does not match webhook-id ${webhookId}`);
     this.events.push(event);
     this.log(`event ${event.name} ${event.eventId}: ${JSON.stringify(event.data)}`);
     this.options.onEvent?.(event, req.headers);

@@ -1,4 +1,4 @@
-import { EVENT_ID_DEDUPE_RULE, HookdeckApiError, SUBSCRIPTION_RETRY_RULE, type Connection, type HookdeckClient } from './hookdeck.js';
+import { HookdeckApiError, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient } from './hookdeck.js';
 import { SUBSCRIPTION_PREFIX, subscriptionResourceName, topicSourceName } from './names.js';
 import {
   SubscriptionTooLargeError,
@@ -54,9 +54,6 @@ interface Metadata {
 
 const isHealthy = (d: SubscriptionInput['delivery']) => d.active && d.lastError === null && d.failedSince === null;
 
-const dedupesByEventId = (connection: Connection) =>
-  (connection.rules ?? []).some((r) => r.type === 'deduplicate' && r.include_fields?.join() === EVENT_ID_DEDUPE_RULE.include_fields.join());
-
 export class EventGatewayStore implements SubscriptionStore {
   private readonly records = new Map<string, SubscriptionRecord>();
   private readonly previousSecrets = new Map<string, { secret: string; expiresAt: string }>();
@@ -74,7 +71,6 @@ export class EventGatewayStore implements SubscriptionStore {
   async load() {
     this.records.clear();
     const unreadable: string[] = [];
-    const outdated: SubscriptionRecord[] = [];
     for (const connection of await this.hookdeck.listAllConnections()) {
       if (!connection.name.startsWith(SUBSCRIPTION_PREFIX)) continue;
       try {
@@ -83,18 +79,11 @@ export class EventGatewayStore implements SubscriptionStore {
         if (!secret) throw new Error('no signing secret');
         const record = this.decode(connection, secret);
         this.records.set(record.id, record);
-        if (!dedupesByEventId(connection)) outdated.push(record);
       } catch {
         unreadable.push(connection.name);
       }
     }
-    // Before 0.6.0, subscription connections deduped on headers.webhook-id, which is now new for every message.
-    // Rewritten with the current rules; one that fails is rewritten by its next refresh instead.
-    let upgraded = 0;
-    for (const record of outdated) {
-      await this.serialize(() => this.write(record)).then(() => upgraded++, () => {});
-    }
-    return { loaded: this.records.size, unreadable, upgraded };
+    return { loaded: this.records.size, unreadable };
   }
 
   get(id: string) {
@@ -160,7 +149,7 @@ export class EventGatewayStore implements SubscriptionStore {
         type: 'HTTP',
         config: { url: input.url, auth_type: 'CUSTOM_SIGNATURE', auth: { key: SECRET_CARRIER_HEADER, signing_secret: input.secret } },
       },
-      rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': input.id } }, EVENT_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
+      rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': input.id } }, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
     });
 
     if (input.previousSecret && input.previousSecretExpiresAt) {

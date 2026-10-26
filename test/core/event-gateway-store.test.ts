@@ -50,7 +50,7 @@ describe('EventGatewayStore', () => {
     });
     expect(connection.rules).toEqual([
       { type: 'filter', headers: { 'x-mcp-subscription-id': record.id } },
-      expect.objectContaining({ type: 'deduplicate', include_fields: ['body.eventId'] }),
+      expect.objectContaining({ type: 'deduplicate', include_fields: ['headers.webhook-id'] }),
       expect.objectContaining({ type: 'retry', response_status_codes: ['>=300', '!410', '!413'] }),
     ]);
   });
@@ -76,7 +76,7 @@ describe('EventGatewayStore', () => {
     const a = await store.put(input({ delivery: { active: false, lastError: 'http_5xx', failedSince: '2026-10-06T00:00:00.000Z' } }));
     const b = await store.put(input({ id: 'sub_ffffffffffffffffffffffffffffffff', name: 'issues.opened', arguments: {} }));
     const fresh = new EventGatewayStore(hookdeck);
-    expect(await fresh.load()).toEqual({ loaded: 2, unreadable: [], upgraded: 0 });
+    expect(await fresh.load()).toEqual({ loaded: 2, unreadable: [] });
     expect(fresh.get(a.id)).toEqual(a);
     expect(fresh.get(a.id)?.secret).toBe(SECRET);
     expect(fresh.list({ name: 'issues.opened' })).toEqual([b]);
@@ -101,20 +101,7 @@ describe('EventGatewayStore', () => {
     const { gateway, hookdeck, store } = setup();
     const record = await store.put(input());
     gateway.connections.get(record.connectionId)!.description = 'edited in the dashboard';
-    expect(await new EventGatewayStore(hookdeck).load()).toEqual({ loaded: 0, unreadable: ['mcp-sub-sub_0123456789abcdef0123456789abcdef'], upgraded: 0 });
-  });
-
-  it('updates subscriptions that dedupe on webhook-id (before 0.6.0) to dedupe on eventId, keeping everything else', async () => {
-    const { gateway, hookdeck, store } = setup();
-    const record = await store.put(input());
-    const connection = gateway.connections.get(record.connectionId)!;
-    const before = { description: connection.description, rules: connection.rules };
-    connection.rules = connection.rules.map((r) => ((r as { type: string }).type === 'deduplicate' ? { type: 'deduplicate', include_fields: ['headers.webhook-id'], window: 3_600_000 } : r));
-    const fresh = new EventGatewayStore(hookdeck);
-    expect(await fresh.load()).toEqual({ loaded: 1, unreadable: [], upgraded: 1 });
-    expect({ description: connection.description, rules: connection.rules }).toEqual(before);
-    expect(fresh.get(record.id)).toEqual(record);
-    expect((await new EventGatewayStore(hookdeck).load()).upgraded).toBe(0);
+    expect(await new EventGatewayStore(hookdeck).load()).toEqual({ loaded: 0, unreadable: ['mcp-sub-sub_0123456789abcdef0123456789abcdef'] });
   });
 
   it('ignores connections that are not subscriptions', async () => {

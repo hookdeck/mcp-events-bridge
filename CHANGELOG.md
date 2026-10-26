@@ -11,7 +11,6 @@
 
 ### Changed
 
-- **`webhook-id` is new for each delivered message** (one event on one subscription), as [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415) has required since 23 Oct; it was the event's `eventId`. Receivers that dedupe by `webhook-id` keep working. One that read the event's id from `webhook-id` reads `eventId` from the body instead. Event Gateway now drops a repeated event on a subscription by its `eventId`, and `serve` updates subscriptions made before 0.6.0 when it starts (`loaded 3 subscription(s) from Event Gateway; 3 updated to dedupe by eventId`).
 - **`setup` and `serve` print the `/mcp` endpoint** with the header to send, and the URL with the secret in it only while the URL form is on.
 - **The Hermes Agent guide covers released Hermes,** v0.22.5 and later, the first release with MCP Events (experimental in Hermes). It replaces the steps for Hermes's earlier pull request: the bridge is an MCP server in Hermes's `config.yaml` with `events: true` and the secret in an `Authorization: Bearer` header, callbacks go to Hermes's webhook listener through a tunnel URL on port 8644, and Hermes asks you to approve each subscription. Claude Code's guide uses `--header` too.
 

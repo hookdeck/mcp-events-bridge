@@ -52,7 +52,7 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       instance enabled (FILLS_WEBHOOK_SECRET; see bridge.config.ts)
  *                                                       and setup run with it. Plays the trading server: a correctly
  *                                                       signed fill reaches a fills.order.filled subscriber with
- *                                                       eventId = x-delivery-id; a wrongly signed fill and one
+ *                                                       webhook-id = x-delivery-id; a wrongly signed fill and one
  *                                                       for another symbol don't
  *   E2E_EXTENDED=1 ...                                  also: a failed publish retried by Event
  *                                                       Gateway (local only), a duplicate provider
@@ -131,7 +131,7 @@ interface TestEvents {
   matching: Record<string, unknown>;
   /** For check names: "an email", "a fill". */
   a: string;
-  /** The provider header that becomes the event's eventId. */
+  /** The provider header that becomes the delivery's webhook-id. */
   idHeader: string;
   idCheck: string;
   filterCheck: string;
@@ -152,7 +152,7 @@ function emailEvents(config: Awaited<ReturnType<typeof loadConfig>>, run: string
     matching: { from },
     a: 'an email',
     idHeader: 'svix-id',
-    idCheck: 'eventId equals the Resend svix-id',
+    idCheck: 'webhook-id equals the Resend svix-id',
     filterCheck: 'from filter drops other senders',
     tag: (key) => `e2e ${run}: ${key}`,
     send: (subject) => sendEmail(from, subject),
@@ -181,7 +181,7 @@ async function fillEvents(config: Awaited<ReturnType<typeof loadConfig>>, hookde
     matching: { symbol: 'AAPL' },
     a: 'a fill',
     idHeader: 'x-delivery-id',
-    idCheck: "eventId equals the sender's x-delivery-id",
+    idCheck: "webhook-id equals the sender's x-delivery-id",
     filterCheck: 'symbol filter drops other symbols',
     tag: (key) => `e2e-${run}-${key.replace(/[^A-Za-z0-9]+/g, '-')}`,
     send: (id) => sendFill(id, 'AAPL'),
@@ -373,22 +373,20 @@ async function main() {
   if (!received) return;
 
   // Event Gateway's header search can lag a new request by a few seconds; retry for up to a minute.
-  const eventId = main.events.find((e) => events.tagOf(e.data) === tag)!.eventId;
+  const webhookId = main.events.find((e) => events.tagOf(e.data) === tag)!.eventId;
   const source = (await hookdeck.listSources({ name: providerSourceName(events.providerId) })).models[0]!;
   const request = await until(
-    async () => (await hookdeck.listRequests({ source_id: source.id, headers: { [events.idHeader]: eventId }, limit: 1 })).models[0],
+    async () => (await hookdeck.listRequests({ source_id: source.id, headers: { [events.idHeader]: webhookId }, limit: 1 })).models[0],
     60_000,
     3000,
   );
-  record(events.idCheck, Boolean(request), eventId);
-  const webhookId = main.webhookIds.get(eventId) ?? '';
-  record('webhook-id is generated per message, not the eventId', /^msg_[A-Za-z0-9_-]+$/.test(webhookId) && webhookId !== eventId, webhookId);
+  record(events.idCheck, Boolean(request), webhookId);
 
   const client = new Client({ name: 'e2e', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
   await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
   type ToolResult = { structuredContent?: { data?: Record<string, unknown> } };
   const result = (await until(async () => {
-    const r = (await client.callTool({ name: 'get_event', arguments: { name: events.event, eventId } })) as ToolResult;
+    const r = (await client.callTool({ name: 'get_event', arguments: { name: events.event, eventId: webhookId } })) as ToolResult;
     return r.structuredContent?.data ? r : undefined;
   }, 60_000, 3000)) as ToolResult | undefined;
   record('get_event returns the summary', events.tagOf(result?.structuredContent?.data) === tag, events.tagOf(result?.structuredContent?.data) ?? 'none');
@@ -643,7 +641,7 @@ async function webhookFills(ctx: { hookdeck: HookdeckClient; subscriber: Subscri
   // As long as the email checks allow: once, Event Gateway queued a fill for ~80s before its first attempt to the CLI.
   const event = await until(() => ctx.subscriber!.events.find((e) => e.eventId === good), 240_000);
   record('signed fill delivered to the order.filled subscriber (fills.order.filled)', Boolean(event), event ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out');
-  record('eventId equals the sender\'s x-delivery-id, and data is the body', event?.data.symbol === 'AAPL' && event.data.id === good, JSON.stringify(event?.data ?? null));
+  record('webhook-id equals the sender\'s x-delivery-id, and data is the body', event?.data.symbol === 'AAPL' && event.data.id === good, JSON.stringify(event?.data ?? null));
   await wait(30_000);
   const leaked = ctx.subscriber.events.filter((e) => e.eventId === bad || e.eventId === other).map((e) => e.eventId);
   record('wrongly signed fill and other symbol not delivered', leaked.length === 0, leaked.length ? leaked.join(', ') : `sender got ${statuses.join(', ')}`);
