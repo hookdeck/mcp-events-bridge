@@ -48,7 +48,7 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *                                                       the bridge recovering provider events that arrived while
  *                                                       its own `listen` was down; and unused URLs deleted
  *                                                       (grace period 90s locally)
- *   E2E_WEBHOOK=1 ...                                   also: the generic webhook provider. Needs the `fills`
+ *   E2E_WEBHOOK=1 ...                                   also: a webhook source. Needs the `fills`
  *                                                       instance enabled (FILLS_WEBHOOK_SECRET; see bridge.config.ts)
  *                                                       and setup run with it. Plays the trading server: a correctly
  *                                                       signed fill reaches a fills.order.filled subscriber with

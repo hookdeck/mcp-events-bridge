@@ -30,7 +30,7 @@ The header carries `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
 
 ## 2. Ask for events
 
-Name the event and its filter, and ask Claude to keep waiting. The examples here use the GitHub provider, set up for the repository; ask "what events can the bridge give me?" to see the events and filters your bridge offers.
+Name the event and its filter, and ask Claude to keep waiting. The examples here use the GitHub source, set up for the repository; ask "what events can the bridge give me?" to see the events and filters your bridge offers.
 
 > Wait for new comments on issues in `<owner>/<repo>` (github.issue_comment, repository `<owner>/<repo>`) and summarize each one.
 
