@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { addWatch, projectPaths, pruneState, readWatchList, removeWatches, statePathFor, updateWatchList, watchKey, watchList, type Watch } from './watch-list.js';
-import { isBridgeError, isFatal, parseFilters, redactUrl, watch, watchUrl, type Poll } from './watch.js';
+import { isBridgeError, isFatal, parseFilters, redactUrl, watch, watchHeaders, watchUrl, type Poll } from './watch.js';
 
 /*
  * The `watch` and `watches` commands. `watch` polls the bridge and prints one JSON line per event;
@@ -31,8 +31,9 @@ Options:
   --store <dir> --project <dir>
                           the list and state for a project, kept under <store>/projects/
   --url <MCP URL>         the bridge's MCP URL. Default with event names or --list: BRIDGE_MCP_URL,
-                          else built from BRIDGE_PUBLIC_URL (or the local port) and BRIDGE_MCP_SECRET,
-                          read from the environment or .env
+                          else BRIDGE_PUBLIC_URL (or the local port) plus /mcp, read from the
+                          environment or .env. For a URL ending /mcp, BRIDGE_MCP_SECRET is sent as
+                          Authorization: Bearer; a URL ending /mcp/<secret> carries it itself
   --url-file <file>       a file holding the MCP URL, read when connecting, else BRIDGE_MCP_URL
                           (default with --store: <store>/mcp-url; .env isn't read)`;
 
@@ -99,7 +100,8 @@ async function bridgePoller(url: () => string, version: string): Promise<{ poll:
   const connect = () =>
     (client ??= (async () => {
       const c = new Client({ name: 'mcp-events-bridge-watch', version }, { versionNegotiation: { mode: 'auto' } });
-      await c.connect(new StreamableHTTPClientTransport(new URL(url())));
+      const current = url();
+      await c.connect(new StreamableHTTPClientTransport(new URL(current), { requestInit: { headers: watchHeaders(current, process.env) } }));
       return c;
     })());
   const poll: Poll = async (request, signal) => {

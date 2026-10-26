@@ -217,7 +217,8 @@ describe('bridge setup', () => {
     expect(generated.mcp.generated).toBe(true);
     expect(generated.mcp.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(generated.mcp.url).toBe(`http://127.0.0.1:8080/mcp/${generated.mcp.secret}`);
+    expect(generated.mcp.endpoint).toBe('http://127.0.0.1:8080/mcp');
     const configured = await setup({ inbound: 'http', publicUrl: 'https://bridge.example.com' }, { ...environment, BRIDGE_MCP_SECRET: 'abc' }).run();
-    expect(configured.mcp).toEqual({ secret: 'abc', generated: false, url: 'https://bridge.example.com/mcp/abc' });
+    expect(configured.mcp).toEqual({ secret: 'abc', generated: false, endpoint: 'https://bridge.example.com/mcp', url: 'https://bridge.example.com/mcp/abc' });
   });
 });

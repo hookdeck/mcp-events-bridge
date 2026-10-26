@@ -4,7 +4,7 @@
 
 **Status: experimental.** Released Hermes (v0.21.5 and earlier) has no MCP Events support. It's in a draft pull request, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908). These steps install that pull request at commit `8813311330`, the version tested with this bridge. The pull request may change or may not be merged, and these steps will change with it.
 
-The bridge is configured in Hermes as a **named emitter**: its MCP URL, which contains `BRIDGE_MCP_SECRET`, is set in Hermes's `.env`, and the agent, its sessions and its logs see only the name. Hermes also saves the URL with each subscription, in `$HERMES_HOME/mcp_events_subscriptions.json`, a file other users on the machine can read, so keep `$HERMES_HOME` private (step 4). (Earlier commits took the URL in the tool call, which sent the secret to the model; [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909) and fixed there.)
+The bridge is configured in Hermes as a **named emitter**: its MCP endpoint and `BRIDGE_MCP_SECRET`, sent as an `Authorization: Bearer` header, are set in Hermes's `.env`, and the agent, its sessions and its logs see only the name. Hermes saves the endpoint with each subscription, in `$HERMES_HOME/mcp_events_subscriptions.json`, a file other users on the machine can read; with the secret in a header, that file holds none. (Earlier commits took the URL in the tool call, which sent the secret to the model; [raised on the pull request](https://github.com/NousResearch/hermes-agent/pull/132908#issuecomment-6047465909) and fixed there.)
 
 ## 1. Install Hermes from the pull request
 
@@ -48,7 +48,8 @@ Run it from the bridge's directory, so `BRIDGE_MCP_SECRET` comes from its `.env`
 
 ```sh
 set -a; . ./.env; set +a
-npx -y @modelcontextprotocol/inspector --cli "http://127.0.0.1:8080/mcp/$BRIDGE_MCP_SECRET" --transport http \
+npx -y @modelcontextprotocol/inspector --cli http://127.0.0.1:8080/mcp --transport http \
+  --header "Authorization: Bearer $BRIDGE_MCP_SECRET" \
   --method tools/call --tool-name create_tunnel_url \
   --tool-arg agent=hermes --tool-arg name=base --tool-arg port=9901 --tool-arg path=/
 ```
@@ -57,19 +58,16 @@ npx -y @modelcontextprotocol/inspector --cli "http://127.0.0.1:8080/mcp/$BRIDGE_
 
 ## 4. Configure Hermes
 
-Keep `$HERMES_HOME` readable by you alone: Hermes saves the bridge's MCP URL, secret included, in a file there that it creates readable by everyone (`mcp_events_subscriptions.json`).
-
-```sh
-chmod 700 "${HERMES_HOME:-$HOME/.hermes}"
-```
-
-In `$HERMES_HOME/.env` (by default `~/.hermes/.env`), the model provider's key, a webhook secret for Hermes, and the bridge's MCP URL for the emitter named `mcp-events-bridge`:
+In `$HERMES_HOME/.env` (by default `~/.hermes/.env`), the model provider's key, a webhook secret for Hermes, and, for the emitter named `mcp-events-bridge`, the bridge's MCP endpoint and its secret as a header (a JSON object, in single quotes):
 
 ```sh
 ANTHROPIC_API_KEY=...
 MCP_EVENTS_WEBHOOK_SECRET=whsec_...   # generate: echo "whsec_$(openssl rand -base64 32)"
-MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL=http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>
+MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL=http://127.0.0.1:8080/mcp
+MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_HEADERS='{"Authorization":"Bearer <BRIDGE_MCP_SECRET>"}'
 ```
+
+Keep the secret in the header rather than the URL (`/mcp/<BRIDGE_MCP_SECRET>` also works): Hermes saves each subscription's URL in `mcp_events_subscriptions.json`, which it creates readable by every user on the machine, but not its headers. If you do put the secret in the URL, make `$HERMES_HOME` private with `chmod 700`.
 
 In `$HERMES_HOME/config.yaml`:
 
@@ -83,7 +81,7 @@ mcp_events:
   public_base_url: "https://hkdk.events/..."   # the tunnel URL from step 3
   trusted_emitters: ["127.0.0.1"]              # the bridge is on loopback, which Hermes refuses otherwise
   emitters:
-    mcp-events-bridge: {}                      # its URL is in .env (MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL)
+    mcp-events-bridge: {}                      # its URL and headers are in .env (MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_*)
 ```
 
 ## 5. Start the Hermes gateway
@@ -113,7 +111,7 @@ Trigger a real event for the subscription (for example, send an email to the Res
 **Success:**
 
 - `serve` logs `[listen] agent hermes: ... [200] POST http://localhost:9901/mcp/events/webhook/<id>`;
-- `gateway.log` has `inbound message: platform=mcp_events user=mcp-events-bridge` and then `response ready`: the agent ran a session on the event. The bridge's MCP URL appears in no log or session under `$HERMES_HOME`, only in `.env` and `mcp_events_subscriptions.json`.
+- `gateway.log` has `inbound message: platform=mcp_events user=mcp-events-bridge` and then `response ready`: the agent ran a session on the event. `BRIDGE_MCP_SECRET` appears nowhere under `$HERMES_HOME` but `.env`: `mcp_events_subscriptions.json` has `"emitter_url": "http://127.0.0.1:8080/mcp"`.
 
 To stop, ask Hermes to unsubscribe (`mcp_events_unsubscribe` with the subscription id). The bridge deletes the tunnel URL an hour after no subscription uses it.
 
@@ -126,4 +124,5 @@ To stop, ask Hermes to unsubscribe (`mcp_events_unsubscribe` with the subscripti
 | Subscribe fails with `Unknown event` | Use a name from `events/list`, such as `resend.email.received` |
 | Deliveries reach Hermes but nothing runs, with "Unauthorized user" in `gateway.log` | An older commit of the pull request: check out `8813311330` |
 | Subscribe says the emitter isn't configured | Check the name under `mcp_events.emitters` and the `.env` variable: the name uppercased, with `-` as `_` (`mcp-events-bridge` is `MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_URL`) |
+| Subscribe fails, and `serve` logs nothing for it (the bridge answered `401`) | `MCP_EVENTS_EMITTER_MCP_EVENTS_BRIDGE_HEADERS` must be a JSON object in single quotes, `'{"Authorization":"Bearer <BRIDGE_MCP_SECRET>"}'`, with the secret from the bridge's `.env` |
 | The gateway can't bind its port | Pick another port, in both the tunnel URL (step 3) and `mcp_events.port` |

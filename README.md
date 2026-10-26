@@ -107,7 +107,7 @@ You need:
 
 ## Connect ChatGPT
 
-With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Create MCP App, paste `https://<your bridge>/mcp/<BRIDGE_MCP_SECRET>`, and choose No Authentication. Then, in a Work chat, ask to be told about new events, for example emails from a particular sender. ChatGPT subscribes and sets up a monitoring task:
+With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Create MCP App, paste `https://<your bridge>/mcp/<BRIDGE_MCP_SECRET>`, and choose No Authentication. ChatGPT can't send an `Authorization` header (it offers only OAuth or no authentication), so it takes the secret in the URL. Then, in a Work chat, ask to be told about new events, for example emails from a particular sender. ChatGPT subscribes and sets up a monitoring task:
 
 ![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email notifications" task that is Monitoring](docs/images/chatgpt-subscribe.png)
 
@@ -115,7 +115,7 @@ When an event arrives, the task runs with it, as in the screenshot at the top.
 
 ChatGPT keeps the list of events it can subscribe to from when you added the plugin. After you upgrade the bridge or add a provider, refresh the plugin in Plugins, or ChatGPT can't subscribe to the new or renamed events (it may still list them, since that call goes to the bridge). Then ask it to subscribe again.
 
-The MCP URL is a credential: anyone with it can use the bridge. Keep it private (see [Security and limitations](#security-and-limitations)).
+That URL is a credential: anyone with it can use the bridge. Keep it private (see [Security and limitations](#security-and-limitations)).
 
 ## Connect Claude Code
 
@@ -264,7 +264,8 @@ Every deployment needs these, whichever providers it uses.
 | --- | --- | --- |
 | `HOOKDECK_API_KEY` | Yes | Project API key, for the Event Gateway API and the Publish API |
 | `HOOKDECK_SIGNING_SECRET` | Yes | Verifies Event Gateway's signature on requests to the bridge |
-| `BRIDGE_MCP_SECRET` | To run `serve` | Secret path segment of the MCP URL; `setup` generates one |
+| `BRIDGE_MCP_SECRET` | To run `serve` | The MCP endpoint's secret: sent as `Authorization: Bearer <secret>` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can't send a header, such as ChatGPT. `setup` generates one |
+| `BRIDGE_MCP_SECRET_URL` | No | `false` turns the URL form (`/mcp/<secret>`) off, leaving the header; for a bridge no ChatGPT connects to. Default `true` |
 | `BRIDGE_INBOUND` | No | `cli` (through `hookdeck listen`) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
 | `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
 | `BRIDGE_PORT` | No | Listener port (default: `PORT`, else 8080) |
@@ -315,8 +316,10 @@ Each `webhook()` instance's credentials, named as its `env()` references name th
 For MCP clients that can't receive webhooks, or don't support MCP Events yet. A client that implements MCP Events poll mode calls `events/poll`; any other MCP client, such as Claude Code, Codex or Cursor, calls the `poll_events` and `wait_for_event` tools, which take the same arguments and cursor:
 
 ```sh
-claude mcp add --transport http events-bridge 'https://<bridge>/mcp/<BRIDGE_MCP_SECRET>'
+claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"
 ```
+
+Any MCP client that can send a header connects the same way: the `/mcp` endpoint, with `BRIDGE_MCP_SECRET` as a bearer token.
 
 Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp-events-bridge/references/claude-code.md)), for example "wait for fills.order.filled for AAPL and tell me about each fill". It calls `wait_for_event`, which returns as soon as there are events (or after up to 50 seconds with none), and calls it again with the `cursor` it returned.
 
@@ -345,7 +348,7 @@ In Claude Code, install the plugin, which runs `watch` for the whole session and
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
-`watch` also follows a watch list file that changes while it runs (`--list`, edited with `mcp-events-bridge watches add|remove|list`), and resumes where it left off. It reads the MCP URL from `--url`, `BRIDGE_MCP_URL`, or `BRIDGE_MCP_SECRET` with `BRIDGE_PUBLIC_URL` (or the local port), and retries when the bridge can't be reached. `watch --help` lists the options.
+`watch` also follows a watch list file that changes while it runs (`--list`, edited with `mcp-events-bridge watches add|remove|list`), and resumes where it left off. It reads the MCP URL from `--url` or `BRIDGE_MCP_URL`, else uses `BRIDGE_PUBLIC_URL` (or the local port) plus `/mcp`; to a URL ending `/mcp` it sends `BRIDGE_MCP_SECRET` as `Authorization: Bearer`. It retries when the bridge can't be reached. `watch --help` lists the options.
 
 ## Local agents
 
@@ -364,11 +367,11 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) works with a local bridge through a tunnel URL: it subscribes, and each event wakes it in its own session. Released Hermes doesn't support MCP Events; support is in a draft pull request that may or may not be merged, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908), which includes fixes from running it against this bridge.
 
-[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. Hermes keeps the bridge's MCP URL in its `.env` as a named emitter, so the URL's secret stays out of the model's context and Hermes's logs.
+[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. Hermes keeps the bridge's endpoint and secret (sent as an `Authorization: Bearer` header) in its `.env` as a named emitter, so the secret stays out of the model's context, Hermes's logs and its subscriptions file.
 
 ## Security and limitations
 
-- **The MCP URL is a credential.** One secret URL authenticates one owner. It's redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned.
+- **The MCP secret is a credential.** `BRIDGE_MCP_SECRET` authenticates one owner, sent as `Authorization: Bearer` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can only take a URL, such as ChatGPT. Prefer the header where the client supports it: a URL is easily logged or saved in a client's files, a header much less so. A bridge no ChatGPT connects to can turn the URL form off (`BRIDGE_MCP_SECRET_URL=false`). The secret is redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned, for ChatGPT without a secret in the URL.
 - **The Claude Code plugin keeps a copy of the URL on disk.** Claude Code keeps it in secure storage, but plugin monitors can't read that, so a session-start hook writes it to `~/.claude/plugins/data/mcp-events-bridge-hookdeck/mcp-url`, readable only by you. Uninstalling the plugin deletes that directory.
 - **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first. Generic webhooks have no unverified option, and the bridge relays only requests Event Gateway marked as verified.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.

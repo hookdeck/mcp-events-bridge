@@ -37,7 +37,8 @@ export interface SetupReport {
   }>;
   notifications: { source: string; connection: string };
   triggers: string[];
-  mcp: { secret: string; generated: boolean; url: string };
+  /** `endpoint` takes the secret as `Authorization: Bearer`; `url` carries it in the path. */
+  mcp: { secret: string; generated: boolean; endpoint: string; url: string };
 }
 
 /**
@@ -237,9 +238,15 @@ async function setupNotifications(deps: SetupDeps) {
   return { notifications: { source: NOTIFICATIONS_SOURCE, connection: connectionName }, triggers: triggers.map((t) => t.name) };
 }
 
-export function mcpUrl(config: ResolvedConfig, secret: string): string {
+/** The MCP endpoint, taking the secret as `Authorization: Bearer`. */
+export function mcpEndpoint(config: ResolvedConfig): string {
   const base = config.inbound === 'http' && config.publicUrl ? config.publicUrl : `http://127.0.0.1:${config.port}`;
-  return `${base}/mcp/${secret}`;
+  return `${base}/mcp`;
+}
+
+/** The MCP URL with the secret in it, for clients that can't send a header (ChatGPT). */
+export function mcpUrl(config: ResolvedConfig, secret: string): string {
+  return `${mcpEndpoint(config)}/${secret}`;
 }
 
 export async function runSetup(deps: SetupDeps): Promise<SetupReport> {
@@ -248,5 +255,5 @@ export async function runSetup(deps: SetupDeps): Promise<SetupReport> {
   const { notifications, triggers } = await setupNotifications(deps);
   const generated = !deps.config.auth.mcpSecret;
   const secret = deps.config.auth.mcpSecret ?? randomBytes(32).toString('base64url');
-  return { providers, notifications, triggers, mcp: { secret, generated, url: mcpUrl(deps.config, secret) } };
+  return { providers, notifications, triggers, mcp: { secret, generated, endpoint: mcpEndpoint(deps.config), url: mcpUrl(deps.config, secret) } };
 }

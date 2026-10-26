@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The MCP endpoint takes `BRIDGE_MCP_SECRET` as `Authorization: Bearer`,** at `https://<bridge>/mcp`, so the secret stays out of URLs: out of request logs, and out of the client files that store URLs (Hermes saves each subscription's URL in a file other users can read). Claude Code: `claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`. The URL form, `/mcp/<secret>`, still works, for ChatGPT, which can't send a header; `BRIDGE_MCP_SECRET_URL=false` turns it off. A missing or wrong token gets `401`. See [Security and limitations](README.md#security-and-limitations).
+- **`watch` sends the secret as a bearer token** to a URL ending `/mcp`, and builds that form by default from `BRIDGE_PUBLIC_URL` (or the local port) and `BRIDGE_MCP_SECRET`. A URL with the secret in it still works.
+
+### Changed
+
+- **`setup` and `serve` print the `/mcp` endpoint** with the header to send, and the URL with the secret in it only while the URL form is on.
+- **The Hermes Agent guide sends the secret as a header** (`MCP_EVENTS_EMITTER_<NAME>_HEADERS`), so Hermes's subscriptions file holds no secret. Claude Code's guide uses `--header` too.
+
 ## 0.5.0 (2026-10-23)
 
 Breaking, for clients that match on error code numbers, and for anyone relying on a `410` to end a subscription. Both changes follow [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415), the MCP Events proposal.

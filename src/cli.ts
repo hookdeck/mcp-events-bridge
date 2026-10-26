@@ -7,7 +7,7 @@ import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
 import { providerSourceName } from './core/names.js';
 import { webhook, type WebhookOptions } from './core/providers/webhook.js';
-import { ensureSource, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
+import { ensureSource, mcpEndpoint, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
@@ -94,7 +94,8 @@ async function setup(configFile: string | undefined) {
     console.log(`\nGenerated an MCP secret. Set this line ${where} before running serve, and keep it private (the URL is a credential):`);
     console.log(`BRIDGE_MCP_SECRET=${report.mcp.secret}`);
   }
-  console.log(`\nMCP URL:\n  ${report.mcp.url}`);
+  console.log(`\nMCP endpoint, with the header Authorization: Bearer <BRIDGE_MCP_SECRET>:\n  ${report.mcp.endpoint}`);
+  if (config.auth.secretUrl) console.log(`MCP URL, with the secret in it, for clients that can't send a header (ChatGPT):\n  ${report.mcp.url}`);
 
   const incomplete = missingCredentialsError(report);
   if (incomplete) {
@@ -155,7 +156,10 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
       console.log(`[bridge] --no-listen: forward events yourself with: hookdeck ${listenArgs(config, port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     }
   }
-  console.log(`[bridge] MCP endpoint: ${mcpUrl(config, '<BRIDGE_MCP_SECRET>')}`);
+  console.log(
+    `[bridge] MCP endpoint: ${mcpEndpoint(config)} with Authorization: Bearer <BRIDGE_MCP_SECRET>` +
+      (config.auth.secretUrl ? `, or ${mcpUrl(config, '<BRIDGE_MCP_SECRET>')}` : ''),
+  );
 }
 
 function loadDotEnv() {

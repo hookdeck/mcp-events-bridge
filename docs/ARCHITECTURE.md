@@ -33,7 +33,7 @@ Non-goals for now:
 
 - **Wrapping provider APIs as tools.** Vendors' own MCP servers do that. Resend's already lists and reads inbound emails. The bridge supplies events only.
 - **Hosting the bridge for other people.** That's the multi-tenant product and a separate decision.
-- **A required identity provider or tunnel service.** Authentication starts with a secret URL; OAuth and tunnels are optional (see "Authentication").
+- **A required identity provider or tunnel service.** Authentication starts with a shared secret, as a bearer token or in the URL; OAuth and tunnels are optional (see "Authentication").
 
 ## Mental model
 
@@ -452,12 +452,17 @@ Single tenant: one deployment, one owner. Tiers, from least friction:
 
 | Tier | How ChatGPT (or any MCP client) connects | Extra service | Stage |
 | --- | --- | --- | --- |
-| **1. Secret URL** (default) | `https://<bridge>/mcp/<secret>`, with "No Authentication" in ChatGPT | None | 5 |
+| **1. Shared secret** (default) | `https://<bridge>/mcp` with `Authorization: Bearer <secret>`; or, for a client that can't send a header, the secret in the URL, `https://<bridge>/mcp/<secret>`, with "No Authentication" in ChatGPT | None | 5 (URL), 26 Oct (header) |
 | **2. Built-in single-user OAuth** | `https://<bridge>/mcp`; the bridge is its own authorization server, and the owner approves once with an admin password | None | 7 |
 | **3. Bring your own identity provider** | `https://<bridge>/mcp`; tokens from the provider, verified against its published keys | Yes, optional | 7 |
 | Optional: OpenAI Secure MCP Tunnel | For private-network deployments; `tunnel-client` beside the bridge | Yes, optional | 7 |
 
-**Secret URL.** `BRIDGE_MCP_SECRET` should hold at least 32 random bytes, base64url (the generated one does; the bridge doesn't enforce it). If it's unset, `bridge setup` generates one and says where to set it (for example `fly secrets set`), then prints the full MCP URL to paste into ChatGPT. The URL is a credential: the bridge redacts the secret segment in its own logs and compares it in constant time. To rotate it, change `BRIDGE_MCP_SECRET` and redeploy (ChatGPT then needs the new URL); a `setup --rotate-mcp-secret` helper is planned. Every caller with the URL is the deployment's owner, so there is one principal, `owner`.
+**Shared secret.** `BRIDGE_MCP_SECRET` should hold at least 32 random bytes, base64url (the generated one does; the bridge doesn't enforce it). If it's unset, `bridge setup` generates one and says where to set it (for example `fly secrets set`), then prints the `/mcp` endpoint and, for ChatGPT, the full MCP URL. Clients send it one of two ways, both compared in constant time:
+
+- **`Authorization: Bearer <secret>` to `/mcp`** (26 Oct), the way to use wherever the client can send a header: Claude Code (`--header`, or `headers` with `${VAR}` in `.mcp.json`), Hermes (`MCP_EVENTS_EMITTER_<NAME>_HEADERS`), and `watch`. A header stays out of URLs, so out of request logs and client files that store URLs: Hermes, for one, saves each subscription's URL in a file anyone on the machine can read. The MCP authorization spec requires the `Authorization` header for access tokens and forbids them in the query string; this static secret isn't an OAuth access token, but the reasoning is the same. A missing or wrong token gets `401` with `WWW-Authenticate: Bearer realm="mcp-events-bridge"` and a hint, as the Hookdeck CRM's MCP server does.
+- **In the URL, `/mcp/<secret>`**, for clients that can take only a URL. ChatGPT is one: it offers only OAuth or no authentication, and "can't present custom API keys" (OpenAI's authentication docs, checked 26 Oct). Claude's custom connectors can send a fixed header, but only in a beta for some organizations. The bridge redacts the secret segment in its own logs; a wrong one gets `404`. `BRIDGE_MCP_SECRET_URL=false` (or `auth.secretUrl: false`) turns this form off for a bridge no ChatGPT connects to.
+
+To rotate the secret, change `BRIDGE_MCP_SECRET` and redeploy (ChatGPT then needs the new URL); a `setup --rotate-mcp-secret` helper is planned. Every caller with the secret is the deployment's owner, so there is one principal, `owner`. Built-in OAuth is what takes ChatGPT off the secret URL.
 
 **Built-in OAuth.** For real tokens without a third party: authorization code with PKCE `S256`, the `resource` parameter copied into the token audience, ChatGPT's redirect URIs allowlisted, and client registration by CIMD (Client ID Metadata Documents) or dynamic registration. Built on a maintained library rather than hand-written; which one supports CIMD and resource indicators is still to check. The token subject becomes the principal.
 
@@ -467,7 +472,7 @@ Single tenant: one deployment, one owner. Tiers, from least friction:
 
 One service per deployment:
 
-- **One HTTP listener** (`BRIDGE_PORT`): `POST /inbound/<instance id>` (Hookdeck-signed only, bodies up to 10 MiB, else `413`; runs the relay; `200` or `5xx`) and the MCP endpoint at `/mcp/<secret>` (or `/mcp` with OAuth): Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. Deployed, it's public; on a laptop it binds to `127.0.0.1`.
+- **One HTTP listener** (`BRIDGE_PORT`): `POST /inbound/<instance id>` (Hookdeck-signed only, bodies up to 10 MiB, else `413`; runs the relay; `200` or `5xx`) and the MCP endpoint at `/mcp` (with the secret as a bearer token, or later OAuth) and `/mcp/<secret>`: Streamable HTTP, stateless per the 2026-07-28 revision, as in `mcp-events-outpost-demo`. Deployed, it's public; on a laptop it binds to `127.0.0.1`.
 - **The subscription index:** in memory, loaded from Event Gateway at startup (see "Data model").
 - **The sweeper:** expires subscriptions and deletes their connections and destinations, and deletes tunnel URLs no subscription has used for an hour.
 - **With CLI inbound, `hookdeck listen`:** one process for the provider and notification sources, and one per local agent port, supervised and restarted by the bridge, with recovery after each reconnect (see "Local agents and the bridge on a laptop").
@@ -498,7 +503,7 @@ src/
     poll.ts             events/poll: a proxy to Event Gateway's request listing, with the cursor as a position in it
   host/
     callback-transport.ts  CallbackTransport over node:http(s) with a pinned, public-only DNS lookup
-    server.ts           HTTP listener: inbound routes and the MCP endpoint (secret-URL check)
+    server.ts           HTTP listener: inbound routes and the MCP endpoint (the secret, as a bearer token or in the URL)
     cli-listen.ts       logs the CLI in; supervises `hookdeck listen` processes (restart, "Connected")
     local-runtime.ts    a laptop bridge's listen processes: inbound with recovery, local agents with retries
     load-config.ts      finds and loads bridge.config.ts (TypeScript through tsx)
@@ -771,7 +776,7 @@ Secrets and per-host values, referenced from `bridge.config.ts` with `env()`:
 ## Security
 
 - The inbound route accepts only Hookdeck-signed requests.
-- The MCP endpoint is protected by the secret URL by default (see "Authentication"). The URL is a credential: it's redacted from the bridge's logs and can be rotated. OAuth tiers give per-request tokens instead. On a laptop the listener binds to `127.0.0.1`.
+- The MCP endpoint is protected by a shared secret (see "Authentication"), sent as a bearer token or, for ChatGPT, in the URL. It's a credential: it's redacted from the bridge's logs and can be rotated. OAuth tiers give per-request tokens instead. On a laptop the listener binds to `127.0.0.1`.
 - Topic sources are `PUBLISH_API`, so only holders of the project API key can publish to them.
 - Callbacks must be `https` and resolve only to public addresses, checked at subscribe, with the challenge sent over a pinned connection that never follows redirects. Event Gateway makes the deliveries. A host allowlist is planned.
 - A local agent's tunnel URL only passes requests signed with its source's secret, which only the bridge holds; the agent's own secret reaches the bridge through `events/subscribe`, never a tool.
@@ -868,7 +873,7 @@ Status values: **Conforms**, **Gap**, **Partial**, **N/A** (not applicable: mode
 | 45 | TTL (473) | MUST NOT return `refreshBefore: null` unless `ttlMs: null` | MUST NOT | Conforms | Never returns null; `ttlMs: null` gets the finite default (`src/core/subscriptions.ts:44-46`) | |
 | 46 | TTL (475) | Recommended finite grants up to about a day | Guidance | Conforms | Default 30 d, max 90 d (`src/core/config.ts:99-101`). Allowed ("not a ceiling"); chosen because ChatGPT sends no `ttlMs` | |
 | 47 | TTL (479–481) | No-expiry obligations (persist, MAY drop after failure, SHOULD `terminated`) | MUST/MAY/SHOULD | N/A | No-expiry never granted | |
-| 48 | Identity (489) | `events/subscribe`/`unsubscribe` MUST have an authenticated principal; reject with `Forbidden` | MUST | Partial | Secret-URL auth sets principal `owner` (`src/host/server.ts:148-152`); handlers reject a missing principal (`src/core/subscriptions.ts:106,211`). Behavior conforms; the code is `-32012`, not `-32024` | Row 62 (#37) |
+| 48 | Identity (489) | `events/subscribe`/`unsubscribe` MUST have an authenticated principal; reject with `Forbidden` | MUST | Partial | The shared secret (bearer token or URL) sets principal `owner` (`src/host/server.ts`, `serveMcp`); handlers reject a missing principal (`src/core/subscriptions.ts:106,211`). Behavior conforms; the code is `-32012`, not `-32024` | Row 62 (#37) |
 | 49 | Identity (491) | Key = `(principal, delivery.url, name, arguments)`, arguments by canonical JSON | | Conforms | `src/core/identity.ts:12-14`, `src/core/canonical-json.ts`. URL normalized through `URL.href` | |
 | 50 | Identity (493) | All four immutable; a change addresses a different subscription | | Conforms | Inherent in the derived id | |
 | 51 | Identity table (501), Rotation (647) | Secret replaced on refresh; SHOULD dual-sign old and new for a grace window | SHOULD | Partial | Dual-signs for 10 min (`src/core/relay.ts:142-145`, `src/core/config.ts:105`), but the previous secret is only in memory (`src/core/event-gateway-store.ts:33-34,59`), so a restart inside the window ends dual-signing | Persist the previous secret (e.g. sealed in the description, or a second credential). Stage 8: Event Gateway signs, so this needs a second, expiring key on the destination (an Event Gateway feature); until then a refresh switches the secret at once |

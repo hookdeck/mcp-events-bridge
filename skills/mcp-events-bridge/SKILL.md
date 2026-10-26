@@ -12,7 +12,7 @@ Full reference: the [README](https://github.com/hookdeck/mcp-events-bridge#readm
 ## Rules
 
 - **Credentials come from the user.** Ask for the Hookdeck project's API key and signing secret (Project settings > Secrets) and any provider key; never create accounts. Some commands print secrets (`setup` prints the MCP URL): never repeat a secret in your replies, and never print `.env`.
-- **The MCP URL (`/mcp/<BRIDGE_MCP_SECRET>`) is a credential.** Share it only with the agent being connected.
+- **`BRIDGE_MCP_SECRET` is a credential.** Agents send it as `Authorization: Bearer <BRIDGE_MCP_SECRET>` to the `/mcp` endpoint; only clients that can't send a header (ChatGPT) use the URL with it in (`/mcp/<BRIDGE_MCP_SECRET>`). Share it only with the agent being connected.
 - **One bridge per Hookdeck project.** Two bridges in one project relay each event twice.
 
 ## 1. Decide where the bridge runs
@@ -64,7 +64,7 @@ npx mcp-events-bridge setup
 npx mcp-events-bridge serve
 ```
 
-- **Success:** `[bridge] hookdeck listen connected: ...` and `[bridge] MCP endpoint: http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>`. Keep it running; stop it with Ctrl-C (or `kill` its PID), which also stops its `hookdeck listen`.
+- **Success:** `[bridge] hookdeck listen connected: ...` and `[bridge] MCP endpoint: http://127.0.0.1:8080/mcp with Authorization: Bearer <BRIDGE_MCP_SECRET>, or http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>`. Keep it running; stop it with Ctrl-C (or `kill` its PID), which also stops its `hookdeck listen`.
 - It restarts `hookdeck listen` if it stops, and recovers provider events that arrived while the bridge was down.
 
 ## 3. Add providers
@@ -80,13 +80,13 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 
 ## 4. Connect an agent
 
-- **ChatGPT (deployed bridge):** needs Developer mode on (ChatGPT Plus or above). ChatGPT > Plugins > Add > Create MCP App, URL `https://<bridge>/mcp/<BRIDGE_MCP_SECRET>`, No Authentication. Then ask it, in a Work chat, to tell you about new events (e.g. emails from a sender).
+- **ChatGPT (deployed bridge):** needs Developer mode on (ChatGPT Plus or above). ChatGPT > Plugins > Add > Create MCP App, URL `https://<bridge>/mcp/<BRIDGE_MCP_SECRET>`, No Authentication (ChatGPT can't send an `Authorization` header, so it takes the secret in the URL). Then ask it, in a Work chat, to tell you about new events (e.g. emails from a sender).
 - **An agent on the same machine as a local bridge**, which implements MCP Events webhook delivery itself:
   1. It calls the bridge's `create_tunnel_url` tool (`agent`, `name`, `port`, `path`; use `path: '/'` if the agent builds callbacks from one base URL plus a path). It gets a public `https://hkdk.events/...` URL; the bridge runs `hookdeck listen` to the agent's port.
   2. It calls `events/subscribe` with that URL and a `whsec_` secret it generates.
   3. What the agent's receiver must do: [references/receiving-deliveries.md](references/receiving-deliveries.md).
 - **Hermes Agent** (experimental: from an unmerged pull request; released Hermes has no MCP Events support): follow [references/hermes-agent.md](references/hermes-agent.md).
-- **Agents without MCP Events support** (Claude Code, Codex, Cursor): add the bridge as an HTTP MCP server (Claude Code: `claude mcp add --transport http events-bridge <MCP URL>`; see [references/claude-code.md](references/claude-code.md)) and use the poll tools, which need no public URL:
+- **Agents without MCP Events support** (Claude Code, Codex, Cursor): add the bridge as an HTTP MCP server (Claude Code: `claude mcp add --transport http events-bridge <bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`; see [references/claude-code.md](references/claude-code.md)) and use the poll tools, which need no public URL:
   - `wait_for_event` (`name`, `arguments`, `cursor`): waits up to 45 s and returns as soon as there are events. Call it again with the `cursor` it returned to keep waiting.
   - `poll_events` (same, plus `maxEvents`, `maxAgeMs`): returns at once; call again after `nextPollMs`, or at once when `hasMore` is true.
   - Without a cursor, both start from now. Events can repeat: dedupe by `eventId`. For events that already happened, use `list_events` and `get_event`.

@@ -10,21 +10,21 @@ Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhoo
 ## 1. Add the bridge as an MCP server
 
 ```sh
-claude mcp add --transport http events-bridge 'https://<bridge>/mcp/<BRIDGE_MCP_SECRET>'
+claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"
 ```
 
-For a local bridge, use the URL `serve` prints (`http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>`).
+For a local bridge, use the endpoint `serve` prints (`http://127.0.0.1:8080/mcp`).
 
-The URL contains `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
+The header carries `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
 
 - **`--scope local`** (the default) and **`--scope user`** keep it in your Claude Code config, outside the repository.
 - **`--scope project`** writes `.mcp.json` in the repository, which is usually committed. Don't put the secret there: reference an environment variable instead, which Claude Code expands in `.mcp.json`:
 
   ```json
-  { "mcpServers": { "events-bridge": { "type": "http", "url": "${BRIDGE_MCP_URL}" } } }
+  { "mcpServers": { "events-bridge": { "type": "http", "url": "https://<bridge>/mcp", "headers": { "Authorization": "Bearer ${BRIDGE_MCP_SECRET}" } } } }
   ```
 
-  Set `BRIDGE_MCP_URL` in the shell that starts Claude Code. The first time, Claude Code asks you to approve the project's MCP servers (`claude mcp list` shows "Pending approval" until then).
+  Set `BRIDGE_MCP_SECRET` in the shell that starts Claude Code. The first time, Claude Code asks you to approve the project's MCP servers (`claude mcp list` shows "Pending approval" until then).
 
 **Check:** `claude mcp list` shows `events-bridge` as connected, and `/mcp` in a session lists its tools.
 
@@ -67,7 +67,7 @@ Claude adds the watches to the project's watch list, and the plugin's monitor, w
 
 > In the background, watch `<owner>/<repo>` for new issues and comments with `npx @hookdeck/mcp-events-bridge watch github.issues github.issue_comment --filter repository=<owner>/<repo>`, and tell me about each one as it arrives.
 
-`watch` needs the bridge's MCP URL: set `BRIDGE_MCP_URL` in the shell that starts Claude Code, or run it where `.env` has `BRIDGE_MCP_SECRET` (and `BRIDGE_PUBLIC_URL` for a deployed bridge). A Monitor watch expires after at most 30 minutes, and events between one watch and the next are missed. Claude Code asks before starting the command unless `Monitor` is allowed.
+`watch` needs the bridge's secret: run it where `.env` (or the shell that starts Claude Code) has `BRIDGE_MCP_SECRET`, and `BRIDGE_PUBLIC_URL` for a deployed bridge. It sends the secret as `Authorization: Bearer` to the `/mcp` endpoint. A Monitor watch expires after at most 30 minutes, and events between one watch and the next are missed. Claude Code asks before starting the command unless `Monitor` is allowed.
 
 **Tested:** Claude Code 2.1.295 (interactive, Opus 5.5) against a deployed bridge. With the Monitor tool, Claude started the watch, went idle, and reported GitHub comments within seconds, without a prompt. With the plugin, installed from the marketplace (`claude plugin install`, the URL set with `--values-stdin`): the session-start hook wrote the URL file, the plugin's MCP server answered, the monitor started with the session, Claude added watches with filters from "watch… for new issues and comments", a comment woke the session (a reopen, filtered out, didn't), and a comment posted while no session was open arrived when the next one started. Installed interactively with Claude Code 2.1.296: `/plugin install` asked for the URL after the scope; Esc installed the plugin without it, and `/plugin configure mcp-events-bridge@hookdeck` opened the same form.
 

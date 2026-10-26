@@ -80,7 +80,12 @@ export interface BridgeConfig {
   port?: number;
   hookdeck?: { apiKey?: MaybeEnv<string>; signingSecret?: MaybeEnv<string> };
   providers: ProviderInstance[];
-  auth?: { mode?: 'secret-url'; mcpSecret?: MaybeEnv<string> };
+  /**
+   * The MCP endpoint takes BRIDGE_MCP_SECRET as `Authorization: Bearer <secret>` at /mcp, and in the URL
+   * (/mcp/<secret>) for clients that can't send a header, such as ChatGPT. `secretUrl: false` turns the URL form off.
+   * Default: BRIDGE_MCP_SECRET_URL, else true.
+   */
+  auth?: { mode?: 'secret-url'; mcpSecret?: MaybeEnv<string>; secretUrl?: boolean };
   subscriptions?: Partial<SubscriptionSettings>;
 }
 
@@ -120,11 +125,19 @@ export interface ResolvedConfig {
   port: number;
   hookdeck: { apiKey: string; signingSecret: string };
   providers: ResolvedProvider[];
-  auth: { mode: 'secret-url'; mcpSecret: string | null };
+  auth: { mode: 'secret-url'; mcpSecret: string | null; secretUrl: boolean };
   subscriptions: SubscriptionSettings;
 }
 
 export class ConfigError extends Error {}
+
+/** `true` or `false` in any case; anything else is a mistake worth stopping for, not a silent default. */
+function parseBoolean(name: string, value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === '') return fallback;
+  if (/^true$/i.test(value)) return true;
+  if (/^false$/i.test(value)) return false;
+  throw new ConfigError(`${name} must be true or false`);
+}
 
 /** Resolves env() references and defaults. Missing required variables are collected into one error. */
 export function resolveConfig(config: BridgeConfig, environment: Record<string, string | undefined>): ResolvedConfig {
@@ -173,7 +186,11 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
       ...provider,
       options: resolveOption(provider.options) as Record<string, unknown>,
     })),
-    auth: { mode: 'secret-url', mcpSecret: read(config.auth?.mcpSecret, env('BRIDGE_MCP_SECRET', { optional: true })) },
+    auth: {
+      mode: 'secret-url',
+      mcpSecret: read(config.auth?.mcpSecret, env('BRIDGE_MCP_SECRET', { optional: true })),
+      secretUrl: config.auth?.secretUrl ?? parseBoolean('BRIDGE_MCP_SECRET_URL', environment.BRIDGE_MCP_SECRET_URL, true),
+    },
     subscriptions: { ...DEFAULT_SUBSCRIPTION_SETTINGS, ...config.subscriptions },
   };
 

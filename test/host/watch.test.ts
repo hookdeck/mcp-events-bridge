@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { internalError, invalidParams, notFound } from '../../src/core/errors.js';
 import type { PastEvent } from '../../src/core/event-history.js';
-import { isBridgeError, isCursorError, isFatal, parseFilters, redactUrl, runWatch, watch, watchUrl, type PollRequest, type WatchDeps } from '../../src/host/watch.js';
+import { isBridgeError, isCursorError, isFatal, parseFilters, redactUrl, runWatch, watch, watchHeaders, watchUrl, type PollRequest, type WatchDeps } from '../../src/host/watch.js';
 
 const event = (eventId: string, name = 'github.issue_comment'): PastEvent => ({ eventId, name, timestamp: '2026-10-09T13:00:00.000Z', data: {} });
 type Result = Awaited<ReturnType<WatchDeps['poll']>>;
@@ -130,9 +130,14 @@ describe('watch helpers', () => {
   it('finds the MCP URL, and redacts its secret', () => {
     expect(watchUrl('https://b.example/mcp/s', {})).toBe('https://b.example/mcp/s');
     expect(watchUrl(undefined, { BRIDGE_MCP_URL: 'https://b.example/mcp/s' })).toBe('https://b.example/mcp/s');
-    expect(watchUrl(undefined, { BRIDGE_MCP_SECRET: 's', BRIDGE_PUBLIC_URL: 'https://b.example/' })).toBe('https://b.example/mcp/s');
-    expect(watchUrl(undefined, { BRIDGE_MCP_SECRET: 's', PORT: '9000' })).toBe('http://127.0.0.1:9000/mcp/s');
+    expect(watchUrl(undefined, { BRIDGE_MCP_SECRET: 's', BRIDGE_PUBLIC_URL: 'https://b.example/' })).toBe('https://b.example/mcp');
+    expect(watchUrl(undefined, { BRIDGE_MCP_SECRET: 's', PORT: '9000' })).toBe('http://127.0.0.1:9000/mcp');
     expect(() => watchUrl(undefined, {})).toThrow('BRIDGE_MCP_SECRET');
+    // The secret goes as a bearer token only to a URL without it.
+    expect(watchHeaders('https://b.example/mcp', { BRIDGE_MCP_SECRET: 's' })).toEqual({ Authorization: 'Bearer s' });
+    expect(watchHeaders('https://b.example/mcp/', { BRIDGE_MCP_SECRET: 's' })).toEqual({ Authorization: 'Bearer s' });
+    expect(watchHeaders('https://b.example/mcp/s', { BRIDGE_MCP_SECRET: 's' })).toEqual({});
+    expect(watchHeaders('https://b.example/mcp', {})).toEqual({});
     expect(redactUrl('https://b.example/mcp/abc123?x=1')).toBe('https://b.example/mcp/<secret>?x=1');
     expect(redactUrl('Cannot POST /mcp/abc123 (from https://b.example/mcp/abc123)')).toBe('Cannot POST /mcp/<secret> (from https://b.example/mcp/<secret>)');
   });
