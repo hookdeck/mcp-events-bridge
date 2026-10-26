@@ -369,6 +369,18 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 
 [`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) covers installing Hermes with what it needs, the tunnel URL, Hermes's configuration, subscribing and checking a delivery. The bridge is an MCP server in Hermes's `config.yaml` with `events: true`, and its secret goes in an `Authorization: Bearer` header that reads it from Hermes's `.env`, so the secret stays out of the model's context and Hermes's other files.
 
+### MCP client libraries: Vercel AI SDK, Mastra, TanStack AI
+
+Three TypeScript MCP client libraries have experimental MCP Events support, and each works with the bridge (tested 26 Oct 2026, with a deployed bridge's `/mcp` endpoint or a local one through a tunnel URL):
+
+| Library | Tested | Delivery |
+| --- | --- | --- |
+| Vercel AI SDK (`@ai-sdk/mcp`) | 2.0.84 | Webhook |
+| Mastra (`@mastra/mcp`) | 2.5.0 | Poll or webhook |
+| TanStack AI (`@tanstack/ai-mcp`) | 1.0.0 | Webhook |
+
+[`skills/mcp-events-bridge/references/library-clients.md`](skills/mcp-events-bridge/references/library-clients.md) has the code for each: the bearer header, the callback URL (your own route, or a path under a tunnel URL with a local bridge), and the receiver.
+
 ## Security and limitations
 
 - **The MCP secret is a credential.** `BRIDGE_MCP_SECRET` authenticates one owner, sent as `Authorization: Bearer` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can only take a URL, such as ChatGPT. Prefer the header where the client supports it: a URL is easily logged or saved in a client's files, a header much less so. A bridge no ChatGPT connects to can turn the URL form off (`BRIDGE_MCP_SECRET_URL=false`). The secret is redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned, for ChatGPT without a secret in the URL.
