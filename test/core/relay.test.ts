@@ -194,6 +194,23 @@ describe('Relay: generic webhook', () => {
     expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-fills_order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
     expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'fills.order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
   });
+
+  it('keeps an integer beyond 2^53 exact, as a string of its digits', async () => {
+    const gateway = new FakeEventGateway();
+    const store = new MemoryStore();
+    const relay = new Relay({
+      signingSecret: SIGNING_SECRET,
+      providerIds: ['fills'],
+      catalog: new Catalog(fillsConfig.sources),
+      store,
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    });
+    await store.put(subscription({ name: 'fills.order.filled', arguments: { symbol: 'AAPL' } }));
+    // Event Gateway forwards the sender's bytes; JSON.parse would make this 4323372036854776000.
+    const raw = '{"symbol":"AAPL","orderId":4323372036854775807,"quantity":100}';
+    expect(await relay.handle('/inbound/fills', signed(raw, { 'x-hookdeck-verified': 'true', 'x-delivery-id': 'dlv_43' }), raw)).toEqual({ status: 200, body: { published: 1 } });
+    expect(JSON.parse(gateway.published[0]!.body).data).toEqual({ symbol: 'AAPL', orderId: '4323372036854775807', quantity: 100 });
+  });
 });
 
 describe('Relay: issue notifications', () => {

@@ -22,6 +22,7 @@
 ### Fixed
 
 - **A tunnel URL's connection could outlive its source.** When the check for an agent's missed deliveries finished just after the bridge deleted that unused URL, it wrote the connection back, on the deleted source, and every later `serve` restarted `hookdeck listen` for it in a loop. The check no longer writes to a deleted URL, and `serve` deletes such a connection when it starts (`deleted tunnel URL agent-<agent>-<name>: its source was deleted`).
+- **Integers beyond 2^53 in a service's payload were rounded.** An int64 such as 4323372036854775807 reached subscribers as 4323372036854776000, because the bridge parsed request bodies as JavaScript numbers. It now reaches a callback URL as a string of its digits (`"4323372036854775807"`); other numbers are unchanged. Events read from Event Gateway's API, which rounds it, still carry it rounded: poll mode and `watch`, `get_event`, `list_events`, and callbacks caught up after downtime.
 
 ## 0.5.0 (2026-10-23)
 
