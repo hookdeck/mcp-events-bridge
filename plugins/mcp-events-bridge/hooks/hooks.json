@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$CLAUDE_PLUGIN_OPTION_MCP_URL\" ]; then mkdir -p \"${CLAUDE_PLUGIN_DATA}\" && (umask 077 && printf '%s' \"$CLAUDE_PLUGIN_OPTION_MCP_URL\" > \"${CLAUDE_PLUGIN_DATA}/mcp-url\"); else rm -f \"${CLAUDE_PLUGIN_DATA}/mcp-url\"; fi; true"
+            "command": "if [ -n \"$CLAUDE_PLUGIN_OPTION_MCP_URL\" ]; then mkdir -p \"${CLAUDE_PLUGIN_DATA}\" && (umask 077 && printf '%s' \"$CLAUDE_PLUGIN_OPTION_MCP_URL\" > \"${CLAUDE_PLUGIN_DATA}/mcp-url\"); else rm -f \"${CLAUDE_PLUGIN_DATA}/mcp-url\"; fi; if [ -n \"$CLAUDE_PLUGIN_OPTION_MCP_SECRET\" ]; then mkdir -p \"${CLAUDE_PLUGIN_DATA}\" && (umask 077 && printf '%s' \"$CLAUDE_PLUGIN_OPTION_MCP_SECRET\" > \"${CLAUDE_PLUGIN_DATA}/mcp-secret\"); else rm -f \"${CLAUDE_PLUGIN_DATA}/mcp-secret\"; fi; true"
           }
         ]
       }

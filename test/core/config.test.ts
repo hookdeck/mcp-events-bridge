@@ -24,7 +24,7 @@ describe('resolveConfig', () => {
       publicUrl: null,
       port: 8080,
       hookdeck: { apiKey: 'hk', signingSecret: 'hs' },
-      auth: { mode: 'secret-url', mcpSecret: null },
+      auth: { mode: 'secret-url', mcpSecret: null, secretUrl: true },
     });
     expect(resolved.providers[0]).toMatchObject({ id: 'resend', events: ['email.received'], options: { apiKey: 're_1' } });
     expect(resolved.subscriptions.defaultTtlMs).toBe(30 * 24 * 60 * 60 * 1000);
@@ -69,6 +69,14 @@ describe('resolveConfig', () => {
 
   it('reads BRIDGE_MCP_SECRET when set', () => {
     expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 's3cret' }).auth.mcpSecret).toBe('s3cret');
+  });
+
+  it('keeps the secret URL on unless BRIDGE_MCP_SECRET_URL or auth.secretUrl turns it off', () => {
+    expect(resolveConfig(config(), base).auth.secretUrl).toBe(true);
+    expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET_URL: 'FALSE' }).auth.secretUrl).toBe(false);
+    expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET_URL: 'true' }).auth.secretUrl).toBe(true);
+    expect(resolveConfig(config({ auth: { secretUrl: false } }), { ...base, BRIDGE_MCP_SECRET_URL: 'true' }).auth.secretUrl).toBe(false);
+    expect(() => resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET_URL: 'no' })).toThrow(/BRIDGE_MCP_SECRET_URL must be true or false/);
   });
 
   it('rejects a BRIDGE_MCP_SECRET that isn\'t URL-safe, such as a pasted line with a note after the value', () => {

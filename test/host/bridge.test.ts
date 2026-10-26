@@ -35,12 +35,18 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((r) => r.close()));
 });
 
-async function startBridge({ inbound = 'cli' as 'cli' | 'http', store, pollNow }: { inbound?: 'cli' | 'http'; store?: MemoryStore; pollNow?: () => number } = {}) {
+async function startBridge({
+  inbound = 'cli' as 'cli' | 'http',
+  store,
+  pollNow,
+  secretUrl,
+}: { inbound?: 'cli' | 'http'; store?: MemoryStore; pollNow?: () => number; secretUrl?: 'true' | 'false' } = {}) {
   const gateway = new FakeEventGateway();
   const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', providers: [resend({ apiKey: 'x' })] }), {
     HOOKDECK_API_KEY: 'k',
     HOOKDECK_SIGNING_SECRET: SIGNING_SECRET,
     BRIDGE_MCP_SECRET: MCP_SECRET,
+    ...(secretUrl && { BRIDGE_MCP_SECRET_URL: secretUrl }),
   });
   const logs: string[] = [];
   const bridge = await createBridgeServer(config, {
@@ -89,11 +95,44 @@ async function postInbound(port: number, body: unknown = freshEmail()) {
 }
 
 describe('bridge server', () => {
-  it('serves MCP only at the secret path', async () => {
+  it('serves MCP only to the secret, in the URL or as a bearer token', async () => {
     const { port } = await startBridge();
     expect((await fetch(`http://127.0.0.1:${port}/mcp/wrong`, { method: 'POST' })).status).toBe(404);
-    expect((await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' })).status).toBe(404);
+    const missing = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' });
+    expect(missing.status).toBe(401);
+    expect(missing.headers.get('www-authenticate')).toBe('Bearer realm="mcp-events-bridge"');
+    expect(await missing.json()).toEqual({ error: 'Send Authorization: Bearer <BRIDGE_MCP_SECRET>, or use /mcp/<BRIDGE_MCP_SECRET>' });
+    for (const authorization of ['Bearer wrong', `Basic ${MCP_SECRET}`, MCP_SECRET, `Bearer ${MCP_SECRET} extra`]) {
+      expect((await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { authorization } })).status).toBe(401);
+    }
     expect(redactPath(`/mcp/${MCP_SECRET}`)).toBe('/mcp/<secret>');
+  });
+
+  it('takes the secret as Authorization: Bearer at /mcp', async () => {
+    const { port } = await startBridge();
+    for (const [scheme, path] of [['Bearer', '/mcp'], ['bearer', '/mcp/']] as const) {
+      const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}${path}`), { requestInit: { headers: { Authorization: `${scheme} ${MCP_SECRET}` } } }),
+      );
+      try {
+        expect(client.getServerVersion()).toMatchObject({ name: 'mcp-events-bridge' });
+        const result = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
+        expect(result.structuredContent?.providers).toHaveLength(1);
+      } finally {
+        await client.close();
+      }
+    }
+  });
+
+  it('turns the secret URL off with BRIDGE_MCP_SECRET_URL=false, keeping the bearer token', async () => {
+    const { port } = await startBridge({ secretUrl: 'false' });
+    expect((await fetch(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`, { method: 'POST' })).status).toBe(404);
+    const missing = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' });
+    expect(await missing.json()).toEqual({ error: 'Send Authorization: Bearer <BRIDGE_MCP_SECRET>' });
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${MCP_SECRET}` } } }));
+    await client.close();
   });
 
   it('delivers a Resend email end to end, with webhook-id equal to the svix-id', async () => {

@@ -150,7 +150,13 @@ export function watchUrl(flag: string | undefined, environment: NodeJS.ProcessEn
   const secret = environment.BRIDGE_MCP_SECRET;
   if (!secret) throw new Error('set --url, BRIDGE_MCP_URL, or BRIDGE_MCP_SECRET (with BRIDGE_PUBLIC_URL for a deployed bridge)');
   const base = environment.BRIDGE_PUBLIC_URL?.replace(/\/$/, '') ?? `http://127.0.0.1:${environment.BRIDGE_PORT ?? environment.PORT ?? 8080}`;
-  return `${base}/mcp/${secret}`;
+  // The secret goes in a header (watchHeaders), which works whether or not the bridge accepts it in the URL.
+  return `${base}/mcp`;
+}
+
+/** `Authorization: Bearer <secret>` for an MCP URL without the secret in it (`.../mcp`). */
+export function watchHeaders(url: string, secret: string | undefined): Record<string, string> {
+  return secret && /\/mcp\/?$/.test(new URL(url).pathname) ? { Authorization: `Bearer ${secret}` } : {};
 }
 
 /** The URL without its secret path segment, for messages. */

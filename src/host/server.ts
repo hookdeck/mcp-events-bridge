@@ -28,7 +28,9 @@ function tooLarge(req: http.IncomingMessage, res: http.ServerResponse) {
  *
  *   POST /inbound/<instance id>   provider events from Event Gateway
  *   POST /inbound/hookdeck        Event Gateway issue notifications
- *   /mcp/<secret>                 the MCP endpoint (secret-URL auth; one principal, the owner)
+ *   /mcp                          the MCP endpoint, with Authorization: Bearer <BRIDGE_MCP_SECRET>
+ *   /mcp/<secret>                 the same, with the secret in the URL instead, for clients that can't send a
+ *                                 header (ChatGPT); off with auth.secretUrl: false. Either way, one principal: the owner
  *   GET /healthz
  *
  * Bound to 127.0.0.1 for CLI inbound (development), all interfaces for http inbound.
@@ -70,6 +72,9 @@ const secretMatches = (given: string, expected: string) => {
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
 };
+
+/** The token from `Authorization: Bearer <token>`, or null. */
+export const bearerToken = (header: string | undefined) => /^Bearer\s+(\S+)\s*$/i.exec(header ?? '')?.[1] ?? null;
 
 /** Paths for logs, with the MCP secret replaced. */
 export const redactPath = (pathname: string) => pathname.replace(/^\/mcp\/[^/]+/, '/mcp/<secret>');
@@ -138,18 +143,30 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     ),
   );
 
-  const json = (res: http.ServerResponse, status: number, body: unknown) => {
-    res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+  const json = (res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
+    res.writeHead(status, { 'content-type': 'application/json', ...headers }).end(JSON.stringify(body));
   };
+  const serveMcp = (req: http.IncomingMessage, res: http.ServerResponse) => {
+    // The secret isn't kept on the request: the owner is the only principal.
+    (req as http.IncomingMessage & { auth?: unknown }).auth = { token: '', clientId: OWNER, scopes: [] };
+    return mcp(req, res);
+  };
+  const unauthorized = `Send Authorization: Bearer <BRIDGE_MCP_SECRET>${config.auth.secretUrl ? ', or use /mcp/<BRIDGE_MCP_SECRET>' : ''}`;
 
   const server = http.createServer(async (req, res) => {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
     try {
-      const mcpMatch = /^\/mcp\/([^/]+)$/.exec(pathname);
+      if (pathname === '/mcp' || pathname === '/mcp/') {
+        const token = bearerToken(req.headers.authorization);
+        if (!token || !secretMatches(token, mcpSecret)) {
+          return json(res, 401, { error: unauthorized }, { 'WWW-Authenticate': 'Bearer realm="mcp-events-bridge"' });
+        }
+        return await serveMcp(req, res);
+      }
+      const mcpMatch = config.auth.secretUrl ? /^\/mcp\/([^/]+)$/.exec(pathname) : null;
       if (mcpMatch) {
         if (!secretMatches(mcpMatch[1]!, mcpSecret)) return json(res, 404, { error: 'not found' });
-        (req as http.IncomingMessage & { auth?: unknown }).auth = { token: '', clientId: OWNER, scopes: [] };
-        return await mcp(req, res);
+        return await serveMcp(req, res);
       }
 
       if (pathname.startsWith('/inbound/') && req.method === 'POST') {

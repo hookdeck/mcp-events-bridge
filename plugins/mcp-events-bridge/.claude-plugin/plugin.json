@@ -11,9 +11,15 @@
   "userConfig": {
     "mcp_url": {
       "type": "string",
-      "title": "Bridge MCP URL",
-      "description": "Your bridge's MCP URL, https://<bridge>/mcp/<BRIDGE_MCP_SECRET> (or http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET> for a local bridge). It contains the secret, so it's kept in secure storage.",
+      "title": "Bridge MCP endpoint",
+      "description": "Your bridge's MCP endpoint, https://<bridge>/mcp (or http://127.0.0.1:8080/mcp for a local bridge). The older form with the secret in it, /mcp/<BRIDGE_MCP_SECRET>, still works.",
       "required": true,
+      "sensitive": true
+    },
+    "mcp_secret": {
+      "type": "string",
+      "title": "Bridge MCP secret",
+      "description": "BRIDGE_MCP_SECRET from the bridge's .env (or its Fly secrets), sent as Authorization: Bearer. Leave it empty only if the endpoint above has the secret in it.",
       "sensitive": true
     }
   }
