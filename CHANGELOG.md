@@ -15,6 +15,10 @@
 - **`setup` and `serve` print the `/mcp` endpoint** with the header to send, and the URL with the secret in it only while the URL form is on.
 - **The Hermes Agent guide sends the secret as a header** (`MCP_EVENTS_EMITTER_<NAME>_HEADERS`), so Hermes's subscriptions file holds no secret. Claude Code's guide uses `--header` too.
 
+### Fixed
+
+- **A tunnel URL's connection could outlive its source.** When the check for an agent's missed deliveries finished just after the bridge deleted that unused URL, it wrote the connection back, on the deleted source, and every later `serve` restarted `hookdeck listen` for it in a loop. The check no longer writes to a deleted URL, and `serve` deletes such a connection when it starts (`deleted tunnel URL agent-<agent>-<name>: its source was deleted`).
+
 ## 0.5.0 (2026-10-23)
 
 Breaking, for clients that match on error code numbers, and for anyone relying on a `410` to end a subscription. Both changes follow [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415), the MCP Events proposal.

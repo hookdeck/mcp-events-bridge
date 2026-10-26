@@ -193,6 +193,46 @@ describe('CallbackRegistry: deleting unused callbacks', () => {
     expect(await flaky.sweep()).toEqual(['agent-laptop-email']);
     expect(gateway.sources.has(record.sourceId)).toBe(false);
   });
+
+  it("doesn't recreate a callback's connection when a retry run finishes after the sweep deleted it", async () => {
+    const { gateway, callbacks } = setup({ graceMs: 0 });
+    await callbacks.create({ agent: 'laptop', name: 'email' });
+    const realFetch = gateway.fetch;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    (gateway as unknown as { fetch: typeof fetch }).fetch = (async (input: URL | string, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      // The retry run's listings: held until the sweep is done, then empty (nothing missed).
+      if (/\/(requests|events)$/.test(path)) {
+        await gate;
+        return new Response(JSON.stringify({ models: [], pagination: {} }), { status: 200 });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+    const registry = new CallbackRegistry({
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: (i, o) => gateway.fetch(i, o) }),
+      inUse: () => false,
+      subscription: () => undefined,
+      settings: { graceMs: 0 },
+    });
+    await registry.load();
+    const retry = registry.retryMissed('laptop');
+    expect(await registry.sweep()).toEqual(['agent-laptop-email']);
+    release();
+    await retry;
+    expect([...gateway.connections.values()].map((c) => c.name)).not.toContain('agent-laptop-email');
+  });
+
+  it('deletes, on load, a callback connection whose source was deleted (listed with no name), instead of listening for it', async () => {
+    const { gateway, hookdeck, callbacks } = setup();
+    const record = await callbacks.create({ agent: 'laptop', name: 'email' });
+    const source = gateway.sources.get(record.sourceId)!;
+    gateway.sources.set(record.sourceId, { ...source, name: null as unknown as string });
+    const fresh = new CallbackRegistry({ hookdeck, inUse: () => false, subscription: () => undefined });
+    expect(await fresh.load()).toBe(0);
+    expect(fresh.listenPlan()).toEqual([]);
+    expect(gateway.connections.has(record.connectionId)).toBe(false);
+  });
 });
 
 describe('Signing for callback URLs', () => {
