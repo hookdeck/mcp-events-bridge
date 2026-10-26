@@ -8,6 +8,23 @@ import type { ProviderEvent } from './providers/types.js';
  */
 export const mcpEventName = (providerId: string, eventName: string) => `${providerId}.${eventName}`;
 
+/**
+ * ChatGPT has been reported to leave out event types whose description is longer than about this, without saying
+ * so. Not verified here; the built-in providers' longest description is 299 characters.
+ */
+export const LONG_DESCRIPTION = 400;
+
+/** A warning for each event whose description is longer than LONG_DESCRIPTION, for `setup` and `serve` to print. */
+export const descriptionWarnings = (catalog: Catalog) =>
+  catalog
+    .list()
+    .filter((e) => e.description.length > LONG_DESCRIPTION)
+    .map(
+      (e) =>
+        `${e.name}'s description is ${e.description.length} characters. ChatGPT has been reported to leave out events ` +
+        `whose description is over about ${LONG_DESCRIPTION}, so shorten it if ChatGPT doesn't offer ${e.name}`,
+    );
+
 export interface CatalogEntry {
   /** The MCP event name: `{instance id}.{event.name}`. */
   name: string;

@@ -97,10 +97,24 @@ describe('Relay: provider events', () => {
     expect(gateway.published).toHaveLength(1);
     const [published] = gateway.published;
     expect(published!.sourceName).toBe('bridge-out-resend_email_received');
-    expect(published!.headers).toMatchObject({ 'webhook-id': fixture.headers['svix-id'], 'X-MCP-Subscription-Id': 'sub_a' });
+    expect(published!.headers).toMatchObject({ 'webhook-id': expect.stringMatching(/^msg_[A-Za-z0-9_-]{22}$/), 'X-MCP-Subscription-Id': 'sub_a' });
     const envelope = new Webhook(a.secret).verify(published!.body, published!.headers) as Record<string, unknown>;
     expect(envelope).toMatchObject({ eventId: fixture.headers['svix-id'], name: 'resend.email.received', timestamp: OCCURRED, cursor: null });
     expect(envelope.data).toMatchObject({ fromAddress: 'sender@example.com', subject: 'Spike 3: inbound test' });
+  });
+
+  it('gives each subscription its own webhook-id, not derived from eventId, and a new one on a republish', async () => {
+    const { relay, store, gateway } = setup();
+    await store.put(subscription());
+    await store.put(subscription({ id: 'sub_b' }));
+    await inbound(relay);
+    await inbound(relay);
+    const ids = gateway.published.map((p) => p.headers['webhook-id']);
+    expect(ids).toHaveLength(4);
+    expect(new Set(ids).size).toBe(4);
+    expect(ids).not.toContain(fixture.headers['svix-id']);
+    // The event is the same on every delivery: the subscription connection's dedupe rule drops a republish by it.
+    expect(new Set(gateway.published.map((p) => JSON.parse(p.body).eventId))).toEqual(new Set([fixture.headers['svix-id']]));
   });
 
   it('dual-signs during a rotation grace window', async () => {
@@ -172,7 +186,7 @@ describe('Relay: generic webhook', () => {
     { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET },
   );
 
-  it('relays a verified fill to a matching subscriber with webhook-id from the sender, and ignores unverified requests', async () => {
+  it('relays a verified fill to a matching subscriber with eventId from the sender, and ignores unverified requests', async () => {
     const gateway = new FakeEventGateway();
     const store = new MemoryStore();
     const relay = new Relay({
@@ -191,7 +205,7 @@ describe('Relay: generic webhook', () => {
     expect(gateway.published).toEqual([]);
     expect(await send('true')).toEqual({ status: 200, body: { published: 1 } });
     expect(gateway.published).toHaveLength(1);
-    expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-fills_order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
+    expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-fills_order_filled', headers: { 'X-MCP-Subscription-Id': 'sub_a' } });
     expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'fills.order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
   });
 });

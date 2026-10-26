@@ -112,4 +112,5 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
 | A generic webhook sender gets 401 | Wrong signature, header, encoding or secret | Match the `verification` settings; a new secret can take about a minute |
 | `[bridge] ... 0/0 published` | No subscription matches (name or filters) | Check the subscription's name and arguments |
 | An event arrives after a minute or two | `hookdeck listen` occasionally takes ~30s to connect; Event Gateway occasionally queues a CLI delivery | Wait; missed deliveries are retried by the bridge |
-| The same event twice | Two bridges in one Hookdeck project, or a retry | One project per bridge; receivers dedupe by `webhook-id` |
+| The same event twice | Two bridges in one Hookdeck project, or a retry | One project per bridge; receivers dedupe by `webhook-id`, and by `eventId` per subscription |
+| `warning: <event>'s description is ... characters` | A description over 400 characters; ChatGPT has been reported to leave such events out | Shorten it in `bridge.config.ts`, then refresh the plugin in ChatGPT |

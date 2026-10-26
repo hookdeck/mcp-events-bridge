@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Catalog } from '../../src/core/catalog.js';
+import { Catalog, descriptionWarnings } from '../../src/core/catalog.js';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
 import { github, resend, webhook } from '../../src/providers.js';
 
@@ -22,5 +22,22 @@ describe('Catalog', () => {
     expect(catalog.list().map((e) => e.name)).toEqual(['broker_a.order.filled', 'broker_b.order.filled']);
     expect(catalog.get('broker_b.order.filled')).toMatchObject({ providerId: 'broker_b', event: { name: 'order.filled' } });
     expect(catalog.forProvider('broker_a').map((e) => e.name)).toEqual(['broker_a.order.filled']);
+  });
+
+  it('warns about descriptions over 400 characters, which ChatGPT has been reported to leave out', () => {
+    const verification = { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: env('A_SECRET') } as const;
+    const config = resolveConfig(
+      defineConfig({
+        providers: [
+          resend({ apiKey: 'x' }),
+          github({ webhookSecret: 'a-long-enough-secret' }),
+          webhook({ id: 'fills', verification, eventType: { header: 'x-event' }, events: { 'order.filled': { description: 'An order filled. '.repeat(25) }, 'order.placed': {} } }),
+        ],
+      }),
+      environment,
+    );
+    const warnings = descriptionWarnings(new Catalog(config.providers));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^fills\.order\.filled's description is \d+ characters\. ChatGPT has been reported/);
   });
 });

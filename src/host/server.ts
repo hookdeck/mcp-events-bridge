@@ -3,7 +3,7 @@ import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
-import { Catalog } from '../core/catalog.js';
+import { Catalog, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
@@ -88,7 +88,11 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const hookdeck = options.hookdeck ?? new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const store = options.store ?? new EventGatewayStore(hookdeck);
   const loaded = await store.load();
-  log(`loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}`);
+  log(
+    `loaded ${loaded.loaded} subscription(s) from Event Gateway` +
+      (loaded.upgraded ? `; ${loaded.upgraded} updated to dedupe by eventId` : '') +
+      (loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''),
+  );
 
   const callbacks = new CallbackRegistry({
     hookdeck,
@@ -103,6 +107,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
 
   const catalog = new Catalog(config.providers);
+  for (const warning of descriptionWarnings(catalog)) log(`warning: ${warning}`);
   // Subscriptions to an event this bridge doesn't offer (a provider removed, an `id` renamed) get nothing; say so.
   for (const subscription of store.list()) {
     if (!catalog.get(subscription.name)) log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer`);

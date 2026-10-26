@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { Catalog, descriptionWarnings } from './core/catalog.js';
 import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedProvider } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
@@ -73,6 +74,7 @@ async function setup(configFile: string | undefined) {
     console.log(`  provider ${p.id}: source ${p.sourceUrl}, ${connection}, webhook ${p.webhook}`);
     if (p.hint) console.log(p.hint.split('\n').map((line) => `    ${line}`).join('\n'));
   }
+  for (const warning of descriptionWarnings(new Catalog(config.providers))) console.warn(`  warning: ${warning}`);
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {

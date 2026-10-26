@@ -6,10 +6,12 @@
 
 - **The MCP endpoint takes `BRIDGE_MCP_SECRET` as `Authorization: Bearer`,** at `https://<bridge>/mcp`, so the secret stays out of URLs: out of request logs, and out of the client files that store URLs (Hermes saves each subscription's URL in a file other users can read). Claude Code: `claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`. The URL form, `/mcp/<secret>`, still works, for ChatGPT, which can't send a header; `BRIDGE_MCP_SECRET_URL=false` turns it off. A missing or wrong token gets `401`. See [Security and limitations](README.md#security-and-limitations).
 - **`watch` sends the secret as a bearer token** to a URL ending `/mcp`, and builds that form by default from `BRIDGE_PUBLIC_URL` (or the local port) and `BRIDGE_MCP_SECRET`. `--secret-file` reads it from a file (with `--store`, `<store>/mcp-secret`). A URL with the secret in it still works.
+- **`setup` and `serve` warn about event descriptions over 400 characters** (`warning: fills.order.filled's description is 425 characters ...`), which ChatGPT has been reported to leave out. The built-in providers' descriptions are all shorter; this is for `webhook()` and `defineProvider`.
 - **The Claude Code plugin asks for the secret separately,** and sends it as `Authorization: Bearer`: its options are now the MCP endpoint (`https://<bridge>/mcp`) and the secret. An existing install, whose endpoint has the secret in it, keeps working with the secret field left empty.
 
 ### Changed
 
+- **`webhook-id` is new for each delivered message** (one event on one subscription), as [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415) has required since 23 Oct; it was the event's `eventId`. Receivers that dedupe by `webhook-id` keep working. One that read the event's id from `webhook-id` reads `eventId` from the body instead. Event Gateway now drops a repeated event on a subscription by its `eventId`, and `serve` updates subscriptions made before 0.6.0 when it starts (`loaded 3 subscription(s) from Event Gateway; 3 updated to dedupe by eventId`).
 - **`setup` and `serve` print the `/mcp` endpoint** with the header to send, and the URL with the secret in it only while the URL form is on.
 - **The Hermes Agent guide sends the secret as a header** (`MCP_EVENTS_EMITTER_<NAME>_HEADERS`), so Hermes's subscriptions file holds no secret. Claude Code's guide uses `--header` too.
 

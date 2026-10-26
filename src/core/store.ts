@@ -41,8 +41,8 @@ export interface SubscriptionRecord extends SubscriptionInput {
 export class SubscriptionTooLargeError extends Error {}
 
 export interface SubscriptionStore {
-  /** Builds the in-memory index. Call once at startup. */
-  load(): Promise<{ loaded: number; unreadable: string[] }>;
+  /** Builds the in-memory index, and brings stored subscriptions up to date (`upgraded`). Call once at startup. */
+  load(): Promise<{ loaded: number; unreadable: string[]; upgraded?: number }>;
   get(id: string): SubscriptionRecord | undefined;
   /** Subscriptions to an event name, for matching an inbound event. */
   list(filter?: { name?: string }): SubscriptionRecord[];
