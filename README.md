@@ -19,7 +19,7 @@ The bridge closes that gap:
 - **Every event verified, delivered and recorded.** Event Gateway verifies provider signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.
 
-It's for developers who want agents (ChatGPT, Claude Code, and agents on the same machine as the bridge) to react to events from the services they already use.
+It's for developers who want agents ([ChatGPT, Claude Code, Hermes Agent and others](#supported-mcp-clients)) to react to events from the services they already use.
 
 **Status:** 0.5, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
 
@@ -32,6 +32,23 @@ It's for developers who want agents (ChatGPT, Claude Code, and agents on the sam
 - **The Hookdeck CLI** forwards provider events to a bridge on your laptop, and MCP Events to [local agents](#local-agents), so neither needs a public URL.
 
 The design, its trade-offs and how it maps to the spec are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Supported MCP clients
+
+Clients that support MCP Events subscribe to the bridge, and receive each event as a webhook at their callback URL. Clients that don't, such as Claude Code, poll with the bridge's tools.
+
+| Client | How it gets events | Needs a public URL? | Tested | Guide |
+| --- | --- | --- | --- | --- |
+| ChatGPT (Plus or above, Developer mode) | MCP Events, webhook delivery | Yes, for the bridge's MCP endpoint: [deploy the bridge](#deploy-to-flyio), or tunnel to a local one | Yes, end to end | [Connect ChatGPT](#connect-chatgpt) |
+| Claude Code | Polls, with no MCP Events support: `wait_for_event` and `poll_events` during a turn, and the plugin (which runs `watch`) between prompts | No | 2.1.294 to 2.1.296 | [Connect Claude Code](#connect-claude-code) |
+| Hermes Agent | MCP Events, webhook delivery | No: a local bridge creates its callback URL | v0.22.5 | [Hermes Agent guide](skills/mcp-events-bridge/references/hermes-agent.md) |
+| Vercel AI SDK (`@ai-sdk/mcp`) | MCP Events, webhook delivery | A callback URL: your own public route, or one a local bridge creates | 2.0.84 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#vercel-ai-sdk) |
+| Mastra (`@mastra/mcp`) | MCP Events, poll or webhook delivery | Poll: no. Webhook: a callback URL, as for the Vercel AI SDK | 2.5.0 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#mastra) |
+| TanStack AI (`@tanstack/ai-mcp`) | MCP Events, webhook delivery | A callback URL: your own public route, or one a local bridge creates | 1.0.0 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#tanstack-ai) |
+| OpenClaw | MCP Events (beta builds only), webhook delivery | Yes: a bare HTTPS origin, with no path, which a local bridge's callback URLs can't be | Not tested | None yet ([openclaw#184684](https://github.com/openclaw/openclaw/issues/184684)) |
+| Other MCP clients (Cursor, Codex, VS Code and others) | Polls, with `wait_for_event` and `poll_events` | No | Not tested | [Polling](#polling) |
+
+Versions are the ones tested against the bridge, in October 2026. MCP Events support is experimental in Hermes Agent and in the three libraries.
 
 ## Set up with a coding agent
 
@@ -103,7 +120,7 @@ You need:
 
    Locally, `serve` checks that setup has run and starts `hookdeck listen` for every provider, so events reach your laptop through the Hookdeck CLI; it restarts `listen` if it stops, and recovers events that arrived while the bridge was down. Send an email to your Resend address, or open an issue, and the bridge logs it.
 
-6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt) or [Connect Claude Code](#connect-claude-code). ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://127.0.0.1:8080` and use `https://<tunnel host>/mcp/<BRIDGE_MCP_SECRET>`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
+6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt), [Connect Claude Code](#connect-claude-code), or [Supported MCP clients](#supported-mcp-clients) for the others. ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://127.0.0.1:8080` and use `https://<tunnel host>/mcp/<BRIDGE_MCP_SECRET>`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
 
 ## Connect ChatGPT
 
