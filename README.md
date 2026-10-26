@@ -365,9 +365,9 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 
 ### Hermes Agent (experimental)
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) works with a local bridge through a tunnel URL: it subscribes, and each event wakes it in its own session. Released Hermes doesn't support MCP Events; support is in a draft pull request that may or may not be merged, [hermes-agent#132908](https://github.com/NousResearch/hermes-agent/pull/132908), which includes fixes from running it against this bridge.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.5 and later work with a local bridge through a tunnel URL: Hermes subscribes, with your approval, and each event starts an agent run. MCP Events is experimental in Hermes too, and Hermes supports webhook delivery only.
 
-[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) installs Hermes from that pull request at a tested commit, and covers the tunnel URL, Hermes's configuration, subscribing and checking a delivery. Hermes keeps the bridge's endpoint and secret (sent as an `Authorization: Bearer` header) in its `.env` as a named emitter, so the secret stays out of the model's context, Hermes's logs and its subscriptions file.
+[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) covers installing Hermes with what it needs, the tunnel URL, Hermes's configuration, subscribing and checking a delivery. The bridge is an MCP server in Hermes's `config.yaml` with `events: true`, and its secret goes in an `Authorization: Bearer` header that reads it from Hermes's `.env`, so the secret stays out of the model's context and Hermes's other files.
 
 ## Security and limitations
 

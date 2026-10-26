@@ -85,7 +85,7 @@ Every event is named **`{instance id}.{event}`**: the instance `id` (by default 
   1. It calls the bridge's `create_tunnel_url` tool (`agent`, `name`, `port`, `path`; use `path: '/'` if the agent builds callbacks from one base URL plus a path). It gets a public `https://hkdk.events/...` URL; the bridge runs `hookdeck listen` to the agent's port.
   2. It calls `events/subscribe` with that URL and a `whsec_` secret it generates.
   3. What the agent's receiver must do: [references/receiving-deliveries.md](references/receiving-deliveries.md).
-- **Hermes Agent** (experimental: from an unmerged pull request; released Hermes has no MCP Events support): follow [references/hermes-agent.md](references/hermes-agent.md).
+- **Hermes Agent** (v0.22.5 or later; experimental in Hermes): follow [references/hermes-agent.md](references/hermes-agent.md).
 - **Agents without MCP Events support** (Claude Code, Codex, Cursor): add the bridge as an HTTP MCP server (Claude Code: `claude mcp add --transport http events-bridge <bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`; see [references/claude-code.md](references/claude-code.md)) and use the poll tools, which need no public URL:
   - `wait_for_event` (`name`, `arguments`, `cursor`): waits up to 45 s and returns as soon as there are events. Call it again with the `cursor` it returned to keep waiting.
   - `poll_events` (same, plus `maxEvents`, `maxAgeMs`): returns at once; call again after `nextPollMs`, or at once when `hasMore` is true.
