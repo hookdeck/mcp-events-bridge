@@ -143,7 +143,7 @@ interface TestEvents {
 }
 
 function emailEvents(config: Awaited<ReturnType<typeof loadConfig>>, run: string): TestEvents {
-  const provider = config.providers.find((p) => p.definition.type === 'resend');
+  const provider = config.sources.find((p) => p.definition.type === 'resend');
   if (!provider) throw new Error('the e2e needs Resend enabled in bridge.config.ts, or E2E_SOURCE=webhook');
   const from = env('RESEND_TEST_FROM');
   return {
@@ -164,7 +164,7 @@ function emailEvents(config: Awaited<ReturnType<typeof loadConfig>>, run: string
 
 /** Fills from "a trading server" (this script), signed as bridge.config.ts declares. The fill's id is its x-delivery-id. */
 async function fillEvents(config: Awaited<ReturnType<typeof loadConfig>>, hookdeck: HookdeckClient, run: string): Promise<TestEvents> {
-  const fills = config.providers.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
+  const fills = config.sources.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
   if (!fills) throw new Error('E2E_SOURCE=webhook needs the fills webhook enabled in bridge.config.ts (FILLS_WEBHOOK_SECRET), and setup run with it');
   const source = (await hookdeck.listSources({ name: providerSourceName(fills.id) })).models[0];
   if (!source) throw new Error(`no ${providerSourceName(fills.id)} source: run setup with FILLS_WEBHOOK_SECRET set`);
@@ -245,9 +245,9 @@ const countTag = (events: TestEvents, subscriber: Subscriber, tag: string) => su
 
 async function main() {
   const config = await loadConfig();
-  const github = config.providers.find((p) => p.definition.type === 'github');
+  const github = config.sources.find((p) => p.definition.type === 'github');
   if (GITHUB && !github) throw new Error('E2E_GITHUB=1 needs GitHub enabled in bridge.config.ts (GITHUB_REPOS or GITHUB_WEBHOOK_SECRET)');
-  const fills = config.providers.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
+  const fills = config.sources.find((p) => p.id === 'fills' && p.definition.type === 'webhook');
   if (WEBHOOK && !fills) throw new Error('E2E_WEBHOOK=1 needs the fills webhook enabled in bridge.config.ts (FILLS_WEBHOOK_SECRET), and setup run with it');
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const run = Date.now().toString(36);

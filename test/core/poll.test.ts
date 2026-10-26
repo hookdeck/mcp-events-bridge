@@ -5,10 +5,10 @@ import { EventsErrorCode } from '../../src/core/errors.js';
 import { EventHistory } from '../../src/core/event-history.js';
 import { HookdeckApiError, type HookdeckClient, type HookdeckRequest } from '../../src/core/hookdeck.js';
 import { intervalFor, LOOKBACK_MS, MAX_POLL_INTERVAL_MS, POLL_INTERVAL_MS, PollService } from '../../src/core/poll.js';
-import { webhook } from '../../src/providers.js';
+import { source } from '../../src/sources.js';
 
 const fills = (id: string) =>
-  webhook({
+  source({ type: 'webhook', 
     id,
     verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'a-long-enough-secret' },
     events: ['order.filled'],
@@ -96,10 +96,10 @@ class FakeListing {
 
 function setup(options: { providers?: string[]; clockSkewMs?: number } = {}) {
   const config = resolveConfig(defineConfig({ providers: (options.providers ?? ['fills']).map(fills) }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
-  const catalog = new Catalog(config.providers);
+  const catalog = new Catalog(config.sources);
   const listing = new FakeListing();
   const sources = { listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }) } as unknown as HookdeckClient;
-  const history = new EventHistory({ hookdeck: sources, catalog, providers: config.providers });
+  const history = new EventHistory({ hookdeck: sources, catalog, providers: config.sources });
   // The bridge's clock, which may be off from Event Gateway's.
   const now = () => listing.now + (options.clockSkewMs ?? 0);
   const service = new PollService({ hookdeck: listing.client as unknown as HookdeckClient, catalog, history, now });

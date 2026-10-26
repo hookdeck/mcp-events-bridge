@@ -102,7 +102,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const loadedCallbacks = await callbacks.load();
   if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
 
-  const catalog = new Catalog(config.providers);
+  const catalog = new Catalog(config.sources);
   for (const warning of descriptionWarnings(catalog)) log(`warning: ${warning}`);
   // Subscriptions to an event this bridge doesn't offer (a provider removed, an `id` renamed) get nothing; say so.
   for (const subscription of store.list()) {
@@ -120,7 +120,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const recoveredRequests = new Set<string>();
   const relay = new Relay({
     signingSecret: config.hookdeck.signingSecret,
-    providerIds: config.providers.map((p) => p.id),
+    providerIds: config.sources.map((p) => p.id),
     catalog,
     store,
     hookdeck,
@@ -128,10 +128,10 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     recovered: (id) => recoveredRequests.has(id),
     log,
   });
-  const history = new EventHistory({ hookdeck, catalog, providers: config.providers });
+  const history = new EventHistory({ hookdeck, catalog, providers: config.sources });
   const poll = new PollService({ hookdeck, catalog, history, ...options.pollOverrides });
-  const providers = () =>
-    config.providers.map((p) => {
+  const sources = () =>
+    config.sources.map((p) => {
       // MCP names, as in events/list and events/subscribe.
       const events = catalog.forProvider(p.id).map((e) => e.name);
       return { id: p.id, type: p.definition.type, events, subscriptions: store.list().filter((s) => events.includes(s.name)).length };
@@ -140,7 +140,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const localAgents = options.localAgents ?? config.inbound === 'cli';
   const mcp = toNodeHandler(
     createMcpHandler((ctx) =>
-      buildMcpServer({ subscriptions, catalog, history, poll, providers, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
+      buildMcpServer({ subscriptions, catalog, history, poll, sources, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
     ),
   );
 

@@ -1,10 +1,10 @@
-import type { ProviderDefinition } from './providers/types.js';
+import type { SourceDefinition } from './sources/types.js';
 
 /*
  * The typed config file, bridge.config.ts:
  *
  *   export default defineConfig({
- *     providers: [resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] })],
+ *     sources: [resend({ apiKey: env('RESEND_API_KEY'), events: ['email.received'] })],
  *   });
  *
  * Secrets are env() references, resolved when the config is loaded, so the
@@ -25,7 +25,7 @@ export function env(name: string, { optional = false }: { optional?: boolean } =
 const isEnvRef = (value: unknown): value is EnvRef =>
   typeof value === 'object' && value !== null && (value as EnvRef).kind === 'env' && typeof (value as EnvRef).name === 'string';
 
-/** Plain objects only, so class instances and functions in a custom provider's options pass through untouched. */
+/** Plain objects only, so class instances and functions in a custom source's options pass through untouched. */
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (typeof value !== 'object' || value === null) return false;
   const proto = Object.getPrototypeOf(value) as unknown;
@@ -35,31 +35,33 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
 type MaybeEnv<T> = T | EnvRef;
 type WithEnv<T> = { [K in keyof T]: NonNullable<T[K]> extends string ? MaybeEnv<T[K]> : T[K] };
 
-export interface ProviderInstance {
-  /** Instance id, unique in the config; names Event Gateway resources. Defaults to the provider type. */
+export interface SourceInstance {
+  /** Instance id, unique in the config; names Event Gateway resources. Defaults to the source type. */
   id: string;
-  definition: ProviderDefinition<Record<string, unknown>>;
-  /** The provider's event names to enable (offered over MCP as `{id}.{name}`). */
+  definition: SourceDefinition<Record<string, unknown>>;
+  /** The source's event names to enable (offered over MCP as `{id}.{name}`). */
   events: string[];
   options: Record<string, unknown>;
+  /** Config that still works but should change (a deprecated name), for `setup` and `serve` to print. */
+  warnings?: string[];
 }
 
 /**
- * Turns a provider definition into the factory used in bridge.config.ts.
- * Built-in providers use it, and so can a deployment's own providers.
+ * Turns a source definition into the factory used in bridge.config.ts.
+ * Built-in sources use it, and so can a deployment's own sources.
  */
-export function defineProvider<Options extends Record<string, unknown>>(definition: ProviderDefinition<Options>) {
-  return (options: WithEnv<Options> & { id?: string; events?: string[] }): ProviderInstance => {
+export function defineSource<Options extends Record<string, unknown>>(definition: SourceDefinition<Options>) {
+  return (options: WithEnv<Options> & { id?: string; events?: string[] }): SourceInstance => {
     const { id, events, ...rest } = options as WithEnv<Options> & { id?: string; events?: string[] };
     const known = definition.events.map((e) => e.name);
-    // `['*']` enables every event the provider offers.
+    // `['*']` enables every event the source offers.
     const selected = events?.includes('*') ? known : (events ?? definition.defaultEvents ?? known);
     for (const name of selected) {
       if (!known.includes(name)) throw new Error(`${definition.type}: unknown event "${name}" (known: ${known.join(', ')})`);
     }
     return {
       id: id ?? definition.type,
-      definition: definition as unknown as ProviderDefinition<Record<string, unknown>>,
+      definition: definition as unknown as SourceDefinition<Record<string, unknown>>,
       events: selected,
       options: rest,
     };
@@ -73,13 +75,16 @@ export interface BridgeConfig {
    * else `local` with CLI inbound (a bridge on your machine) and `public` with HTTP inbound (a public URL).
    */
   deployment?: string;
-  /** How provider events reach the bridge: `cli` (hookdeck listen) or `http` (public URL). Default: BRIDGE_INBOUND, else http on Fly.io, else cli. */
+  /** How source events reach the bridge: `cli` (hookdeck listen) or `http` (public URL). Default: BRIDGE_INBOUND, else http on Fly.io, else cli. */
   inbound?: 'cli' | 'http';
   /** For http inbound. Default: BRIDGE_PUBLIC_URL, else https://$FLY_APP_NAME.fly.dev. */
   publicUrl?: MaybeEnv<string>;
   port?: number;
   hookdeck?: { apiKey?: MaybeEnv<string>; signingSecret?: MaybeEnv<string> };
-  providers: ProviderInstance[];
+  /** Where events come from: `resend()`, `github()`, `source({ type, ... })`, or your own `defineSource()`. */
+  sources?: SourceInstance[];
+  /** @deprecated Renamed to `sources` in 0.6.0; still read, with a warning. */
+  providers?: SourceInstance[];
   /**
    * The MCP endpoint takes BRIDGE_MCP_SECRET as `Authorization: Bearer <secret>` at /mcp, and in the URL
    * (/mcp/<secret>) for clients that can't send a header, such as ChatGPT. `secretUrl: false` turns the URL form off.
@@ -114,7 +119,7 @@ export function defineConfig(config: BridgeConfig): BridgeConfig {
   return config;
 }
 
-export interface ResolvedProvider extends ProviderInstance {
+export interface ResolvedSource extends SourceInstance {
   options: Record<string, unknown>;
 }
 
@@ -124,7 +129,9 @@ export interface ResolvedConfig {
   publicUrl: string | null;
   port: number;
   hookdeck: { apiKey: string; signingSecret: string };
-  providers: ResolvedProvider[];
+  sources: ResolvedSource[];
+  /** Config that still works but should change, for `setup` and `serve` to print. */
+  warnings: string[];
   auth: { mode: 'secret-url'; mcpSecret: string | null; secretUrl: boolean };
   subscriptions: SubscriptionSettings;
 }
@@ -151,7 +158,7 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     if (!ref.optional) missing.push(ref.name);
     return null;
   };
-  // Provider options can nest env() references (for example the generic webhook provider's verification secret).
+  // Source options can nest env() references (for example a webhook source's verification secret).
   const resolveOption = (value: unknown): unknown => {
     if (isEnvRef(value)) return read(value);
     if (Array.isArray(value)) return value.map(resolveOption);
@@ -159,12 +166,18 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     return value;
   };
 
-  const ids = config.providers.map((p) => p.id);
+  if (config.sources && config.providers) throw new ConfigError('Set `sources` only: `providers` is its old name');
+  const sources = config.sources ?? config.providers ?? [];
+  const warnings = [
+    ...(config.providers && !config.sources ? ['`providers` in the config is now `sources`: rename it (it still works for now)'] : []),
+    ...sources.flatMap((s) => s.warnings ?? []),
+  ];
+  const ids = sources.map((p) => p.id);
   // Ids name Event Gateway resources and the inbound route, /inbound/<id>; `hookdeck` is the notifications route.
   const badId = ids.find((id) => !/^[A-Za-z0-9_-]+$/.test(id) || id === 'hookdeck');
-  if (badId !== undefined) throw new ConfigError(`Provider id "${badId}" must be letters, digits, - and _, and not "hookdeck"`);
+  if (badId !== undefined) throw new ConfigError(`Source id "${badId}" must be letters, digits, - and _, and not "hookdeck"`);
   const duplicate = ids.find((id, i) => ids.indexOf(id) !== i);
-  if (duplicate) throw new ConfigError(`Two providers have the id "${duplicate}"; give one an explicit id`);
+  if (duplicate) throw new ConfigError(`Two sources have the id "${duplicate}"; give one an explicit id`);
 
   const inboundEnv = environment.BRIDGE_INBOUND;
   const inbound = config.inbound ?? (inboundEnv === 'cli' || inboundEnv === 'http' ? inboundEnv : environment.FLY_APP_NAME ? 'http' : 'cli');
@@ -182,9 +195,9 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
       apiKey: read(config.hookdeck?.apiKey, env('HOOKDECK_API_KEY')) ?? '',
       signingSecret: read(config.hookdeck?.signingSecret, env('HOOKDECK_SIGNING_SECRET')) ?? '',
     },
-    providers: config.providers.map((provider) => ({
-      ...provider,
-      options: resolveOption(provider.options) as Record<string, unknown>,
+    sources: sources.map((source) => ({
+      ...source,
+      options: resolveOption(source.options) as Record<string, unknown>,
     })),
     auth: {
       mode: 'secret-url',
@@ -192,6 +205,7 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
       secretUrl: config.auth?.secretUrl ?? parseBoolean('BRIDGE_MCP_SECRET_URL', environment.BRIDGE_MCP_SECRET_URL, true),
     },
     subscriptions: { ...DEFAULT_SUBSCRIPTION_SETTINGS, ...config.subscriptions },
+    warnings,
   };
 
   if (missing.length) throw new ConfigError(`Missing environment variables: ${[...new Set(missing)].join(', ')}`);
@@ -207,12 +221,12 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
 }
 
 /**
- * Fails closed when a provider instance's credentials aren't set (for example a generic webhook's secret, which
+ * Fails closed when a source instance's credentials aren't set (for example a generic webhook's secret, which
  * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` instead
  * holds that instance's delivery until they're set.
  */
 export function assertCredentials(config: ResolvedConfig): void {
-  const missing = config.providers.flatMap((p) => (p.definition.missingCredentials?.(p.options) ?? []).map((name) => `${name} (provider ${p.id})`));
+  const missing = config.sources.flatMap((p) => (p.definition.missingCredentials?.(p.options) ?? []).map((name) => `${name} (source ${p.id})`));
   if (missing.length) {
     throw new ConfigError(
       `Not set: ${missing.join(', ')}. Set it in .env (or as a secret where the bridge runs), then run \`mcp-events-bridge setup\` to apply it to the Event Gateway source before serving.`,

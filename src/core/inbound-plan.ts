@@ -19,7 +19,7 @@ export interface InboundConnection {
 
 export function inboundConnections(config: ResolvedConfig): InboundConnection[] {
   return [
-    ...config.providers.map((p) => ({
+    ...config.sources.map((p) => ({
       source: providerSourceName(p.id),
       connection: providerConnectionName(p.id, config.deployment),
       path: `/inbound/${p.id}`,

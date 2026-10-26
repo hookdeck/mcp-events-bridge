@@ -1,16 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { EnvRef } from '../core/config.js';
-import type { WebhookOptions } from '../core/providers/webhook.js';
+import type { SourceOptions } from '../core/sources/source.js';
+import { SOURCE_TYPES, type SourceTypeName } from '../core/sources/source-types.generated.js';
 
 /*
- * `mcp-events-bridge providers add webhook <id>`: the pieces that touch the
- * user's files. Everything here works on strings, so it's testable without a
- * file system; the command in cli.ts does the reading and writing.
+ * `mcp-events-bridge sources add <id> --type <type>`: the pieces that touch
+ * the user's files. Everything here works on strings, so it's testable without
+ * a file system; the command in cli.ts does the reading and writing.
  *
- *   webhookSnippet       the webhook({...}) entry to paste into bridge.config.ts
+ *   sourceSnippet        the source({...}) entry to paste into bridge.config.ts
  *   missingEnvLines      the .env lines to append for variables the entry references
- *   insertProvider       adds the entry to `providers: [...]`, or refuses with a reason
+ *   insertSource         adds the entry to `sources: [...]`, or refuses with a reason
  */
 
 const isEnvRef = (value: unknown): value is EnvRef => typeof value === 'object' && value !== null && (value as EnvRef).kind === 'env';
@@ -30,20 +31,29 @@ function literal(value: unknown): string {
   throw new Error(`can't write ${typeof value} into the config`);
 }
 
-/** The `webhook({...})` call for bridge.config.ts, one option per line. */
-export function webhookSnippet(options: WebhookOptions): string {
-  const lines = Object.entries(options)
+/** The `source({...})` call for bridge.config.ts, one option per line, `id` and `type` first. */
+export function sourceSnippet(options: SourceOptions): string {
+  const { id, type, ...rest } = options;
+  const lines = Object.entries({ id, type, ...rest })
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `  ${key}: ${literal(value)},`);
-  return `webhook({\n${lines.join('\n')}\n})`;
+  return `source({\n${lines.join('\n')}\n})`;
 }
 
+/** The credential options a source type takes: a `webhook` source's are in `verification`, a service's at the top level. */
+const credentialEntries = (options: SourceOptions): Array<[string, unknown]> =>
+  options.type === 'webhook'
+    ? Object.entries(options.verification)
+    : Object.keys(SOURCE_TYPES[options.type as SourceTypeName].auth).map((option) => [option, (options as unknown as Record<string, unknown>)[option]]);
+
 /** The env() variable names an options object references, with what each holds. */
-export function referencedEnv(options: WebhookOptions): Array<{ name: string; field: string }> {
-  return Object.entries(options.verification)
+export function referencedEnv(options: SourceOptions): Array<{ name: string; field: string }> {
+  return credentialEntries(options)
     .filter((entry): entry is [string, EnvRef] => isEnvRef(entry[1]))
     .map(([field, ref]) => ({ name: ref.name, field }));
 }
+
+const FIELD_LABELS: Record<string, string> = { secret: 'signing secret', key: 'API key', apiKey: 'API key', username: 'Basic auth username', password: 'Basic auth password' };
 
 /**
  * Lines to append to a .env file for variables it doesn't mention yet, empty
@@ -56,9 +66,9 @@ export function missingEnvLines(existing: string, id: string, vars: Array<{ name
   const lead = existing.length && !existing.endsWith('\n') ? '\n' : '';
   const gap = existing.trim().length ? '\n' : '';
   const block = [
-    `# Generic webhook "${id}" (added by mcp-events-bridge providers add webhook). Leave empty until the sender gives you`,
+    `# Source "${id}" (added by mcp-events-bridge sources add). Leave empty until the sender gives you`,
     `# the value, then run setup again: Event Gateway verifies requests with it.`,
-    ...missing.map((v) => `# ${v.name}: the ${v.field === 'secret' ? 'signing secret' : v.field === 'key' ? 'API key' : `Basic auth ${v.field}`}`),
+    ...missing.map((v) => `# ${v.name}: the ${FIELD_LABELS[v.field] ?? v.field}`),
     ...missing.map((v) => `${v.name}=`),
   ];
   return { text: `${lead}${gap}${block.join('\n')}\n`, added: missing.map((v) => v.name) };
@@ -71,13 +81,17 @@ type Node = { type: string; start: number; end: number; loc: { start: { line: nu
 const lineIndent = (source: string, index: number) => /^[ \t]*/.exec(source.slice(source.lastIndexOf('\n', index - 1) + 1))![0];
 const indentLines = (text: string, indent: string) => text.split('\n').join(`\n${indent}`);
 
-/** The webhook({ id: '<id>' }) call among the array's elements, if there is one. */
-const hasWebhook = (array: Node, id: string) =>
+/** The `sources` array, or `providers`, its old name, in a config object's AST. */
+const sourcesProperty = (properties: Node[]) =>
+  properties.find((p: Node) => p.type === 'ObjectProperty' && !p.computed && ['sources', 'providers'].includes(p.key?.name ?? p.key?.value)) as Node | undefined;
+
+/** A source({ id: '<id>' }) or webhook({ id: '<id>' }) call among the array's elements, if there is one. */
+const hasSource = (array: Node, id: string) =>
   array.elements.some(
     (el: Node | null) =>
       el?.type === 'CallExpression' &&
       el.callee?.type === 'Identifier' &&
-      el.callee.name === 'webhook' &&
+      (el.callee.name === 'source' || el.callee.name === 'webhook') &&
       el.arguments[0]?.type === 'ObjectExpression' &&
       el.arguments[0].properties.some(
         (p: Node) => p.type === 'ObjectProperty' && (p.key?.name === 'id' || p.key?.value === 'id') && p.value?.type === 'StringLiteral' && p.value.value === id,
@@ -85,15 +99,16 @@ const hasWebhook = (array: Node, id: string) =>
   );
 
 /**
- * Adds a webhook entry to the config's `providers` array, and the `webhook`
- * and `env` imports it needs. The array is edited as text at positions from
- * the parsed AST, so the rest of the file keeps its formatting; imports are
- * edited through magicast. Refuses (and the caller prints the snippet) when
- * the file isn't a shape it can edit safely: no `export default
- * defineConfig({ providers: [...] })` (or a plain object), providers built
- * with spreads or anything but an array literal, or imports it can't place.
+ * Adds a source entry to the config's `sources` array (or `providers`, its old
+ * name), and the `source` and `env` imports it needs. The array is edited as
+ * text at positions from the parsed AST, so the rest of the file keeps its
+ * formatting; imports are edited through magicast. Refuses (and the caller
+ * prints the snippet) when the file isn't a shape it can edit safely: no
+ * `export default defineConfig({ sources: [...] })` (or a plain object),
+ * sources built with spreads or anything but an array literal, or imports it
+ * can't place.
  */
-export async function insertProvider(source: string, id: string, snippet: string): Promise<InsertResult> {
+export async function insertSource(source: string, id: string, snippet: string): Promise<InsertResult> {
   const { parseModule, generateCode } = await import('magicast');
   const refuse = (reason: string): InsertResult => ({ status: 'refused', reason });
   let mod;
@@ -106,27 +121,27 @@ export async function insertProvider(source: string, id: string, snippet: string
   const exported = mod.exports.default as any;
   const options = exported?.$type === 'function-call' && exported.$callee === 'defineConfig' ? exported.$args[0] : exported;
   if (!options || options.$type !== 'object') return refuse('its default export isn\'t `defineConfig({ ... })` or an object literal');
-  const array = options.$ast.properties.find(
-    (p: Node) => p.type === 'ObjectProperty' && !p.computed && (p.key?.name === 'providers' || p.key?.value === 'providers'),
-  )?.value as Node | undefined;
-  if (!array) return refuse('it has no `providers` property');
-  if (array.type !== 'ArrayExpression') return refuse('`providers` isn\'t an array literal');
+  const property = sourcesProperty(options.$ast.properties);
+  const array = property?.value as Node | undefined;
+  const name = property?.key?.name ?? property?.key?.value ?? 'sources';
+  if (!array) return refuse('it has no `sources` property');
+  if (array.type !== 'ArrayExpression') return refuse(`\`${name}\` isn't an array literal`);
   if (array.elements.some((el: Node | null) => !el || el.type === 'SpreadElement')) {
-    return refuse('`providers` is built with a spread (for example providers enabled conditionally)');
+    return refuse(`\`${name}\` is built with a spread (for example sources enabled conditionally)`);
   }
-  if (hasWebhook(array, id)) return { status: 'exists' };
+  if (hasSource(array, id)) return { status: 'exists' };
 
   const imports = mod.imports.$items as Array<{ from: string; imported: string; local: string }>;
   const main = imports.find((i) => i.imported === 'defineConfig')?.from;
-  if (!main) return refuse('it doesn\'t import defineConfig, so the module to import webhook and env from isn\'t known');
-  // The package's providers entry point, or (working from source, as in this repo) the providers module already imported.
-  const providersModule = /^[./]/.test(main)
-    ? imports.find((i) => /\/providers(\.[cm]?[jt]s)?$/.test(i.from))?.from
-    : `${main}/providers`;
-  if (!providersModule) return refuse('the module to import webhook from isn\'t known');
-  for (const [name, from] of [['webhook', providersModule], ['env', main]] as const) {
-    const binding = imports.find((i) => i.local === name);
-    if (binding && (binding.imported !== name || binding.from !== from)) return refuse(`\`${name}\` is already bound to something else`);
+  if (!main) return refuse('it doesn\'t import defineConfig, so the module to import source and env from isn\'t known');
+  // The package's sources entry point, or (working from source, as in this repo) the sources module already imported.
+  const sourcesModule = /^[./]/.test(main) ? imports.find((i) => /\/(sources|providers)(\.[cm]?[jt]s)?$/.test(i.from))?.from : `${main}/sources`;
+  if (!sourcesModule) return refuse('the module to import source from isn\'t known');
+  for (const [binding, from] of [['source', sourcesModule], ['env', main]] as const) {
+    const existing = imports.find((i) => i.local === binding);
+    if (existing && (existing.imported !== binding || (existing.from !== from && !(binding === 'source' && /\/providers$/.test(existing.from))))) {
+      return refuse(`\`${binding}\` is already bound to something else`);
+    }
   }
 
   // 1. The entry, spliced into the array text.
@@ -153,7 +168,7 @@ export async function insertProvider(source: string, id: string, snippet: string
     return refuse(`the edit didn't parse (${(error as Error).message})`);
   }
   const have = new Set((edited.imports.$items as Array<{ local: string }>).map((i) => i.local));
-  if (!have.has('webhook')) edited.imports.$append({ from: providersModule, imported: 'webhook' });
+  if (!have.has('source')) edited.imports.$append({ from: sourcesModule, imported: 'source' });
   if (!have.has('env')) edited.imports.$append({ from: main, imported: 'env' });
   code = generateCode(edited).code;
   // magicast puts a blank line before an import declaration it adds; keep the imports together, as they were.
@@ -164,20 +179,20 @@ export async function insertProvider(source: string, id: string, snippet: string
   try {
     const check = parseModule(code);
     const checkOptions = (check.exports.default as any).$type === 'function-call' ? (check.exports.default as any).$args[0] : check.exports.default;
-    const checkArray = (checkOptions as any).$ast.properties.find((p: Node) => p.key?.name === 'providers' || p.key?.value === 'providers').value as Node;
+    const checkArray = sourcesProperty((checkOptions as any).$ast.properties)!.value as Node;
     const locals = new Set((check.imports.$items as Array<{ local: string }>).map((i) => i.local));
-    if (!hasWebhook(checkArray, id) || !locals.has('webhook') || !locals.has('env')) return refuse('the edited file didn\'t check out');
+    if (!hasSource(checkArray, id) || !locals.has('source') || !locals.has('env')) return refuse('the edited file didn\'t check out');
   } catch (error) {
     return refuse(`the edited file didn't parse (${(error as Error).message})`);
   }
   return { status: 'inserted', code };
 }
 
-/** A config with no providers, which `providers add webhook --write-config` starts from when there's no config file. */
+/** A config with no sources, which `sources add --write-config` starts from when there's no config file. */
 export const EMPTY_CONFIG = `import { defineConfig } from '@hookdeck/mcp-events-bridge';
 
 export default defineConfig({
-  providers: [],
+  sources: [],
 });
 `;
 

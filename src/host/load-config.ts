@@ -20,8 +20,9 @@ export async function loadConfig(
   const module = (/\.m?ts$/.test(found) ? await tsImport(url, import.meta.url) : await import(url)) as { default?: unknown };
   const config = unwrapDefault(module.default);
   if (!config) throw new ConfigError(`${path.basename(found)} has no default export; export default defineConfig({ ... })`);
-  if (!Array.isArray((config as BridgeConfig).providers)) {
-    throw new ConfigError(`${path.basename(found)}: the default export isn't a bridge config; export default defineConfig({ deployment, providers: [...] })`);
+  const { sources, providers } = config as BridgeConfig;
+  if (!Array.isArray(sources) && !Array.isArray(providers)) {
+    throw new ConfigError(`${path.basename(found)}: the default export isn't a bridge config; export default defineConfig({ deployment, sources: [...] })`);
   }
   return resolveConfig(config as BridgeConfig, environment);
 }
@@ -32,6 +33,6 @@ export async function loadConfig(
  * is one level deeper: `module.exports.default`.
  */
 function unwrapDefault(value: unknown): unknown {
-  if (value && typeof value === 'object' && !('providers' in value) && 'default' in value) return (value as { default: unknown }).default;
+  if (value && typeof value === 'object' && !('sources' in value) && !('providers' in value) && 'default' in value) return (value as { default: unknown }).default;
   return value;
 }

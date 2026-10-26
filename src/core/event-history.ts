@@ -1,5 +1,5 @@
 import type { Catalog } from './catalog.js';
-import type { ResolvedProvider } from './config.js';
+import type { ResolvedSource } from './config.js';
 import type { HookdeckClient, HookdeckRequest } from './hookdeck.js';
 import { providerSourceName } from './names.js';
 
@@ -19,7 +19,7 @@ export class EventHistory {
   private readonly sourceIds = new Map<string, string>();
 
   constructor(
-    private readonly deps: { hookdeck: HookdeckClient; catalog: Catalog; providers: ResolvedProvider[] },
+    private readonly deps: { hookdeck: HookdeckClient; catalog: Catalog; providers: ResolvedSource[] },
   ) {}
 
   /** The provider instance's Event Gateway source id (`bridge-<id>`), looked up once. */

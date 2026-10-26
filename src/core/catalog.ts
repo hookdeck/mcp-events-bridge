@@ -1,5 +1,5 @@
-import type { ResolvedProvider } from './config.js';
-import type { ProviderEvent } from './providers/types.js';
+import type { ResolvedSource } from './config.js';
+import type { SourceEvent } from './sources/types.js';
 
 /**
  * The events the bridge offers: every enabled event of every configured provider instance, named
@@ -30,19 +30,19 @@ export interface CatalogEntry {
   name: string;
   providerId: string;
   // Events have varying argument and summary types.
-  event: ProviderEvent<any, any>;
+  event: SourceEvent<any, any>;
 }
 
 export class Catalog {
   private readonly byName = new Map<string, CatalogEntry>();
 
-  constructor(providers: ResolvedProvider[]) {
+  constructor(providers: ResolvedSource[]) {
     for (const provider of providers) {
       for (const event of provider.definition.events) {
         if (!provider.events.includes(event.name)) continue;
         const name = mcpEventName(provider.id, event.name);
         // Ids are unique and have no dots, so a name splits at its first dot and can't repeat: an assertion.
-        if (this.byName.has(name)) throw new Error(`Two provider instances offer "${name}"`);
+        if (this.byName.has(name)) throw new Error(`Two sources offer "${name}"`);
         this.byName.set(name, { name, providerId: provider.id, event });
       }
     }

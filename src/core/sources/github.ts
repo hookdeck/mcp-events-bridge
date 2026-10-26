@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { InboundRequest, ProviderDefinition, ProviderEvent } from './types.js';
+import type { InboundRequest, SourceDefinition, SourceEvent } from './types.js';
 
 /*
  * GitHub. One event per GitHub webhook event type (`issues`, `pull_request`,
@@ -196,7 +196,7 @@ const githubPayload = z.object({
 
 type GithubArguments = z.infer<typeof githubArguments>;
 
-function githubEvent(type: string, description: string): ProviderEvent<GithubArguments, GithubSummary> {
+function githubEvent(type: string, description: string): SourceEvent<GithubArguments, GithubSummary> {
   return {
     name: type,
     description: `GitHub ${type}: ${description} Carries a summary (repository, action, sender, title, number, URL); read the full object with GitHub's own tools. Filter by repository, actions or sender.`,
@@ -267,7 +267,7 @@ async function hooksForUrl(fetchFn: typeof fetch, token: string, path: string, s
   return hooks.filter((hook) => hook.config?.url === sourceUrl).map((hook) => hook.id);
 }
 
-export const githubProvider: ProviderDefinition<GithubOptions> = {
+export const githubProvider: SourceDefinition<GithubOptions> = {
   type: 'github',
   displayName: 'GitHub',
   sourceType: 'GITHUB',

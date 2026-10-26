@@ -3,7 +3,7 @@ import type { CallbackFailureReason } from './errors.js';
 import type { HookdeckClient } from './hookdeck.js';
 import { verifyHookdeckSignature } from './hookdeck-signature.js';
 import { topicSourceName } from './names.js';
-import type { InboundRequest } from './providers/types.js';
+import type { InboundRequest } from './sources/types.js';
 import type { CallbackRegistry } from './callbacks.js';
 import { signStandardWebhook } from './sign.js';
 import type { SubscriptionRecord, SubscriptionStore } from './store.js';
@@ -92,7 +92,7 @@ export class Relay {
       return { status: 200, body: { ignored: 'body is not JSON' } };
     }
     if (match[1] === 'hookdeck') return this.handleNotification(body as IssueNotification);
-    if (!this.deps.providerIds.includes(match[1]!)) return { status: 404, body: { error: 'unknown provider instance' } };
+    if (!this.deps.providerIds.includes(match[1]!)) return { status: 404, body: { error: 'unknown source' } };
     return this.relay(match[1]!, { headers: lowerCase(headers), body });
   }
 

@@ -6,7 +6,7 @@ import { HookdeckApiError, type HookdeckClient } from '../../src/core/hookdeck.j
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { SubscriptionService } from '../../src/core/subscriptions.js';
 import { healthyDelivery, type SubscriptionInput } from '../../src/core/store.js';
-import { resend } from '../../src/providers.js';
+import { resend } from '../../src/sources.js';
 
 /*
  * Found in review: writes that read state outside the store's queue could
@@ -40,7 +40,7 @@ function slowGateway({ missing = new Set<string>() } = {}) {
 }
 
 const catalog = new Catalog(
-  resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' }).providers,
+  resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' }).sources,
 );
 
 function service(store: EventGatewayStore) {

@@ -10,7 +10,7 @@ import { MemoryStore } from '../../src/core/memory-store.js';
 import { Relay, failureReason } from '../../src/core/relay.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { healthyDelivery, type SubscriptionInput } from '../../src/core/store.js';
-import { resend, webhook } from '../../src/providers.js';
+import { resend, source } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
 const SIGNING_SECRET = 'hookdeck-signing-secret';
@@ -21,7 +21,7 @@ const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 
 // The fixture's email arrived at 2026-10-05T16:22:42.897Z.
 const OCCURRED = '2026-10-05T16:22:42.897Z';
 
-const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET });
+const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET });
 
 function setup(now = new Date('2026-10-05T16:30:00.000Z')) {
   const gateway = new FakeEventGateway();
@@ -31,7 +31,7 @@ function setup(now = new Date('2026-10-05T16:30:00.000Z')) {
   const relay = new Relay({
     signingSecret: SIGNING_SECRET,
     providerIds: ['resend'],
-    catalog: new Catalog(config.providers),
+    catalog: new Catalog(config.sources),
     store,
     hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
     recovered: (id) => recovered.has(id),
@@ -159,8 +159,8 @@ describe('Relay: generic webhook', () => {
   const fillsConfig = resolveConfig(
     defineConfig({
       deployment: 'dev',
-      providers: [
-        webhook({
+      sources: [
+        source({ type: 'webhook', 
           id: 'fills',
           verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'fills-secret-0123456789' },
           events: ['order.filled'],
@@ -178,7 +178,7 @@ describe('Relay: generic webhook', () => {
     const relay = new Relay({
       signingSecret: SIGNING_SECRET,
       providerIds: ['fills'],
-      catalog: new Catalog(fillsConfig.providers),
+      catalog: new Catalog(fillsConfig.sources),
       store,
       hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
     });

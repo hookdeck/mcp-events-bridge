@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { assertCredentials, ConfigError, defineConfig, env, resolveConfig } from '../../../src/core/config.js';
-import { readPath, type WebhookOptions } from '../../../src/core/providers/webhook.js';
-import type { InboundRequest } from '../../../src/core/providers/types.js';
-import { webhook } from '../../../src/providers.js';
+import { readPath, type SourceOptions, type WebhookSourceOptions } from '../../../src/core/sources/source.js';
+import type { InboundRequest } from '../../../src/core/sources/types.js';
+import { source, webhook } from '../../../src/sources.js';
+
+type WebhookOptions = WebhookSourceOptions;
 
 const base = { HOOKDECK_API_KEY: 'hk', HOOKDECK_SIGNING_SECRET: 'hs' };
 const SECRET = 'fills-secret-0123456789';
 
 const fills: WebhookOptions = {
   id: 'fills',
+  type: 'webhook',
   verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'X-Signature', secret: env('FILLS_WEBHOOK_SECRET') },
   events: { 'order.filled': { description: 'An order on my trading server filled.' } },
   eventId: { header: 'X-Delivery-Id' },
@@ -17,7 +20,7 @@ const fills: WebhookOptions = {
 };
 
 const resolved = (options: WebhookOptions = fills, environment: Record<string, string> = { FILLS_WEBHOOK_SECRET: SECRET }) =>
-  resolveConfig(defineConfig({ deployment: 'dev', providers: [webhook(options)] }), { ...base, ...environment }).providers[0]!;
+  resolveConfig(defineConfig({ deployment: 'dev', sources: [source(options)] }), { ...base, ...environment }).sources[0]!;
 
 const fill = { id: 'fill_1', symbol: 'AAPL', side: 'buy', quantity: 100, price: 187.5, filled_at: '2026-10-07T14:30:00.123Z' };
 const request = (body: unknown = fill, headers: Record<string, string> = {}): InboundRequest => ({
@@ -25,7 +28,7 @@ const request = (body: unknown = fill, headers: Record<string, string> = {}): In
   body,
 });
 
-describe('webhook provider: config', () => {
+describe('webhook source: config', () => {
   it('creates an instance with the given id and events, and a WEBHOOK source with HMAC verification', () => {
     const provider = resolved();
     expect(provider).toMatchObject({ id: 'fills', events: ['order.filled'] });
@@ -47,10 +50,10 @@ describe('webhook provider: config', () => {
   });
 
   it('rejects invalid verification and mapping config', () => {
-    const bad = (over: Partial<WebhookOptions>) => () => webhook({ ...fills, ...over } as WebhookOptions);
+    const bad = (over: Partial<WebhookOptions>) => () => source({ ...fills, ...over } as WebhookOptions);
     expect(bad({ verification: { type: 'hmac', algorithm: 'md5', encoding: 'hex', header: 'x-sig', secret: 's' } as never })).toThrow(/algorithm/);
     expect(bad({ verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', secret: 's' } as never })).toThrow(/header/);
-    expect(bad({ verification: { type: 'none' } as never })).toThrow(/webhook fills/);
+    expect(bad({ verification: { type: 'none' } as never })).toThrow(/source fills/);
     expect(bad({ verification: undefined as never })).toThrow(/verification/);
     expect(bad({ events: [] })).toThrow(/events/);
     expect(bad({ events: ['bad name'] })).toThrow(/event name/);
@@ -62,17 +65,17 @@ describe('webhook provider: config', () => {
 
   it('holds while a credential is missing: setup leaves the source unconnected and serve fails closed, naming the variable', () => {
     const provider = resolved(fills, {});
-    expect(provider.options.verification).toMatchObject({ secret: null });
+    expect(provider.options.credentials).toMatchObject({ secret: null });
     expect(provider.definition.missingCredentials!(provider.options)).toEqual(['FILLS_WEBHOOK_SECRET']);
     expect(() => provider.definition.sourceConfig!(provider.options)).toThrow(/FILLS_WEBHOOK_SECRET/);
-    const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [webhook(fills)] }), base);
+    const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [source(fills)] }), base);
     expect(() => assertCredentials(config)).toThrow(ConfigError);
-    expect(() => assertCredentials(config)).toThrow(/FILLS_WEBHOOK_SECRET \(provider fills\)/);
-    expect(() => assertCredentials(resolveConfig(defineConfig({ deployment: 'dev', providers: [webhook(fills)] }), { ...base, FILLS_WEBHOOK_SECRET: SECRET }))).not.toThrow();
+    expect(() => assertCredentials(config)).toThrow(/FILLS_WEBHOOK_SECRET \(source fills\)/);
+    expect(() => assertCredentials(resolveConfig(defineConfig({ deployment: 'dev', sources: [source(fills)] }), { ...base, FILLS_WEBHOOK_SECRET: SECRET }))).not.toThrow();
   });
 });
 
-describe('webhook provider: mapping', () => {
+describe('webhook source: mapping', () => {
   const event = (options: WebhookOptions = fills, name = 'order.filled') => resolved(options).definition.events.find((e) => e.name === name)!;
 
   it('matches only requests Event Gateway verified', () => {
@@ -127,7 +130,7 @@ describe('webhook provider: mapping', () => {
   });
 });
 
-describe('webhook provider: subscribe arguments', () => {
+describe('webhook source: subscribe arguments', () => {
   const event = resolved().definition.events[0]!;
 
   it('offers equality filters on the declared fields', () => {
@@ -146,5 +149,79 @@ describe('webhook provider: subscribe arguments', () => {
     expect(event.accepts({ side: 'sell' }, summary)).toBe(false);
     expect(event.accepts({ symbol: 'AAPL' }, { symbol: { nested: true } })).toBe(false);
     expect(event.accepts({ symbol: 'AAPL' }, {})).toBe(false);
+  });
+});
+
+describe('typed sources: an Event Gateway source type verifies the service\'s signatures', () => {
+  const stripe: SourceOptions = {
+    type: 'stripe',
+    secret: env('STRIPE_WEBHOOK_SECRET'),
+    events: { 'invoice.paid': { description: 'An invoice was paid.' }, 'customer.created': {} },
+    eventType: { field: 'type' },
+    eventId: { field: 'id' },
+    occurredAt: { field: 'created' },
+  };
+  const resolvedStripe = (environment: Record<string, string> = { STRIPE_WEBHOOK_SECRET: 'whsec_stripe' }) =>
+    resolveConfig(defineConfig({ deployment: 'dev', sources: [source(stripe)] }), { ...base, ...environment }).sources[0]!;
+
+  it('creates a STRIPE source whose auth holds the secret, with the type as the default id', () => {
+    const s = resolvedStripe();
+    expect(s).toMatchObject({ id: 'stripe', events: ['invoice.paid', 'customer.created'] });
+    expect(s.definition).toMatchObject({ type: 'stripe', sourceType: 'STRIPE', inboundDedupeFields: ['body.id'] });
+    expect(s.definition.sourceConfig!(s.options)).toEqual({ auth: { webhook_secret_key: 'whsec_stripe' } });
+    expect(s.definition.setupHint!({ sourceUrl: 'https://hkdk.events/x', providerEvents: [], options: s.options })).toContain("Event Gateway checks stripe's signatures with STRIPE_WEBHOOK_SECRET");
+  });
+
+  it('maps events as a webhook source does', () => {
+    const paid = resolvedStripe().definition.events.find((e) => e.name === 'invoice.paid')!;
+    const body = { id: 'evt_1', type: 'invoice.paid', created: 1791383400, data: { object: { id: 'in_1' } } };
+    expect(paid.matches(request(body))).toBe(true);
+    expect(paid.matches(request({ ...body, type: 'customer.created' }))).toBe(false);
+    expect(paid.eventId(request(body))).toBe('evt_1');
+    expect(paid.occurredAt(request(body))).toBe('2026-10-07T14:30:00.000Z');
+  });
+
+  it("takes each type's own credentials: several fields, mapped to Event Gateway's names", () => {
+    const postmark = resolveConfig(
+      defineConfig({ deployment: 'dev', sources: [source({ type: 'postmark', username: 'bridge', password: env('PM_PASSWORD'), events: ['bounce'] })] }),
+      { ...base, PM_PASSWORD: 'pw' },
+    ).sources[0]!;
+    expect(postmark.definition.sourceType).toBe('POSTMARK');
+    expect(postmark.definition.sourceConfig!(postmark.options)).toEqual({ auth: { username: 'bridge', password: 'pw' } });
+  });
+
+  it('holds while a credential is missing, and rejects unknown types and missing or unknown credentials', () => {
+    const waiting = resolvedStripe({});
+    expect(waiting.definition.missingCredentials!(waiting.options)).toEqual(['STRIPE_WEBHOOK_SECRET']);
+    expect(() => source({ type: 'nope', events: ['x'] } as never)).toThrow(/Event Gateway source type/);
+    expect(() => source({ type: 'stripe', events: ['x'] } as never)).toThrow(/secret/);
+    expect(() => source({ type: 'stripe', secret: 's', apiKey: 'k', events: ['x'] } as never)).toThrow(/apiKey/);
+  });
+
+  it('is typed per source type', () => {
+    // Compile-time checks, run by `npm run typecheck`.
+    source({ type: 'slack', secret: 's', events: ['message'] });
+    // @ts-expect-error postmark takes username and password, not secret
+    void (() => source({ type: 'postmark', secret: 's', events: ['bounce'] }));
+    // @ts-expect-error not an Event Gateway source type
+    void (() => source({ type: 'not-a-type', events: ['x'] }));
+    // @ts-expect-error a webhook source needs verification
+    void (() => source({ type: 'webhook', id: 'x', events: ['x'] }));
+  });
+});
+
+describe('webhook(), the old name', () => {
+  it('still works, with a warning that resolveConfig collects', () => {
+    const { type: _, ...old } = fills;
+    const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [webhook({ ...old, id: 'fills' })] }), { ...base, FILLS_WEBHOOK_SECRET: SECRET });
+    expect(config.sources[0]).toMatchObject({ id: 'fills', definition: { type: 'webhook', sourceType: 'WEBHOOK' } });
+    expect(config.warnings).toEqual([expect.stringContaining("source({ type: 'webhook', id: 'fills', ... })")]);
+  });
+
+  it('and `providers` in the config still works, with a warning', () => {
+    const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [source(fills)] }), { ...base, FILLS_WEBHOOK_SECRET: SECRET });
+    expect(config.sources.map((s) => s.id)).toEqual(['fills']);
+    expect(config.warnings).toEqual([expect.stringContaining('`providers` in the config is now `sources`')]);
+    expect(() => resolveConfig(defineConfig({ deployment: 'dev', sources: [], providers: [] }), base)).toThrow(/sources/);
   });
 });

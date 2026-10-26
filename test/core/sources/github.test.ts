@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_GITHUB_EVENTS, githubProvider } from '../../../src/core/providers/github.js';
-import type { InboundRequest } from '../../../src/core/providers/types.js';
-import { github } from '../../../src/providers.js';
+import { DEFAULT_GITHUB_EVENTS, githubProvider } from '../../../src/core/sources/github.js';
+import type { InboundRequest } from '../../../src/core/sources/types.js';
+import { github } from '../../../src/sources.js';
 import { FakeGithub } from '../../support/fake-github.js';
 
 const load = (name: string): InboundRequest => {

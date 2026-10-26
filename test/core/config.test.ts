@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, defineConfig, defineProvider, env, resolveConfig } from '../../src/core/config.js';
-import { resend } from '../../src/providers.js';
+import { ConfigError, defineConfig, defineSource, env, resolveConfig } from '../../src/core/config.js';
+import { resend } from '../../src/sources.js';
 
 const base = { HOOKDECK_API_KEY: 'hk', HOOKDECK_SIGNING_SECRET: 'hs', RESEND_API_KEY: 're_1' };
 const config = (over: Partial<Parameters<typeof defineConfig>[0]> = {}) =>
-  defineConfig({ deployment: 'dev', providers: [resend({ apiKey: env('RESEND_API_KEY') })], ...over });
+  defineConfig({ deployment: 'dev', sources: [resend({ apiKey: env('RESEND_API_KEY') })], ...over });
 
 describe('resolveConfig', () => {
   it('defaults the deployment name to local with CLI inbound and public with HTTP inbound, unless BRIDGE_DEPLOYMENT or the config says', () => {
-    const unnamed = (over: Partial<Parameters<typeof defineConfig>[0]> = {}) => defineConfig({ providers: [resend({ apiKey: env('RESEND_API_KEY') })], ...over });
+    const unnamed = (over: Partial<Parameters<typeof defineConfig>[0]> = {}) => defineConfig({ sources: [resend({ apiKey: env('RESEND_API_KEY') })], ...over });
     expect(resolveConfig(unnamed(), base).deployment).toBe('local');
     expect(resolveConfig(unnamed({ inbound: 'http', publicUrl: 'https://bridge.example.com' }), base).deployment).toBe('public');
     expect(resolveConfig(unnamed(), { ...base, BRIDGE_DEPLOYMENT: 'fly' }).deployment).toBe('fly');
@@ -26,7 +26,7 @@ describe('resolveConfig', () => {
       hookdeck: { apiKey: 'hk', signingSecret: 'hs' },
       auth: { mode: 'secret-url', mcpSecret: null, secretUrl: true },
     });
-    expect(resolved.providers[0]).toMatchObject({ id: 'resend', events: ['email.received'], options: { apiKey: 're_1' } });
+    expect(resolved.sources[0]).toMatchObject({ id: 'resend', events: ['email.received'], options: { apiKey: 're_1' } });
     expect(resolved.subscriptions.defaultTtlMs).toBe(30 * 24 * 60 * 60 * 1000);
   });
 
@@ -46,25 +46,25 @@ describe('resolveConfig', () => {
   });
 
   it('rejects duplicate instance ids and unknown events', () => {
-    expect(() => resolveConfig(config({ providers: [resend({ apiKey: 'a' }), resend({ apiKey: 'b' })] }), base)).toThrow(/give one an explicit id/);
+    expect(() => resolveConfig(config({ sources: [resend({ apiKey: 'a' }), resend({ apiKey: 'b' })] }), base)).toThrow(/give one an explicit id/);
     expect(() => resend({ apiKey: 'a', events: ['email.sent'] })).toThrow(/unknown event/);
   });
 
-  it('rejects provider ids the inbound route can\'t serve, and empty Hookdeck credentials', () => {
+  it('rejects source ids the inbound route can\'t serve, and empty Hookdeck credentials', () => {
     for (const id of ['resend.main', 'hookdeck', '']) {
-      expect(() => resolveConfig(config({ providers: [resend({ id, apiKey: 'a' })] }), base)).toThrow(/Provider id/);
+      expect(() => resolveConfig(config({ sources: [resend({ id, apiKey: 'a' })] }), base)).toThrow(/Source id/);
     }
     expect(() => resolveConfig(config({ hookdeck: { signingSecret: '' } }), base)).toThrow(/must not be empty/);
   });
 
-  it('resolves env() references nested in provider options, and leaves other values alone', () => {
-    const custom = defineProvider({ type: 'custom', displayName: 'Custom', sourceType: 'WEBHOOK', events: [] });
+  it('resolves env() references nested in source options, and leaves other values alone', () => {
+    const custom = defineSource({ type: 'custom', displayName: 'Custom', sourceType: 'WEBHOOK', events: [] });
     const when = new Date(0);
     const instance = custom({ auth: { secret: env('CUSTOM_SECRET'), user: 'u' }, list: [env('CUSTOM_SECRET')], when } as Record<string, unknown>);
-    const resolved = resolveConfig(config({ providers: [instance] }), { ...base, CUSTOM_SECRET: 'shh' });
-    expect(resolved.providers[0]!.options).toEqual({ auth: { secret: 'shh', user: 'u' }, list: ['shh'], when });
-    expect(resolved.providers[0]!.options.when).toBe(when);
-    expect(() => resolveConfig(config({ providers: [instance] }), base)).toThrow(/CUSTOM_SECRET/);
+    const resolved = resolveConfig(config({ sources: [instance] }), { ...base, CUSTOM_SECRET: 'shh' });
+    expect(resolved.sources[0]!.options).toEqual({ auth: { secret: 'shh', user: 'u' }, list: ['shh'], when });
+    expect(resolved.sources[0]!.options.when).toBe(when);
+    expect(() => resolveConfig(config({ sources: [instance] }), base)).toThrow(/CUSTOM_SECRET/);
   });
 
   it('reads BRIDGE_MCP_SECRET when set', () => {

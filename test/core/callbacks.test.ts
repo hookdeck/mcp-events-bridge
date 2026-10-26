@@ -14,10 +14,10 @@ import { generateWebhookSecret } from '../../src/core/secret.js';
 import { matchSignatures, type SignedHeaders } from '../../src/core/sign.js';
 import { healthyDelivery, type SubscriptionInput } from '../../src/core/store.js';
 import { SubscriptionService } from '../../src/core/subscriptions.js';
-import { resend } from '../../src/providers.js';
+import { resend } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
-const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 'hs' });
+const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 'hs' });
 
 function setup({ graceMs = 60 * 60 * 1000 } = {}) {
   const gateway = new FakeEventGateway();
@@ -261,7 +261,7 @@ describe('Signing for callback URLs', () => {
     const service = new SubscriptionService({
       settings: DEFAULT_SUBSCRIPTION_SETTINGS,
       store,
-      catalog: new Catalog(config.providers),
+      catalog: new Catalog(config.sources),
       transport: { assertPublicHost: async () => {}, post: async () => ({ status: 200, body: '' }) },
       verify: async (_t, options) => (seen.push([options.secret, ...(options.extraSecrets ?? [])]), { ok: true }),
       callbacks,
@@ -293,7 +293,7 @@ describe('Signing for callback URLs', () => {
     const record = await callbacks.create({ agent: 'laptop', name: 'email' });
     const agentSecret = generateWebhookSecret();
     await store.put(subscription({ url: record.url, secret: agentSecret }));
-    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.providers), store, hookdeck, callbacks, now: () => new Date('2026-10-05T16:30:00.000Z') });
+    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.sources), store, hookdeck, callbacks, now: () => new Date('2026-10-05T16:30:00.000Z') });
 
     const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fixtures', 'resend', 'email-received.json'), 'utf8')) as { headers: Record<string, string>; body: unknown };
     const raw = JSON.stringify(fixture.body);
@@ -321,7 +321,7 @@ describe('Paths under a tunnel URL (one base URL for every subscription, as Herm
     const service = new SubscriptionService({
       settings: DEFAULT_SUBSCRIPTION_SETTINGS,
       store,
-      catalog: new Catalog(config.providers),
+      catalog: new Catalog(config.sources),
       transport: { assertPublicHost: async () => {}, post: async () => ({ status: 200, body: '' }) },
       verify: async (_t, options) => (seen.push([options.secret, ...(options.extraSecrets ?? [])]), { ok: true }),
       callbacks,
@@ -331,7 +331,7 @@ describe('Paths under a tunnel URL (one base URL for every subscription, as Herm
     expect(seen).toEqual([[agentSecret, sourceSecret]]);
 
     // Deliveries too.
-    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.providers), store, hookdeck, callbacks, now: () => new Date() });
+    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.sources), store, hookdeck, callbacks, now: () => new Date() });
     const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fixtures', 'resend', 'email-received.json'), 'utf8')) as { headers: Record<string, string>; body: unknown };
     const raw = JSON.stringify(fixture.body);
     await relay.handle('/inbound/resend', { ...fixture.headers, 'x-hookdeck-signature': createHmac('sha256', 'hs').update(raw).digest('base64') }, raw);

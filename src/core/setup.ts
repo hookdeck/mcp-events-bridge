@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { ResolvedConfig, ResolvedProvider } from './config.js';
+import type { ResolvedConfig, ResolvedSource } from './config.js';
 import type { HookdeckClient, Rule, UpsertConnectionInput } from './hookdeck.js';
 import { notificationsConnectionName, providerConnectionName, providerSourceName } from './names.js';
 
@@ -26,7 +26,7 @@ interface SourceDescription {
 }
 
 export interface SetupReport {
-  providers: Array<{
+  sources: Array<{
     id: string;
     sourceUrl: string;
     connection: string;
@@ -46,8 +46,8 @@ export interface SetupReport {
  * Setup still does everything it can first (including creating the waiting provider's source, so its URL can be
  * registered), but a missing secret is a failure, not a quiet success: delivery for that provider is held.
  */
-export function missingCredentialsError(report: Pick<SetupReport, 'providers'>): string | undefined {
-  const waiting = report.providers.filter((p) => p.waitingFor?.length);
+export function missingCredentialsError(report: Pick<SetupReport, 'sources'>): string | undefined {
+  const waiting = report.sources.filter((p) => p.waitingFor?.length);
   if (!waiting.length) return undefined;
   const lines = waiting.map((p) => `  ${p.id}: set ${p.waitingFor!.join(', ')}; delivery is held until then`);
   return `Setup isn't complete:\n${lines.join('\n')}\nSet the variable (for example in .env) and run setup again.`;
@@ -81,10 +81,10 @@ function parseSourceDescription(value: string | null | undefined): SourceDescrip
 /** A changed source secret took about 61 seconds to apply at Event Gateway's edge in one test, and about a second in another. */
 export const SECRET_PROPAGATION_NOTE = 'a new or changed secret can take up to about a minute to take effect at Event Gateway';
 
-/** Same verification config: the type and every auth field the provider sets. */
+/** Same verification config: the auth type (for a `webhook` source; a service's source type has none) and every auth field the source sets. */
 function sameSourceConfig(current: { auth_type?: string | null; auth?: Record<string, unknown> | null } | null | undefined, wanted: Record<string, unknown>) {
   const auth = (wanted.auth ?? {}) as Record<string, unknown>;
-  return current?.auth_type === wanted.auth_type && Object.entries(auth).every(([key, value]) => current?.auth?.[key] === value);
+  return (wanted.auth_type === undefined || current?.auth_type === wanted.auth_type) && Object.entries(auth).every(([key, value]) => current?.auth?.[key] === value);
 }
 
 /**
@@ -93,7 +93,7 @@ function sameSourceConfig(current: { auth_type?: string | null; auth?: Record<st
  * created and rewritten only when it differs, so re-running doesn't churn the secret. While credentials are
  * missing, the source is created without verification, and the caller must not connect it.
  */
-export async function ensureSource(hookdeck: HookdeckClient, provider: ResolvedProvider, log: (message: string) => void = () => {}) {
+export async function ensureSource(hookdeck: HookdeckClient, provider: ResolvedSource, log: (message: string) => void = () => {}) {
   const { definition } = provider;
   const sourceName = providerSourceName(provider.id);
   const missing = definition.missingCredentials?.(provider.options) ?? [];
@@ -126,7 +126,7 @@ export async function ensureSource(hookdeck: HookdeckClient, provider: ResolvedP
   return { source, existing, configured, missing };
 }
 
-async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
+async function setupProvider(deps: SetupDeps, provider: ResolvedSource) {
   const { config, hookdeck } = deps;
   const log = deps.log ?? (() => {});
   const { definition } = provider;
@@ -137,7 +137,7 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedProvider) {
 
   const { source, existing, configured, missing } = await ensureSource(hookdeck, provider, log);
   const hint = definition.setupHint?.({ sourceUrl: source.url, providerEvents, options: provider.options });
-  const report = (webhook: SetupReport['providers'][number]['webhook']) => ({
+  const report = (webhook: SetupReport['sources'][number]['webhook']) => ({
     id: provider.id,
     sourceUrl: source.url,
     connection: connectionName,
@@ -250,10 +250,10 @@ export function mcpUrl(config: ResolvedConfig, secret: string): string {
 }
 
 export async function runSetup(deps: SetupDeps): Promise<SetupReport> {
-  const providers = [];
-  for (const provider of deps.config.providers) providers.push(await setupProvider(deps, provider));
+  const sources = [];
+  for (const source of deps.config.sources) sources.push(await setupProvider(deps, source));
   const { notifications, triggers } = await setupNotifications(deps);
   const generated = !deps.config.auth.mcpSecret;
   const secret = deps.config.auth.mcpSecret ?? randomBytes(32).toString('base64url');
-  return { providers, notifications, triggers, mcp: { secret, generated, endpoint: mcpEndpoint(deps.config), url: mcpUrl(deps.config, secret) } };
+  return { sources, notifications, triggers, mcp: { secret, generated, endpoint: mcpEndpoint(deps.config), url: mcpUrl(deps.config, secret) } };
 }

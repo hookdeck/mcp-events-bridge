@@ -10,7 +10,7 @@ import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { ListenSupervisor } from '../../src/host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from '../../src/host/local-runtime.js';
 import type { BridgeServer } from '../../src/host/server.js';
-import { resend } from '../../src/providers.js';
+import { resend } from '../../src/sources.js';
 
 class FakeListen extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -27,7 +27,7 @@ class FakeListen extends EventEmitter {
   }
 }
 
-const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 'hs' });
+const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 'hs' });
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const running: LocalRuntime[] = [];
 afterEach(async () => {

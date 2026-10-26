@@ -3,21 +3,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { Catalog, descriptionWarnings } from './core/catalog.js';
-import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedProvider } from './core/config.js';
+import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedSource } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
 import { providerSourceName } from './core/names.js';
-import { webhook, type WebhookOptions } from './core/providers/webhook.js';
+import { source, type SourceOptions, type WebhookVerification } from './core/sources/source.js';
+import { SOURCE_TYPES, type SourceTypeName } from './core/sources/source-types.generated.js';
 import { ensureSource, mcpEndpoint, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
-import { EMPTY_CONFIG, insertProvider, missingEnvLines, referencedEnv, webhookSnippet, writeAtomically } from './host/providers-add.js';
+import { EMPTY_CONFIG, insertSource, missingEnvLines, referencedEnv, sourceSnippet, writeAtomically } from './host/sources-add.js';
 import { createBridgeServer } from './host/server.js';
 import { watchCommand, watchesCommand } from './host/watch-cli.js';
 
 /*
- * mcp-events-bridge setup | serve | providers add webhook <id> | watch | watches | doctor
+ * mcp-events-bridge setup | serve | sources add <id> | watch | watches | doctor
  *
  * `doctor` comes in stage 7.
  */
@@ -25,15 +26,16 @@ import { watchCommand, watchesCommand } from './host/watch-cli.js';
 const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen]
 
 Commands:
-  setup   Create or update the Event Gateway resources and provider webhooks in bridge.config.ts
+  setup   Create or update the Event Gateway resources, and the webhooks of the sources in bridge.config.ts
   serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper. With CLI inbound it checks
           the Event Gateway setup, runs \`hookdeck listen\` for every configured source (--no-listen
           to run it yourself) and for local agents' tunnel URLs, and recovers events missed while
           \`listen\` was down
-  providers add webhook <id> [options]
-          Add a generic webhook: create its Event Gateway source and print the URL to register
-          with the sender, add its variables to .env, and print (or with --write-config, add)
-          its bridge.config.ts entry. \`providers add webhook --help\` for the options
+  sources add <id> [--type <type>] [options]
+          Add a source you register with the sender yourself (a service's source type, such as
+          stripe, or webhook for any HTTP sender): create its Event Gateway source and print the
+          URL to register, add its variables to .env, and print (or with --write-config, add)
+          its bridge.config.ts entry. \`sources add --help\` for the options
   watch <event...> [--filter key=value] | --list <file>
           Print one JSON line per event as it happens, polling the bridge (events/poll). With a
           watch list, follow it as it changes and resume where it left off. \`watch --help\`
@@ -41,18 +43,22 @@ Commands:
           Edit a watch list. \`watches --help\`
   doctor  Check the deployment (not built yet)`;
 
-const PROVIDERS_ADD_USAGE = `Usage: mcp-events-bridge providers add webhook <id> [options]
+const SOURCES_ADD_USAGE = `Usage: mcp-events-bridge sources add <id> [--type <type>] [options]
 
 Creates the Event Gateway source bridge-<id> (or reuses it) and prints its URL, so you can register it
 with the sender before you have its secret. Delivery stays held until the secret is set and setup runs.
+(\`providers add webhook <id>\`, the old name, still works.)
 
 Options:
+  --type <type>              an Event Gateway source type, such as stripe, slack or shopify, verified with that
+                             service's signatures; or webhook (default), for any HTTP sender, verified as below.
+                             Its credentials go in .env as <ID>_WEBHOOK_SECRET (or <ID>_<NAME> for other fields)
   --event <name>[=<value>]   event name, repeatable, offered over MCP as <id>.<name> (default: received). With several events,
                              <value> is the sender's value for each, read from --event-type-*
-  --verification <type>      hmac (default), standard-webhooks, basic-auth or api-key
-  --algorithm <name>         hmac: sha256 (default), sha1 or sha512
-  --encoding <name>          hmac: hex (default), base64 or base64url
-  --header <name>            hmac: the signature header (default x-signature); api-key: the key header
+  --verification <type>      webhook: hmac (default), standard-webhooks, basic-auth or api-key
+  --algorithm <name>         webhook, hmac: sha256 (default), sha1 or sha512
+  --encoding <name>          webhook, hmac: hex (default), base64 or base64url
+  --header <name>            webhook, hmac: the signature header (default x-signature); api-key: the key header
                              (default x-api-key)
   --event-type-header <name> | --event-type-field <path>   where the sender names the event
   --event-id-header <name>   | --event-id-field <path>     the sender's stable delivery id
@@ -65,22 +71,23 @@ Options:
 
 async function setup(configFile: string | undefined) {
   const config = await loadConfig({ file: configFile });
+  for (const warning of config.warnings) console.warn(`warning: ${warning}`);
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const report = await runSetup({ config, hookdeck, fetch, log: (m) => console.log(`  ${m}`) });
 
   console.log(`\nDeployment "${config.deployment}", ${config.inbound} inbound`);
-  for (const p of report.providers) {
+  for (const p of report.sources) {
     const connection = p.waitingFor ? `connection not created until ${p.waitingFor.join(', ')} is set` : `connection ${p.connection}`;
-    console.log(`  provider ${p.id}: source ${p.sourceUrl}, ${connection}, webhook ${p.webhook}`);
+    console.log(`  source ${p.id}: ${p.sourceUrl}, ${connection}, webhook ${p.webhook}`);
     if (p.hint) console.log(p.hint.split('\n').map((line) => `    ${line}`).join('\n'));
   }
-  for (const warning of descriptionWarnings(new Catalog(config.providers))) console.warn(`  warning: ${warning}`);
+  for (const warning of descriptionWarnings(new Catalog(config.sources))) console.warn(`  warning: ${warning}`);
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
     // Without providers still waiting for a secret: their source has no connection yet, and `listen` would create a default one.
-    const waiting = new Set(report.providers.filter((p) => p.waitingFor?.length).map((p) => p.id));
-    const ready = { ...config, providers: config.providers.filter((p) => !waiting.has(p.id)) };
+    const waiting = new Set(report.sources.filter((p) => p.waitingFor?.length).map((p) => p.id));
+    const ready = { ...config, sources: config.sources.filter((p) => !waiting.has(p.id)) };
     console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(ready, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     // Log the CLI in now rather than at the first `serve`, so `hookdeck` commands run here use the bridge's project from the start.
     const cliConfigPath = process.env.BRIDGE_HOOKDECK_CLI_CONFIG ?? DEFAULT_CLI_CONFIG;
@@ -108,6 +115,7 @@ async function setup(configFile: string | undefined) {
 
 async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {
   const config = await loadConfig({ file: configFile });
+  for (const warning of config.warnings) console.warn(`[bridge] warning: ${warning}`);
   // Fail closed: an instance waiting for its secret has no inbound connection and must not be served.
   assertCredentials(config);
 
@@ -153,7 +161,7 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
         console.error('[bridge] hookdeck listen did not connect within 30s');
         return stop(1);
       }
-      console.log('[bridge] hookdeck listen connected: forwarding provider events and issue notifications, and recovering any missed while it was down');
+      console.log('[bridge] hookdeck listen connected: forwarding source events and issue notifications, and recovering any missed while it was down');
     } else {
       console.log(`[bridge] --no-listen: forward events yourself with: hookdeck ${listenArgs(config, port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     }
@@ -172,12 +180,13 @@ function loadDotEnv() {
   }
 }
 
-/** `providers <subcommand>`: only `providers add webhook <id>` so far. */
-async function providers(argv: string[]) {
+/** `sources add <id> [--type <type>]`, and `providers add webhook <id>`, its old name. */
+async function sourcesCommand(argv: string[], { legacy }: { legacy: boolean }) {
   const { positionals, values } = parseArgs({
     args: argv,
     allowPositionals: true,
     options: {
+      type: { type: 'string', default: 'webhook' },
       event: { type: 'string', multiple: true },
       verification: { type: 'string', default: 'hmac' },
       algorithm: { type: 'string', default: 'sha256' },
@@ -196,12 +205,25 @@ async function providers(argv: string[]) {
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
-  const [subcommand, type, id] = positionals;
-  if (subcommand !== 'add') throw new ConfigError(`unknown command \`providers ${subcommand ?? ''}\`. Supported: providers add webhook <id>`);
-  if (type !== 'webhook') {
-    throw new ConfigError(`\`providers add\` supports: webhook. Built-in providers (resend, github) are added to bridge.config.ts directly; see the README`);
+  let subcommand: string | undefined;
+  let id: string | undefined;
+  let type = values.type.toLowerCase();
+  if (legacy) {
+    // providers add webhook <id>
+    const [sub, kind, legacyId] = positionals;
+    if (sub !== 'add' || kind !== 'webhook') throw new ConfigError('`providers` is now `sources`: use `sources add <id> --type webhook`');
+    console.warn('warning: `providers add webhook <id>` is now `sources add <id> --type webhook` (it still works for now)');
+    [subcommand, id, type] = [sub, legacyId, 'webhook'];
+  } else {
+    [subcommand, id] = positionals;
+    if (subcommand !== 'add') throw new ConfigError(`unknown command \`sources ${subcommand ?? ''}\`. Supported: sources add <id> [--type <type>]`);
   }
-  if (values.help || !id) return console.log(PROVIDERS_ADD_USAGE);
+  if (values.help || !id) return console.log(SOURCES_ADD_USAGE);
+  if (type !== 'webhook' && !Object.hasOwn(SOURCE_TYPES, type)) {
+    throw new ConfigError(
+      `--type must be webhook or an Event Gateway source type, such as stripe or slack (got ${type}). resend and github have their own helpers in bridge.config.ts; see the README`,
+    );
+  }
   const one = <T>(a: T | undefined, b: T | undefined, what: string) => {
     if (a !== undefined && b !== undefined) throw new ConfigError(`set --${what}-header or --${what}-field, not both`);
     return a;
@@ -210,50 +232,57 @@ async function providers(argv: string[]) {
   one(values['event-id-header'], values['event-id-field'], 'event-id');
 
   // The entry, as it will appear in bridge.config.ts. Credentials are env() references, named after the id.
-  const prefix = `${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_WEBHOOK`;
-  const kind = values.verification;
-  const verification: WebhookOptions['verification'] =
-    kind === 'hmac'
-      ? { type: 'hmac', algorithm: values.algorithm as 'sha256', encoding: values.encoding as 'hex', header: values.header ?? 'x-signature', secret: env(`${prefix}_SECRET`) }
-      : kind === 'standard-webhooks'
-        ? { type: 'standard-webhooks', secret: env(`${prefix}_SECRET`) }
-        : kind === 'basic-auth'
-          ? { type: 'basic-auth', username: env(`${prefix}_USERNAME`), password: env(`${prefix}_PASSWORD`) }
-          : kind === 'api-key'
-            ? { type: 'api-key', header: values.header ?? 'x-api-key', key: env(`${prefix}_API_KEY`) }
-            : (() => {
-                throw new ConfigError(`--verification must be hmac, standard-webhooks, basic-auth or api-key`);
-              })();
+  const prefix = id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  const envFor = (option: string) => env(option === 'secret' ? `${prefix}_WEBHOOK_SECRET` : `${prefix}_${option.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`);
   const events = (values.event?.length ? values.event : ['received']).map((e) => e.split('=') as [string, string?]);
   const withValues = events.some(([, value]) => value !== undefined);
-  const source = (header?: string, field?: string) => (header ? { header } : field ? { field } : undefined);
-  const options: WebhookOptions = {
+  const where = (header?: string, field?: string) => (header ? { header } : field ? { field } : undefined);
+  const common = {
     id,
-    verification,
     events: withValues ? Object.fromEntries(events.map(([name, value]) => [name, value ? { value } : {}])) : events.map(([name]) => name),
-    eventType: source(values['event-type-header'], values['event-type-field']),
-    eventId: source(values['event-id-header'], values['event-id-field']),
+    eventType: where(values['event-type-header'], values['event-type-field']),
+    eventId: where(values['event-id-header'], values['event-id-field']),
     occurredAt: values['occurred-at-field'] ? { field: values['occurred-at-field'] } : undefined,
     fields: values.field,
     filters: values.filter,
   };
-  const instance = webhook(options); // validates the options
-  const snippet = webhookSnippet(options);
+  let options: SourceOptions;
+  if (type === 'webhook') {
+    const kind = values.verification;
+    const verification: WebhookVerification =
+      kind === 'hmac'
+        ? { type: 'hmac', algorithm: values.algorithm as 'sha256', encoding: values.encoding as 'hex', header: values.header ?? 'x-signature', secret: envFor('secret') }
+        : kind === 'standard-webhooks'
+          ? { type: 'standard-webhooks', secret: envFor('secret') }
+          : kind === 'basic-auth'
+            ? { type: 'basic-auth', username: env(`${prefix}_WEBHOOK_USERNAME`), password: env(`${prefix}_WEBHOOK_PASSWORD`) }
+            : kind === 'api-key'
+              ? { type: 'api-key', header: values.header ?? 'x-api-key', key: env(`${prefix}_WEBHOOK_API_KEY`) }
+              : (() => {
+                  throw new ConfigError(`--verification must be hmac, standard-webhooks, basic-auth or api-key`);
+                })();
+    options = { ...common, type: 'webhook', verification };
+  } else {
+    const credentials = Object.fromEntries(Object.keys(SOURCE_TYPES[type as SourceTypeName].auth).map((option) => [option, envFor(option)]));
+    options = { ...common, type, ...credentials } as SourceOptions;
+  }
+  const instance = source(options); // validates the options
+  const snippet = sourceSnippet(options);
 
   // 1. The source, from the config's entry if there's one already (so its options win), else from the flags.
-  let provider: ResolvedProvider | undefined;
+  let configured: ResolvedSource | undefined;
   let fromConfig = false;
   try {
-    provider = (await loadConfig({ file: values.config })).providers.find((p) => p.id === id);
-    fromConfig = Boolean(provider);
+    configured = (await loadConfig({ file: values.config })).sources.find((p) => p.id === id);
+    fromConfig = Boolean(configured);
   } catch {
     // no loadable config yet: use the flags
   }
-  if (provider && provider.definition.type !== 'webhook') throw new ConfigError(`bridge.config.ts already has a ${provider.definition.type} provider with the id "${id}"`);
-  provider ??= resolveConfig(
-    defineConfig({ deployment: 'cli', hookdeck: { apiKey: env('HOOKDECK_API_KEY'), signingSecret: 'unused' }, providers: [instance] }),
+  if (configured && configured.definition.type !== type) throw new ConfigError(`bridge.config.ts already has a ${configured.definition.type} source with the id "${id}"`);
+  configured ??= resolveConfig(
+    defineConfig({ deployment: 'cli', hookdeck: { apiKey: env('HOOKDECK_API_KEY'), signingSecret: 'unused' }, sources: [instance] }),
     process.env,
-  ).providers[0]!;
+  ).sources[0]!;
   const hookdeck = new HookdeckClient({ apiKey: process.env.HOOKDECK_API_KEY ?? '' });
   if (!process.env.HOOKDECK_API_KEY) throw new ConfigError('HOOKDECK_API_KEY is not set');
   const existingSource = (await hookdeck.listSources({ name: providerSourceName(id) })).models[0];
@@ -265,9 +294,9 @@ async function providers(argv: string[]) {
         return undefined;
       }
     })();
-    if (owner !== 'webhook') throw new ConfigError(`the Event Gateway source ${existingSource.name} exists and isn't a bridge webhook source; choose another id`);
+    if (owner !== type) throw new ConfigError(`the Event Gateway source ${existingSource.name} exists and isn't a bridge ${type} source; choose another id`);
   }
-  const { source: created, missing } = await ensureSource(hookdeck, provider, (m) => console.log(`  ${m}`));
+  const { source: created, missing } = await ensureSource(hookdeck, configured, (m) => console.log(`  ${m}`));
   console.log(`\nSource ${created.name} ${existingSource ? 'already existed' : 'created'}${fromConfig ? ' (from the entry in bridge.config.ts)' : ''}.`);
   console.log(`Register this URL with the sender:\n  ${created.url}`);
   console.log(
@@ -286,16 +315,16 @@ async function providers(argv: string[]) {
   // 3. bridge.config.ts: print the entry, or insert it with --write-config.
   const configFile = values.config ? path.resolve(values.config) : CONFIG_FILES.map((name) => path.resolve(name)).find((f) => fs.existsSync(f));
   const printSnippet = (why: string) => {
-    console.log(`\n${why} Add this to \`providers\` in ${configFile ? path.basename(configFile) : 'bridge.config.ts'}, importing webhook from '@hookdeck/mcp-events-bridge/providers' and env from '@hookdeck/mcp-events-bridge':\n`);
+    console.log(`\n${why} Add this to \`sources\` in ${configFile ? path.basename(configFile) : 'bridge.config.ts'}, importing source from '@hookdeck/mcp-events-bridge/sources' and env from '@hookdeck/mcp-events-bridge':\n`);
     console.log(snippet.split('\n').map((line) => `    ${line}`).join('\n') + ',');
   };
   if (fromConfig) console.log(`\n${configFile ? path.basename(configFile) : 'The config'} already has the "${id}" entry.`);
   else if (!values['write-config']) printSnippet('Next:');
   else {
-    // No config file yet: start one, so a first webhook needs no hand-written file.
+    // No config file yet: start one, so a first source needs no hand-written file.
     const target = configFile ?? path.resolve(CONFIG_FILES[0]!);
     const exists = fs.existsSync(target);
-    const result = await insertProvider(exists ? fs.readFileSync(target, 'utf8') : EMPTY_CONFIG, id, snippet);
+    const result = await insertSource(exists ? fs.readFileSync(target, 'utf8') : EMPTY_CONFIG, id, snippet);
     if (result.status === 'inserted') {
       writeAtomically(target, result.code);
       console.log(`\n${exists ? 'Added' : `Created ${path.basename(target)} with`} the "${id}" entry${exists ? ` to ${path.basename(target)}` : ''}.`);
@@ -316,9 +345,9 @@ function packageVersion(): string {
 
 async function main() {
   const argv = process.argv.slice(2);
-  if (argv[0] === 'providers') {
+  if (argv[0] === 'sources' || argv[0] === 'providers') {
     loadDotEnv();
-    return providers(argv.slice(1));
+    return sourcesCommand(argv.slice(1), { legacy: argv[0] === 'providers' });
   }
   if (argv[0] === 'watch' || argv[0] === 'watches') {
     try {
