@@ -35,7 +35,9 @@ Options:
                           environment or .env. For a URL ending /mcp, BRIDGE_MCP_SECRET is sent as
                           Authorization: Bearer; a URL ending /mcp/<secret> carries it itself
   --url-file <file>       a file holding the MCP URL, read when connecting, else BRIDGE_MCP_URL
-                          (default with --store: <store>/mcp-url; .env isn't read)`;
+                          (default with --store: <store>/mcp-url; .env isn't read)
+  --secret-file <file>    a file holding the secret to send as Authorization: Bearer, read when
+                          connecting, else BRIDGE_MCP_SECRET (default with --store: <store>/mcp-secret)`;
 
 export const WATCHES_USAGE = `Usage: mcp-events-bridge watches add <event name> [--filter key=value...] <list options>
        mcp-events-bridge watches remove <event name> [--filter key=value...] | --all  <list options>
@@ -55,11 +57,12 @@ const listOptions = {
   project: { type: 'string' },
   url: { type: 'string' },
   'url-file': { type: 'string' },
+  'secret-file': { type: 'string' },
   filter: { type: 'string', multiple: true },
   help: { type: 'boolean', short: 'h', default: false },
 } as const;
 
-type ListValues = { list?: string; state?: string; store?: string; project?: string; url?: string; 'url-file'?: string };
+type ListValues = { list?: string; state?: string; store?: string; project?: string; url?: string; 'url-file'?: string; 'secret-file'?: string };
 
 function listPaths(values: ListValues): { list: string; state: string } | undefined {
   if (values.store || values.project) {
@@ -90,8 +93,28 @@ function urlSource(values: ListValues): () => string {
   };
 }
 
+/** The secret for Authorization: Bearer, read when connecting: --secret-file (or <store>/mcp-secret), else BRIDGE_MCP_SECRET. */
+function secretSource(values: ListValues): () => string | undefined {
+  const file = values['secret-file'] ?? (values.store ? path.join(values.store, 'mcp-secret') : undefined);
+  return () => {
+    if (file) {
+      try {
+        const secret = fs.readFileSync(file, 'utf8').trim();
+        if (secret) return secret;
+      } catch {
+        // not written: the URL may carry the secret itself
+      }
+    }
+    return process.env.BRIDGE_MCP_SECRET || undefined;
+  };
+}
+
 /** A polling client for the bridge. One MCP client for all the loops; a failed request drops it, and the next poll reconnects. */
-async function bridgePoller(url: () => string, version: string): Promise<{ poll: Poll; connect: () => Promise<unknown>; close: () => Promise<void> }> {
+async function bridgePoller(
+  url: () => string,
+  secret: () => string | undefined,
+  version: string,
+): Promise<{ poll: Poll; connect: () => Promise<unknown>; close: () => Promise<void> }> {
   // Loaded here so the other commands don't need the MCP client.
   const { Client, StreamableHTTPClientTransport } = await import('@modelcontextprotocol/client');
   const { z } = await import('zod');
@@ -101,7 +124,7 @@ async function bridgePoller(url: () => string, version: string): Promise<{ poll:
     (client ??= (async () => {
       const c = new Client({ name: 'mcp-events-bridge-watch', version }, { versionNegotiation: { mode: 'auto' } });
       const current = url();
-      await c.connect(new StreamableHTTPClientTransport(new URL(current), { requestInit: { headers: watchHeaders(current, process.env) } }));
+      await c.connect(new StreamableHTTPClientTransport(new URL(current), { requestInit: { headers: watchHeaders(current, secret()) } }));
       return c;
     })());
   const poll: Poll = async (request, signal) => {
@@ -141,7 +164,7 @@ export async function watchCommand(argv: string[], version: string, loadDotEnv: 
   if (values.help || (positionals.length === 0 && !paths)) return console.log(WATCH_USAGE);
   if (paths && positionals.length) throw new Error('give event names or a watch list, not both');
   const url = urlSource(values);
-  const bridge = await bridgePoller(url, version);
+  const bridge = await bridgePoller(url, secretSource(values), version);
   const onError = (name: string, error: unknown, retryMs: number) => console.error(`[watch] ${name}: ${message(error)}; retrying in ${retryMs / 1000}s`);
 
   if (paths) {
@@ -214,7 +237,7 @@ export async function watchesCommand(argv: string[], version: string, loadDotEnv
       if (watches.some((w) => watchKey(w) === watchKey(watch))) return console.log(`Already watching ${describe(watch)}.`);
       // A poll with no cursor checks the name and filters and returns no events.
       let unchecked: string | undefined;
-      const bridge = await bridgePoller(urlSource(values), version);
+      const bridge = await bridgePoller(urlSource(values), secretSource(values), version);
       try {
         await bridge.poll({ ...watch, cursor: null });
       } catch (error) {

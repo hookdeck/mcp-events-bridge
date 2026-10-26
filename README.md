@@ -119,13 +119,13 @@ That URL is a credential: anyone with it can use the bridge. Keep it private (se
 
 ## Connect Claude Code
 
-Claude Code doesn't support MCP Events yet, so it polls. Install the plugin, which asks for the MCP URL and keeps it in secure storage:
+Claude Code doesn't support MCP Events yet, so it polls. Install the plugin, which asks for the bridge's MCP endpoint (`https://<bridge>/mcp`) and its secret (`BRIDGE_MCP_SECRET`), sent as an `Authorization: Bearer` header, and keeps both in secure storage:
 
 ```text
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
-If you skip the URL (Esc), the plugin still installs. Set it later with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session.
+If you skip them (Esc), the plugin still installs. Set them later with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session. An endpoint with the secret in it (`/mcp/<BRIDGE_MCP_SECRET>`), set before the secret field existed, still works.
 
 Then, in any project, ask Claude to watch for events your bridge offers ("what events can the bridge give me?" lists them). For example, with the [GitHub provider](#github) set up for a repository, "watch `<owner>/<repo>` for new issues and comments"; with [Resend](#resend), "tell me when an email arrives". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). It needs no public URL, so it works with a local bridge.
 
@@ -372,7 +372,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 ## Security and limitations
 
 - **The MCP secret is a credential.** `BRIDGE_MCP_SECRET` authenticates one owner, sent as `Authorization: Bearer` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can only take a URL, such as ChatGPT. Prefer the header where the client supports it: a URL is easily logged or saved in a client's files, a header much less so. A bridge no ChatGPT connects to can turn the URL form off (`BRIDGE_MCP_SECRET_URL=false`). The secret is redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned, for ChatGPT without a secret in the URL.
-- **The Claude Code plugin keeps a copy of the URL on disk.** Claude Code keeps it in secure storage, but plugin monitors can't read that, so a session-start hook writes it to `~/.claude/plugins/data/mcp-events-bridge-hookdeck/mcp-url`, readable only by you. Uninstalling the plugin deletes that directory.
+- **The Claude Code plugin keeps a copy of the endpoint and secret on disk.** Claude Code keeps them in secure storage, but plugin monitors can't read that, so a session-start hook writes them to `~/.claude/plugins/data/mcp-events-bridge-hookdeck/` (`mcp-url` and `mcp-secret`), readable only by you. Uninstalling the plugin deletes that directory.
 - **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each provider's own signature first. Generic webhooks have no unverified option, and the bridge relays only requests Event Gateway marked as verified.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook and poll delivery.** Push (`events/stream`) may come later if clients need it. Local agents receive webhooks through the Hookdeck CLI (above). Poll mode misses a request that takes more than 60 seconds to appear in Event Gateway's request listing (it took up to 15 when measured).
@@ -390,7 +390,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 | `serve` logs `0/0 published` | No subscription matches the event's name or filters | Check the subscription's name and arguments with `list_providers` |
 | An event takes a minute or two | `hookdeck listen` occasionally takes ~30s to connect, and Event Gateway occasionally queues a CLI delivery | Wait: the bridge re-sends missed deliveries itself |
 | The same event twice | Two bridges in one Hookdeck project, or a retry | One Hookdeck project per bridge; receivers dedupe by `webhook-id` |
-| Claude Code (plugin) reports `{"problem": "can't reach the bridge, still retrying: no MCP URL yet ..."}` | The plugin's MCP URL isn't set, or was set during this session | Set it with `/plugin configure mcp-events-bridge@hookdeck` in Claude Code (or pipe it to `claude plugin configure mcp-events-bridge@hookdeck --values-stdin`), then start a new session |
+| Claude Code (plugin) reports `{"problem": "can't reach the bridge, still retrying: no MCP URL yet ..."}` | The plugin's MCP endpoint isn't set, or was set during this session | Set it, and the secret, with `/plugin configure mcp-events-bridge@hookdeck` in Claude Code (or pipe them to `claude plugin configure mcp-events-bridge@hookdeck --values-stdin`), then start a new session |
 | Claude Code (plugin) never reports events | The session isn't interactive (`claude -p`), or nothing is watched in this project | Ask "what am I watching?"; plugin monitors run only in interactive sessions |
 | Claude Code (plugin) reports events cut off | Monitor notifications shorten long lines | Nothing: Claude reads the whole event with `get_event` |
 

@@ -154,9 +154,8 @@ export function watchUrl(flag: string | undefined, environment: NodeJS.ProcessEn
   return `${base}/mcp`;
 }
 
-/** `Authorization: Bearer <BRIDGE_MCP_SECRET>` for an MCP URL without the secret in it (`.../mcp`). */
-export function watchHeaders(url: string, environment: NodeJS.ProcessEnv): Record<string, string> {
-  const secret = environment.BRIDGE_MCP_SECRET;
+/** `Authorization: Bearer <secret>` for an MCP URL without the secret in it (`.../mcp`). */
+export function watchHeaders(url: string, secret: string | undefined): Record<string, string> {
   return secret && /\/mcp\/?$/.test(new URL(url).pathname) ? { Authorization: `Bearer ${secret}` } : {};
 }
 

@@ -48,7 +48,7 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
-(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP URL, after you choose where to install the plugin, and keeps it in secure storage. If you skip it (Esc), the plugin still installs and its monitor starts, but it can't reach the bridge: set the URL with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session. To set it from a script without it showing on screen, pipe it in: `printf '{"mcp_url":"%s"}' "$BRIDGE_MCP_URL" | claude plugin configure mcp-events-bridge@hookdeck --values-stdin`, then start a new session. The plugin adds the bridge as an MCP server, so you don't need step 1 as well.
+(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP endpoint (`https://<bridge>/mcp`, or `http://127.0.0.1:8080/mcp`) and its secret (`BRIDGE_MCP_SECRET`, which the plugin sends as `Authorization: Bearer`), after you choose where to install the plugin, and keeps both in secure storage. An endpoint with the secret in it (`/mcp/<BRIDGE_MCP_SECRET>`), with the secret field left empty, also works. If you skip it (Esc), the plugin still installs and its monitor starts, but it can't reach the bridge: set the URL with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session. To set it from a script without it showing on screen, pipe it in: `printf '{"mcp_url":"%s"}' "$BRIDGE_MCP_URL" | claude plugin configure mcp-events-bridge@hookdeck --values-stdin`, then start a new session. The plugin adds the bridge as an MCP server, so you don't need step 1 as well.
 
 Then ask, in any project:
 
@@ -61,7 +61,7 @@ Claude adds the watches to the project's watch list, and the plugin's monitor, w
 - **More than one session in a project:** each one is told about every event.
 - **Long events are shortened:** monitor notifications cut long lines short (seen at around 500 characters), so the plugin's skill has Claude read the whole event with `get_event`.
 - **Busy sources:** Claude Code stops a monitor that prints too many lines. Filter by repository, actions or sender.
-- **Where things are kept:** the watch lists and cursors, and a copy of the MCP URL for the monitor (readable only by you; plugin monitors can't read secure storage), are in the plugin's data directory, `~/.claude/plugins/data/mcp-events-bridge-hookdeck/`.
+- **Where things are kept:** the watch lists and cursors, and a copy of the endpoint and secret for the monitor (readable only by you; plugin monitors can't read secure storage), are in the plugin's data directory, `~/.claude/plugins/data/mcp-events-bridge-hookdeck/`.
 
 **Without the plugin**, ask Claude to run `watch` with its Monitor tool, which wakes the session on each line a command prints:
 

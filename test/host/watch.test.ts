@@ -134,10 +134,10 @@ describe('watch helpers', () => {
     expect(watchUrl(undefined, { BRIDGE_MCP_SECRET: 's', PORT: '9000' })).toBe('http://127.0.0.1:9000/mcp');
     expect(() => watchUrl(undefined, {})).toThrow('BRIDGE_MCP_SECRET');
     // The secret goes as a bearer token only to a URL without it.
-    expect(watchHeaders('https://b.example/mcp', { BRIDGE_MCP_SECRET: 's' })).toEqual({ Authorization: 'Bearer s' });
-    expect(watchHeaders('https://b.example/mcp/', { BRIDGE_MCP_SECRET: 's' })).toEqual({ Authorization: 'Bearer s' });
-    expect(watchHeaders('https://b.example/mcp/s', { BRIDGE_MCP_SECRET: 's' })).toEqual({});
-    expect(watchHeaders('https://b.example/mcp', {})).toEqual({});
+    expect(watchHeaders('https://b.example/mcp', 's')).toEqual({ Authorization: 'Bearer s' });
+    expect(watchHeaders('https://b.example/mcp/', 's')).toEqual({ Authorization: 'Bearer s' });
+    expect(watchHeaders('https://b.example/mcp/s', 's')).toEqual({});
+    expect(watchHeaders('https://b.example/mcp', undefined)).toEqual({});
     expect(redactUrl('https://b.example/mcp/abc123?x=1')).toBe('https://b.example/mcp/<secret>?x=1');
     expect(redactUrl('Cannot POST /mcp/abc123 (from https://b.example/mcp/abc123)')).toBe('Cannot POST /mcp/<secret> (from https://b.example/mcp/<secret>)');
   });

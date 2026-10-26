@@ -5,7 +5,8 @@
 ### Added
 
 - **The MCP endpoint takes `BRIDGE_MCP_SECRET` as `Authorization: Bearer`,** at `https://<bridge>/mcp`, so the secret stays out of URLs: out of request logs, and out of the client files that store URLs (Hermes saves each subscription's URL in a file other users can read). Claude Code: `claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`. The URL form, `/mcp/<secret>`, still works, for ChatGPT, which can't send a header; `BRIDGE_MCP_SECRET_URL=false` turns it off. A missing or wrong token gets `401`. See [Security and limitations](README.md#security-and-limitations).
-- **`watch` sends the secret as a bearer token** to a URL ending `/mcp`, and builds that form by default from `BRIDGE_PUBLIC_URL` (or the local port) and `BRIDGE_MCP_SECRET`. A URL with the secret in it still works.
+- **`watch` sends the secret as a bearer token** to a URL ending `/mcp`, and builds that form by default from `BRIDGE_PUBLIC_URL` (or the local port) and `BRIDGE_MCP_SECRET`. `--secret-file` reads it from a file (with `--store`, `<store>/mcp-secret`). A URL with the secret in it still works.
+- **The Claude Code plugin asks for the secret separately,** and sends it as `Authorization: Bearer`: its options are now the MCP endpoint (`https://<bridge>/mcp`) and the secret. An existing install, whose endpoint has the secret in it, keeps working with the secret field left empty.
 
 ### Changed
 
