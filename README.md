@@ -21,7 +21,7 @@ The bridge closes that gap:
 
 It's for developers who want agents ([ChatGPT, Claude Code, Hermes Agent and others](#supported-mcp-clients)) to react to events from the services they already use.
 
-**Status:** 0.5, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
+**Status:** 0.6, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
 
 ## How it works
 
