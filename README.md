@@ -25,7 +25,7 @@ It's for developers who want agents ([ChatGPT, Claude Code, Hermes Agent and oth
 
 ## How it works
 
-<img src="docs/images/architecture.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts like ChatGPT subscribe over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent host's callback through one connection per subscription." width="100%">
+<img src="docs/images/architecture.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agents like ChatGPT and Hermes Agent (through the Hookdeck CLI) subscribe over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent's callback URL through one connection per subscription. Claude Code polls the bridge over MCP instead." width="100%">
 
 - **Event Gateway** verifies each service's webhook signature, keeps every request, and delivers each MCP Event to each subscriber with retries.
 - **The bridge** is the MCP server: it lists the events on offer, handles subscribe (including the spec's endpoint challenge), and turns each webhook into an MCP Event signed for each subscriber.
