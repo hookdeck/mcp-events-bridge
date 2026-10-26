@@ -2,7 +2,7 @@
 
 Turn webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-events), so AI agents can act the moment something happens: an email arrives, an issue is opened, a workflow fails. [Hookdeck Event Gateway](https://hookdeck.com) receives, verifies and delivers every event.
 
-<img src="docs/images/overview.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to agents, such as ChatGPT, which subscribed to the bridge over MCP." width="100%">
+<img src="docs/images/overview.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to agents, such as ChatGPT, Hermes Agent and others, which subscribed to the bridge over MCP. Claude Code polls the bridge over MCP instead." width="100%">
 
 For example, an email arrives at a Resend address, and ChatGPT, subscribed through the bridge, acts on it:
 
@@ -14,7 +14,7 @@ MCP Events is an experimental MCP extension that lets an agent subscribe to even
 
 The bridge closes that gap:
 
-- **Webhooks become MCP Events.** Sources: Resend inbound email, GitHub, any of 163 Event Gateway source types (Stripe, Slack, Shopify and more), and webhooks from any HTTP sender, such as a service you've built, verified with HMAC, Standard Webhooks, Basic auth or an API key. Add others with `defineProvider`.
+- **Webhooks become MCP Events.** Sources: Resend inbound email, GitHub, any of 163 Event Gateway source types (Stripe, Slack, Shopify and more), and webhooks from any HTTP sender, such as a service you've built, verified with HMAC, Standard Webhooks, Basic auth or an API key. Add others with `defineSource`.
 - **Subscribers choose what wakes them.** Events have filters, such as an email's sender, or a GitHub repository and action.
 - **Every event verified, delivered and recorded.** Event Gateway verifies each service's signatures, retries failed deliveries, drops duplicates within an hour, and keeps a record of every event and attempt.
 - **Stateless.** Each subscription is an Event Gateway connection, so there's no database.

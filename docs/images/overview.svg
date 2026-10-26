@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="title">MCP Events bridge overview</title>
-  <desc id="desc">Webhook providers such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway, which receives and verifies them and passes them to the MCP Events bridge. The bridge turns them into MCP Events, and Event Gateway delivers them, with retries, to agents such as ChatGPT that subscribed over MCP.</desc>
+  <desc id="desc">Services such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway, which receives and verifies them and passes them to the MCP Events bridge. The bridge turns them into MCP Events, and Event Gateway delivers them, with retries, to agents such as ChatGPT, Hermes Agent and others that subscribed over MCP. Claude Code polls the bridge over MCP instead.</desc>
   <style>
     .bg { fill: #ffffff; stroke: #d0d7de; }
     .panel { fill: #f6f8fa; stroke: #d0d7de; }
@@ -31,14 +31,14 @@
 
   <rect class="bg" x="1" y="1" width="1198" height="338" rx="14"/>
 
-  <!-- Apps -->
-  <text class="muted" x="40" y="168" font-size="13" font-weight="600" letter-spacing="0.5">WEBHOOK PROVIDERS</text>
+  <!-- Services -->
+  <text class="muted" x="40" y="168" font-size="13" font-weight="600" letter-spacing="0.5">SERVICES</text>
   <rect class="box" x="30" y="180" width="170" height="40" rx="8"/>
   <text class="text" x="115" y="205" font-size="15" text-anchor="middle">Resend</text>
   <rect class="box" x="30" y="230" width="170" height="40" rx="8"/>
   <text class="text" x="115" y="255" font-size="15" text-anchor="middle">GitHub</text>
   <rect class="box dashed" x="30" y="280" width="170" height="40" rx="8"/>
-  <text class="text" x="115" y="305" font-size="14" text-anchor="middle">other providers</text>
+  <text class="text" x="115" y="305" font-size="14" text-anchor="middle">other services</text>
 
   <!-- Event Gateway: one container, in and out -->
   <rect class="panel" x="250" y="170" width="660" height="150" rx="12"/>
@@ -61,14 +61,19 @@
   <path class="arrow" d="M380,198 C380,150 470,150 520,122" marker-end="url(#arrowhead)"/>
   <path class="arrow" d="M640,122 C690,150 780,150 780,198" marker-end="url(#arrowhead)"/>
 
-  <!-- Agents -->
+  <!-- Agents: a stack, front to back, each card a little narrower and overlapping the top of the one behind it -->
   <text class="muted" x="955" y="168" font-size="13" font-weight="600" letter-spacing="0.5">AGENTS</text>
-  <rect class="box" x="950" y="180" width="220" height="50" rx="8"/>
-  <text class="text" x="1060" y="210" font-size="15" text-anchor="middle">ChatGPT</text>
-  <rect class="box dashed" x="950" y="250" width="220" height="50" rx="8"/>
-  <text class="text" x="1060" y="280" font-size="15" text-anchor="middle">local agents (coming)</text>
-  <path class="arrow" d="M880,226 C915,226 920,205 948,205" marker-end="url(#arrowhead)"/>
-  <path class="arrow dashed" d="M880,234 C915,234 920,275 948,275" marker-end="url(#arrowhead)"/>
+  <rect class="box dashed" x="968" y="270" width="184" height="44" rx="8"/>
+  <text class="text" x="1060" y="302" font-size="17" text-anchor="middle">…</text>
+  <rect class="box" x="962" y="240" width="196" height="44" rx="8"/>
+  <text class="text" x="1060" y="274" font-size="15" text-anchor="middle">Claude Code <tspan class="muted" font-size="12">· polls</tspan></text>
+  <rect class="box" x="956" y="210" width="208" height="44" rx="8"/>
+  <text class="text" x="1060" y="244" font-size="15" text-anchor="middle">Hermes Agent</text>
+  <rect class="box" x="950" y="180" width="220" height="44" rx="8"/>
+  <text class="text" x="1060" y="207" font-size="15" text-anchor="middle">ChatGPT</text>
+  <path class="arrow" d="M880,222 C915,222 920,202 948,202" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M880,230 C915,230 925,239 954,239" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M880,238 C915,238 930,299 966,299" marker-end="url(#arrowhead)"/>
 
   <!-- Subscribe over MCP -->
   <path class="arrow" d="M1120,178 V88 Q1120,80 1112,80 H692" marker-end="url(#arrowhead)"/>
