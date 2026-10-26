@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 530" width="1200" height="530" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="title">MCP Events bridge architecture</title>
-  <desc id="desc">Webhook providers such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agent hosts such as ChatGPT and local agents subscribe to the bridge over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it back to each agent host's callback through one connection per subscription, with filter, dedupe and retry.</desc>
+  <desc id="desc">Services such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agents such as ChatGPT, Hermes Agent (through the Hookdeck CLI) and others subscribe to the bridge over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent's callback URL through one connection per subscription, with filter, dedupe and retry. Claude Code polls the bridge over MCP instead.</desc>
   <style>
     .bg { fill: #ffffff; stroke: #d0d7de; }
     .panel { fill: #f6f8fa; stroke: #d0d7de; }
@@ -32,15 +32,15 @@
   <rect class="bg" x="1" y="1" width="1198" height="528" rx="14"/>
 
   <g transform="translate(0,50)">
-    <!-- Providers -->
-    <text class="muted" x="40" y="62" font-size="13" font-weight="600" letter-spacing="0.5">WEBHOOK PROVIDERS</text>
+    <!-- Services -->
+    <text class="muted" x="40" y="62" font-size="13" font-weight="600" letter-spacing="0.5">SERVICES</text>
     <rect class="box" x="30" y="100" width="170" height="50" rx="8"/>
     <text class="text" x="115" y="130" font-size="16" text-anchor="middle">Resend</text>
     <rect class="box" x="30" y="190" width="170" height="50" rx="8"/>
     <text class="text" x="115" y="220" font-size="16" text-anchor="middle">GitHub</text>
     <rect class="box dashed" x="30" y="280" width="170" height="62" rx="8"/>
     <text class="text" x="115" y="306" font-size="14" text-anchor="middle">Stripe, Shopify, Linear…</text>
-    <text class="muted" x="115" y="326" font-size="13" text-anchor="middle">other providers</text>
+    <text class="muted" x="115" y="326" font-size="13" text-anchor="middle">other services</text>
 
     <!-- Event Gateway: inbound -->
     <rect class="panel" x="240" y="40" width="230" height="340" rx="12"/>
@@ -51,7 +51,7 @@
     <rect class="box" x="260" y="190" width="190" height="50" rx="8"/>
     <text class="text" x="355" y="220" font-size="15" text-anchor="middle">GitHub source</text>
     <rect class="box dashed" x="260" y="285" width="190" height="52" rx="8"/>
-    <text class="text" x="355" y="316" font-size="15" text-anchor="middle">a source per provider</text>
+    <text class="text" x="355" y="316" font-size="15" text-anchor="middle">a source per service</text>
 
     <path class="arrow" d="M200,125 H258" marker-end="url(#arrowhead)"/>
     <path class="arrow" d="M200,215 H258" marker-end="url(#arrowhead)"/>
@@ -84,24 +84,31 @@
     <text class="label" x="737" y="267" font-size="12">signed per</text>
     <text class="label" x="737" y="282" font-size="12">subscriber</text>
 
-    <!-- Agent hosts: subscribe over MCP, receive deliveries -->
+    <!-- Agents: subscribe over MCP, receive deliveries. A stack, front to back, each card a little narrower and
+         overlapping the top of the one behind it -->
     <rect class="panel" x="1035" y="40" width="150" height="340" rx="12"/>
-    <text class="text" x="1110" y="66" font-size="15" font-weight="600" text-anchor="middle">Agent hosts</text>
+    <text class="text" x="1110" y="66" font-size="15" font-weight="600" text-anchor="middle">Agents</text>
     <text class="muted" x="1110" y="86" font-size="13" text-anchor="middle">subscribe · receive</text>
-    <rect class="box" x="1045" y="200" width="130" height="50" rx="8"/>
-    <text class="text" x="1110" y="230" font-size="15" text-anchor="middle">ChatGPT</text>
-    <rect class="box dashed" x="1045" y="290" width="130" height="62" rx="8"/>
-    <text class="text" x="1110" y="316" font-size="15" text-anchor="middle">Local agents</text>
-    <text class="muted" x="1110" y="336" font-size="12" text-anchor="middle">via Hookdeck CLI</text>
-    <path class="arrow" d="M995,280 C1020,280 1020,225 1043,225" marker-end="url(#arrowhead)"/>
-    <path class="arrow dashed" d="M995,292 C1020,292 1020,321 1043,321" marker-end="url(#arrowhead)"/>
+    <rect class="box dashed" x="1057" y="276" width="106" height="50" rx="8"/>
+    <text class="text" x="1110" y="313" font-size="17" text-anchor="middle">…</text>
+    <rect class="box" x="1053" y="226" width="114" height="64" rx="8"/>
+    <text class="text" x="1110" y="261" font-size="15" text-anchor="middle">Claude Code</text>
+    <text class="muted" x="1110" y="279" font-size="12" text-anchor="middle">polls over MCP</text>
+    <rect class="box" x="1049" y="176" width="122" height="64" rx="8"/>
+    <text class="text" x="1110" y="211" font-size="15" text-anchor="middle">Hermes Agent</text>
+    <text class="muted" x="1110" y="229" font-size="12" text-anchor="middle">via Hookdeck CLI</text>
+    <rect class="box" x="1045" y="140" width="130" height="50" rx="8"/>
+    <text class="text" x="1110" y="170" font-size="15" text-anchor="middle">ChatGPT</text>
+    <path class="arrow" d="M995,266 C1020,266 1020,165 1043,165" marker-end="url(#arrowhead)"/>
+    <path class="arrow" d="M995,280 C1022,280 1022,215 1047,215" marker-end="url(#arrowhead)"/>
+    <path class="arrow dashed" d="M995,296 C1024,296 1026,308 1055,308" marker-end="url(#arrowhead)"/>
 
     <!-- MCP subscribe loop: agent hosts back to the bridge -->
     <path class="arrow" d="M1110,38 V-12 Q1110,-20 1102,-20 H638 Q630,-20 630,-12 V183" marker-end="url(#arrowhead)"/>
     <text class="label" x="870" y="-28" text-anchor="middle">MCP: events/list, events/subscribe, get_event, …</text>
 
     <!-- Footer -->
-    <text class="muted" x="600" y="420" font-size="13" text-anchor="middle">Agent hosts subscribe over MCP; Event Gateway delivers each event to their callback. The bridge is stateless:</text>
-    <text class="muted" x="600" y="440" font-size="13" text-anchor="middle">subscriptions are Event Gateway connections. Dashed: other providers, and local agents (coming).</text>
+    <text class="muted" x="600" y="420" font-size="13" text-anchor="middle">Agents subscribe over MCP, and Event Gateway delivers each event to their callback URL; Claude Code polls instead.</text>
+    <text class="muted" x="600" y="440" font-size="13" text-anchor="middle">The bridge is stateless: subscriptions are Event Gateway connections. Dashed: other services and agents.</text>
   </g>
 </svg>

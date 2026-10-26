@@ -1,7 +1,7 @@
 /*
  * Provider definitions describe a provider's events. They don't wrap provider
  * APIs, apart from registering the webhook at setup. Built-in and custom
- * providers both use these types (`defineProvider` comes with the config file).
+ * providers both use these types (`defineSource` comes with the config file).
  */
 
 /** An inbound request as Event Gateway delivers it to the bridge. */
@@ -16,7 +16,7 @@ export interface InboundRequest {
 
 export type JsonSchema = Record<string, unknown>;
 
-export interface ProviderEvent<Args = Record<string, unknown>, Summary extends Record<string, unknown> = Record<string, unknown>> {
+export interface SourceEvent<Args = Record<string, unknown>, Summary extends Record<string, unknown> = Record<string, unknown>> {
   /** The provider's own event name, e.g. "email.received" (offered over MCP as `{instance id}.{name}`). */
   name: string;
   description: string;
@@ -52,7 +52,7 @@ export interface RegisterContext<Options> {
   signingSecret?: string;
 }
 
-export interface ProviderDefinition<Options = Record<string, unknown>> {
+export interface SourceDefinition<Options = Record<string, unknown>> {
   /** Provider type, e.g. "resend". */
   type: string;
   displayName: string;
@@ -63,7 +63,7 @@ export interface ProviderDefinition<Options = Record<string, unknown>> {
   /** The header carrying the provider's event id, to find an event's request in Event Gateway (e.g. svix-id). */
   eventIdHeader?: string;
   // Each event has its own argument and summary types.
-  events: ProviderEvent<any, any>[];
+  events: SourceEvent<any, any>[];
   /** MCP event names enabled when the config doesn't list any. Default: all of them. */
   defaultEvents?: string[];
   /**

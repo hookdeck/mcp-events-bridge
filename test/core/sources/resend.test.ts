@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { emailReceived, resendProvider as resend } from '../../../src/core/providers/resend.js';
-import { normalizeAddress, type InboundRequest } from '../../../src/core/providers/types.js';
+import { emailReceived, resendProvider as resend } from '../../../src/core/sources/resend.js';
+import { normalizeAddress, type InboundRequest } from '../../../src/core/sources/types.js';
 
 const fixture = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'fixtures', 'resend', 'email-received.json'), 'utf8'),

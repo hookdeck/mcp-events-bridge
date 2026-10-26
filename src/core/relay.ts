@@ -2,8 +2,9 @@ import type { Catalog } from './catalog.js';
 import type { CallbackFailureReason } from './errors.js';
 import type { HookdeckClient } from './hookdeck.js';
 import { verifyHookdeckSignature } from './hookdeck-signature.js';
+import { parseJson } from './json.js';
 import { topicSourceName } from './names.js';
-import type { InboundRequest } from './providers/types.js';
+import type { InboundRequest } from './sources/types.js';
 import type { CallbackRegistry } from './callbacks.js';
 import { signStandardWebhook } from './sign.js';
 import type { SubscriptionRecord, SubscriptionStore } from './store.js';
@@ -85,14 +86,15 @@ export class Relay {
 
     let body: unknown;
     try {
-      body = JSON.parse(rawBody.toString());
+      // Event Gateway forwards the original bytes: integers beyond 2^53 stay exact, as strings (json.ts).
+      body = parseJson(rawBody.toString());
     } catch {
       // Answered 200, not 4xx: Event Gateway would retry a request that can never succeed. It stays in Event Gateway.
       this.log(`${path}: body is not JSON, ignored`);
       return { status: 200, body: { ignored: 'body is not JSON' } };
     }
     if (match[1] === 'hookdeck') return this.handleNotification(body as IssueNotification);
-    if (!this.deps.providerIds.includes(match[1]!)) return { status: 404, body: { error: 'unknown provider instance' } };
+    if (!this.deps.providerIds.includes(match[1]!)) return { status: 404, body: { error: 'unknown source' } };
     return this.relay(match[1]!, { headers: lowerCase(headers), body });
   }
 

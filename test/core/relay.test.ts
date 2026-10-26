@@ -10,7 +10,7 @@ import { MemoryStore } from '../../src/core/memory-store.js';
 import { Relay, failureReason } from '../../src/core/relay.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { healthyDelivery, type SubscriptionInput } from '../../src/core/store.js';
-import { resend, webhook } from '../../src/providers.js';
+import { resend, source } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
 const SIGNING_SECRET = 'hookdeck-signing-secret';
@@ -21,7 +21,7 @@ const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 
 // The fixture's email arrived at 2026-10-05T16:22:42.897Z.
 const OCCURRED = '2026-10-05T16:22:42.897Z';
 
-const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET });
+const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: SIGNING_SECRET });
 
 function setup(now = new Date('2026-10-05T16:30:00.000Z')) {
   const gateway = new FakeEventGateway();
@@ -31,7 +31,7 @@ function setup(now = new Date('2026-10-05T16:30:00.000Z')) {
   const relay = new Relay({
     signingSecret: SIGNING_SECRET,
     providerIds: ['resend'],
-    catalog: new Catalog(config.providers),
+    catalog: new Catalog(config.sources),
     store,
     hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
     recovered: (id) => recovered.has(id),
@@ -159,8 +159,8 @@ describe('Relay: generic webhook', () => {
   const fillsConfig = resolveConfig(
     defineConfig({
       deployment: 'dev',
-      providers: [
-        webhook({
+      sources: [
+        source({ type: 'webhook', 
           id: 'fills',
           verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'fills-secret-0123456789' },
           events: ['order.filled'],
@@ -178,7 +178,7 @@ describe('Relay: generic webhook', () => {
     const relay = new Relay({
       signingSecret: SIGNING_SECRET,
       providerIds: ['fills'],
-      catalog: new Catalog(fillsConfig.providers),
+      catalog: new Catalog(fillsConfig.sources),
       store,
       hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
     });
@@ -193,6 +193,23 @@ describe('Relay: generic webhook', () => {
     expect(gateway.published).toHaveLength(1);
     expect(gateway.published[0]).toMatchObject({ sourceName: 'bridge-out-fills_order_filled', headers: { 'webhook-id': 'dlv_42', 'X-MCP-Subscription-Id': 'sub_a' } });
     expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'fills.order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
+  });
+
+  it('keeps an integer beyond 2^53 exact, as a string of its digits', async () => {
+    const gateway = new FakeEventGateway();
+    const store = new MemoryStore();
+    const relay = new Relay({
+      signingSecret: SIGNING_SECRET,
+      providerIds: ['fills'],
+      catalog: new Catalog(fillsConfig.sources),
+      store,
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+    });
+    await store.put(subscription({ name: 'fills.order.filled', arguments: { symbol: 'AAPL' } }));
+    // Event Gateway forwards the sender's bytes; JSON.parse would make this 4323372036854776000.
+    const raw = '{"symbol":"AAPL","orderId":4323372036854775807,"quantity":100}';
+    expect(await relay.handle('/inbound/fills', signed(raw, { 'x-hookdeck-verified': 'true', 'x-delivery-id': 'dlv_43' }), raw)).toEqual({ status: 200, body: { published: 1 } });
+    expect(JSON.parse(gateway.published[0]!.body).data).toEqual({ symbol: 'AAPL', orderId: '4323372036854775807', quantity: 100 });
   });
 });
 

@@ -190,6 +190,12 @@ export class CallbackRegistry {
     for (const connection of await this.deps.hookdeck.listAllConnections()) {
       const metadata = parseMetadata(connection.description);
       if (!metadata || !connection.source?.url) continue;
+      // A deleted source is still listed on its connection, without a name. That callback can't receive again.
+      if (!connection.source.name) {
+        await this.deps.hookdeck.deleteConnection(connection.id).catch(ignoreNotFound);
+        this.log(`deleted tunnel URL ${connection.name}: its source was deleted`);
+        continue;
+      }
       this.byUrl.set(connection.source.url, recordFrom(metadata, connection));
     }
     return this.byUrl.size;
@@ -487,16 +493,21 @@ export class CallbackRegistry {
     if (!res.ok) throw new Error(`resending ${webhookId} to ${record.sourceName} failed: HTTP ${res.status}`);
   }
 
-  private async setCheckedUntil(record: CallbackRecord, checkedUntil: string) {
-    if (record.checkedUntil && Date.parse(record.checkedUntil) >= Date.parse(checkedUntil)) return;
-    const metadata: Metadata = { v: 1, kind: CALLBACK_KIND, agent: record.agent, name: record.name, path: record.path, port: record.port, createdAt: record.createdAt, checkedUntil };
-    await this.deps.hookdeck.upsertConnection({
-      name: record.connectionName,
-      description: JSON.stringify(metadata),
-      source_id: record.sourceId,
-      destination: { name: record.destinationName, type: 'CLI', config: { path: record.path } },
+  private setCheckedUntil(record: CallbackRecord, checkedUntil: string) {
+    // In the write queue, and only for a callback still here: an upsert after the sweeper deleted the connection
+    // would create it again, on a source the sweeper then deletes (seen in the e2e run on 26 Oct).
+    return this.serialize(async () => {
+      if (this.byUrl.get(record.url) !== record || this.deleting.has(record.url)) return;
+      if (record.checkedUntil && Date.parse(record.checkedUntil) >= Date.parse(checkedUntil)) return;
+      const metadata: Metadata = { v: 1, kind: CALLBACK_KIND, agent: record.agent, name: record.name, path: record.path, port: record.port, createdAt: record.createdAt, checkedUntil };
+      await this.deps.hookdeck.upsertConnection({
+        name: record.connectionName,
+        description: JSON.stringify(metadata),
+        source_id: record.sourceId,
+        destination: { name: record.destinationName, type: 'CLI', config: { path: record.path } },
+      });
+      record.checkedUntil = checkedUntil;
     });
-    record.checkedUntil = checkedUntil;
   }
 }
 

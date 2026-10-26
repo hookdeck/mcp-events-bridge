@@ -1,26 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { Catalog } from '../../src/core/catalog.js';
+import { Catalog, descriptionWarnings } from '../../src/core/catalog.js';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
-import { github, resend, webhook } from '../../src/providers.js';
+import { github, resend, source } from '../../src/sources.js';
 
 const environment = { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's', A_SECRET: 'a', B_SECRET: 'b' };
 const trading = (id: string, secret: string) =>
-  webhook({ id, verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: env(secret) }, events: ['order.filled'] });
+  source({ type: 'webhook',  id, verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: env(secret) }, events: ['order.filled'] });
 
 describe('Catalog', () => {
   it('names each event {instance id}.{provider event name}', () => {
     const config = resolveConfig(
-      defineConfig({ providers: [resend({ apiKey: 'x' }), github({ webhookSecret: 'a-long-enough-secret', events: ['issues', 'push'] })] }),
+      defineConfig({ sources: [resend({ apiKey: 'x' }), github({ webhookSecret: 'a-long-enough-secret', events: ['issues', 'push'] })] }),
       environment,
     );
-    expect(new Catalog(config.providers).list().map((e) => e.name)).toEqual(['resend.email.received', 'github.issues', 'github.push']);
+    expect(new Catalog(config.sources).list().map((e) => e.name)).toEqual(['resend.email.received', 'github.issues', 'github.push']);
   });
 
   it('lets two instances offer the same event: the instance id tells them apart', () => {
-    const config = resolveConfig(defineConfig({ providers: [trading('broker_a', 'A_SECRET'), trading('broker_b', 'B_SECRET')] }), environment);
-    const catalog = new Catalog(config.providers);
+    const config = resolveConfig(defineConfig({ sources: [trading('broker_a', 'A_SECRET'), trading('broker_b', 'B_SECRET')] }), environment);
+    const catalog = new Catalog(config.sources);
     expect(catalog.list().map((e) => e.name)).toEqual(['broker_a.order.filled', 'broker_b.order.filled']);
     expect(catalog.get('broker_b.order.filled')).toMatchObject({ providerId: 'broker_b', event: { name: 'order.filled' } });
     expect(catalog.forProvider('broker_a').map((e) => e.name)).toEqual(['broker_a.order.filled']);
+  });
+
+  it('warns about descriptions over 400 characters, which ChatGPT has been reported to leave out', () => {
+    const verification = { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: env('A_SECRET') } as const;
+    const config = resolveConfig(
+      defineConfig({
+        sources: [
+          resend({ apiKey: 'x' }),
+          github({ webhookSecret: 'a-long-enough-secret' }),
+          source({ type: 'webhook',  id: 'fills', verification, eventType: { header: 'x-event' }, events: { 'order.filled': { description: 'An order filled. '.repeat(25) }, 'order.placed': {} } }),
+        ],
+      }),
+      environment,
+    );
+    const warnings = descriptionWarnings(new Catalog(config.sources));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^fills\.order\.filled's description is \d+ characters\. ChatGPT has been reported/);
   });
 });

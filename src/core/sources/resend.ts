@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { normalizeAddress, type InboundRequest, type ProviderDefinition, type ProviderEvent } from './types.js';
+import { normalizeAddress, type InboundRequest, type SourceDefinition, type SourceEvent } from './types.js';
 
 /*
  * Resend. Field paths settled from a real delivery in stage 2
@@ -52,7 +52,7 @@ export type EmailReceivedSummary = z.infer<typeof emailReceivedPayload>;
 
 const SUBJECT_LIMIT = 500;
 
-export const emailReceived: ProviderEvent<EmailReceivedArguments, EmailReceivedSummary> = {
+export const emailReceived: SourceEvent<EmailReceivedArguments, EmailReceivedSummary> = {
   name: 'email.received',
   description:
     'An email arrived at a Resend receiving address. Carries metadata only (sender, recipients, subject); fetch the body with Resend\'s own tools. Filter by `from` to limit who can trigger the agent.',
@@ -102,7 +102,7 @@ async function resendApi(fetchFn: typeof fetch, apiKey: string, path: string, in
   return text ? (JSON.parse(text) as Record<string, unknown>) : {};
 }
 
-export const resendProvider: ProviderDefinition<ResendOptions> = {
+export const resendProvider: SourceDefinition<ResendOptions> = {
   type: 'resend',
   displayName: 'Resend',
   sourceType: 'RESEND',

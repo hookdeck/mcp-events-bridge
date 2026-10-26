@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalJson } from '../core/canonical-json.js';
 import type { PastEvent } from '../core/event-history.js';
-import { writeAtomically } from './providers-add.js';
+import { writeAtomically } from './sources-add.js';
 import { abortableSleep, isBridgeError, runWatch, type Poll, type WatchDeps } from './watch.js';
 
 /*

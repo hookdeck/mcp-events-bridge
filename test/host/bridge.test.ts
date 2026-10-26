@@ -12,7 +12,7 @@ import { healthyDelivery } from '../../src/core/store.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createNodeCallbackTransport } from '../../src/host/callback-transport.js';
 import { createBridgeServer, redactPath } from '../../src/host/server.js';
-import { resend } from '../../src/providers.js';
+import { resend } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 import { Subscriber } from '../support/subscriber.js';
 
@@ -42,7 +42,7 @@ async function startBridge({
   secretUrl,
 }: { inbound?: 'cli' | 'http'; store?: MemoryStore; pollNow?: () => number; secretUrl?: 'true' | 'false' } = {}) {
   const gateway = new FakeEventGateway();
-  const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', providers: [resend({ apiKey: 'x' })] }), {
+  const config = resolveConfig(defineConfig({ deployment: 'test', port: 0, inbound, publicUrl: 'https://bridge.example.com', sources: [resend({ apiKey: 'x' })] }), {
     HOOKDECK_API_KEY: 'k',
     HOOKDECK_SIGNING_SECRET: SIGNING_SECRET,
     BRIDGE_MCP_SECRET: MCP_SECRET,
@@ -154,8 +154,12 @@ describe('bridge server', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
     try {
       expect(client.getServerVersion()).toMatchObject({ name: 'mcp-events-bridge', version: '9.9.9' });
-      const result = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
-      expect(result.structuredContent?.providers).toEqual([{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }]);
+      const expected = [{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }];
+      const result = (await client.callTool({ name: 'list_sources', arguments: {} })) as { structuredContent?: { sources: unknown[] } };
+      expect(result.structuredContent?.sources).toEqual(expected);
+      // The old name still answers, in the old shape.
+      const old = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
+      expect(old.structuredContent?.providers).toEqual(expected);
     } finally {
       await client.close();
     }

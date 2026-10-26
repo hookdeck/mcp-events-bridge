@@ -10,7 +10,7 @@ This plugin runs a monitor for the whole session that follows this project's wat
 
 ## Find event names and filters
 
-Call the `events-bridge` MCP server's `list_providers` tool. Event names look like `github.issue_comment` or `resend.email.received`, and each event's filters are in its input schema (for GitHub: `repository` as owner/name, `actions` as a list, `sender`).
+Call the `events-bridge` MCP server's `list_sources` tool (`list_providers` on a bridge before 0.6.0). Event names look like `github.issue_comment` or `resend.email.received`, and each event's filters are in its input schema (for GitHub: `repository` as owner/name, `actions` as a list, `sender`).
 
 ## Add, remove and list watches
 
@@ -39,5 +39,5 @@ Long lines are cut short in notifications. If a field looks cut off, read the wh
 A line like `{"problem": "..."}` means something is wrong. Tell the user:
 
 - `stopped watching: ...` with a `watch`: that watch can't run (for example, the event no longer exists). Suggest removing it.
-- `this watch keeps failing, still retrying: ...` with a `watch`: the bridge answers, but not for that watch (for example, its provider isn't set up). It's still retried.
+- `this watch keeps failing, still retrying: ...` with a `watch`: the bridge answers, but not for that watch (for example, its source isn't set up). It's still retried.
 - `can't reach the bridge, still retrying: ...`: events will arrive once the bridge is reachable again. If it says `no MCP URL yet`, the plugin's MCP URL isn't set: the user sets it with `/plugin configure mcp-events-bridge@hookdeck`, then starts a new session.

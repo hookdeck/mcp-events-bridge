@@ -22,8 +22,8 @@ afterEach(() => {
 
 describe('loadConfig', () => {
   it.each([['module'], ['commonjs'], [undefined]] as const)('loads a TypeScript config in a %s project', async (type) => {
-    const dir = project(type, `const deployment: string = 'typed';\nexport default { deployment, providers: [] };\n`);
-    await expect(loadConfig({ cwd: dir, environment })).resolves.toMatchObject({ deployment: 'typed', providers: [] });
+    const dir = project(type, `const deployment: string = 'typed';\nexport default { deployment, sources: [] };\n`);
+    await expect(loadConfig({ cwd: dir, environment })).resolves.toMatchObject({ deployment: 'typed', sources: [] });
   });
 
   it('says so when the default export is not a bridge config', async () => {

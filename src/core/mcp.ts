@@ -22,7 +22,7 @@ export function buildMcpServer(deps: {
   history: EventHistory;
   /** Poll mode: `events/poll` and the poll_events and wait_for_event tools. */
   poll?: PollService;
-  providers: () => Array<Record<string, unknown>>;
+  sources: () => Array<Record<string, unknown>>;
   /** Set when the bridge runs `hookdeck listen` for local agents: adds the tunnel URL tools. */
   callbacks?: CallbackRegistry;
   principal?: string;
@@ -74,9 +74,18 @@ export function buildMcpServer(deps: {
   );
 
   server.registerTool(
+    'list_sources',
+    {
+      description: 'List the configured event sources (the services events come from), their types, their events, and how many subscriptions each has.',
+      inputSchema: z.object({}),
+    },
+    async () => json({ sources: deps.sources() }),
+  );
+  // The old name, for clients and agents that learned it before 0.6.0.
+  server.registerTool(
     'list_providers',
-    { description: 'List the configured providers, their events, and how many subscriptions each has.', inputSchema: z.object({}) },
-    async () => json({ providers: deps.providers() }),
+    { description: 'Deprecated: use list_sources. Lists the configured sources, as `providers`.', inputSchema: z.object({}) },
+    async () => json({ providers: deps.sources() }),
   );
 
   const poll = deps.poll;

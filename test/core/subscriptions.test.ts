@@ -6,10 +6,10 @@ import { MemoryStore } from '../../src/core/memory-store.js';
 import { SubscriptionTooLargeError } from '../../src/core/store.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { SubscriptionService, describeParams } from '../../src/core/subscriptions.js';
-import { resend } from '../../src/providers.js';
+import { resend } from '../../src/sources.js';
 
 const catalog = new Catalog(
-  resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' }).providers,
+  resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' }).sources,
 );
 
 function setup({ verifyResult = { ok: true } as VerificationResult, publicHost = true } = {}) {

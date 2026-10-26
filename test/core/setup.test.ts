@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
 import { missingCredentialsError, runSetup } from '../../src/core/setup.js';
-import { github, resend, webhook } from '../../src/providers.js';
+import { github, resend, source } from '../../src/sources.js';
 import { FakeGithub } from '../support/fake-github.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
@@ -20,7 +20,7 @@ function resendApi() {
 function setup(over: Record<string, unknown> = {}, env_: Record<string, string> = environment) {
   const gateway = new FakeEventGateway();
   const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
-  const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: env('RESEND_API_KEY') })], ...over }), env_);
+  const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: env('RESEND_API_KEY') })], ...over }), env_);
   const resendFake = resendApi();
   return { gateway, run: () => runSetup({ config, hookdeck, fetch: resendFake.fetch }), resendFake };
 }
@@ -40,7 +40,7 @@ describe('bridge setup', () => {
       { type: 'deduplicate', include_fields: ['headers.svix-id'], window: 3_600_000 },
       expect.objectContaining({ type: 'retry', strategy: 'linear' }),
     ]);
-    expect(report.providers).toEqual([{ id: 'resend', sourceUrl: source.url, connection: 'bridge-resend-dev', webhook: 'registered' }]);
+    expect(report.sources).toEqual([{ id: 'resend', sourceUrl: source.url, connection: 'bridge-resend-dev', webhook: 'registered' }]);
   });
 
   it('is idempotent: a second run reuses the registered webhook and keeps the source secret', async () => {
@@ -48,7 +48,7 @@ describe('bridge setup', () => {
     await run();
     const second = await run();
     expect(resendFake.calls).toHaveLength(1);
-    expect(second.providers[0]!.webhook).toBe('existing');
+    expect(second.sources[0]!.webhook).toBe('existing');
     expect([...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
     expect([...gateway.connections.values()].filter((c) => c.name === 'bridge-resend-dev')).toHaveLength(1);
   });
@@ -59,7 +59,7 @@ describe('bridge setup', () => {
     const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!;
     source.config = {};
     const report = await run();
-    expect(report.providers[0]!.webhook).toBe('registered');
+    expect(report.sources[0]!.webhook).toBe('registered');
     expect(resendFake.calls.map((c) => c.url)).toEqual(['https://api.resend.com/webhooks', 'https://api.resend.com/webhooks/wh_1', 'https://api.resend.com/webhooks']);
     expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
     expect(source.type).toBe('RESEND');
@@ -71,17 +71,17 @@ describe('bridge setup', () => {
     const gh = new FakeGithub();
     const run = (repos: string[]) =>
       runSetup({
-        config: resolveConfig(defineConfig({ deployment: 'dev', providers: [github({ token: 't', scope: { repos } })] }), environment),
+        config: resolveConfig(defineConfig({ deployment: 'dev', sources: [github({ token: 't', scope: { repos } })] }), environment),
         hookdeck,
         fetch: gh.fetch,
       });
 
-    expect((await run(['o/one'])).providers[0]!.webhook).toBe('registered');
+    expect((await run(['o/one'])).sources[0]!.webhook).toBe('registered');
     const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
     const secret = (source.config as { auth: { webhook_secret_key: string } }).auth.webhook_secret_key;
-    expect((await run(['O/One'])).providers[0]!.webhook).toBe('existing');
+    expect((await run(['O/One'])).sources[0]!.webhook).toBe('existing');
 
-    expect((await run(['o/one', 'o/two'])).providers[0]!.webhook).toBe('updated');
+    expect((await run(['o/one', 'o/two'])).sources[0]!.webhook).toBe('updated');
     for (const path of ['/repos/o/one/hooks', '/repos/o/two/hooks']) {
       expect(gh.hooks.get(path)).toEqual([expect.objectContaining({ config: expect.objectContaining({ url: source.url, secret }) })]);
     }
@@ -94,14 +94,14 @@ describe('bridge setup', () => {
     const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
     const gh = new FakeGithub();
     const run = (webhookSecret: string) =>
-      runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', providers: [github({ webhookSecret })] }), environment), hookdeck, fetch: gh.fetch });
+      runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', sources: [github({ webhookSecret })] }), environment), hookdeck, fetch: gh.fetch });
 
     const first = await run('first-secret-0123456789');
     const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
-    expect(first.providers[0]).toMatchObject({ webhook: 'configured', hint: expect.stringContaining(first.providers[0]!.sourceUrl) });
+    expect(first.sources[0]).toMatchObject({ webhook: 'configured', hint: expect.stringContaining(first.sources[0]!.sourceUrl) });
     expect(source).toMatchObject({ type: 'GITHUB', config: { auth: { webhook_secret_key: 'first-secret-0123456789' } } });
-    expect((await run('first-secret-0123456789')).providers[0]!.webhook).toBe('existing');
-    expect((await run('second-secret-0123456789')).providers[0]!.webhook).toBe('configured');
+    expect((await run('first-secret-0123456789')).sources[0]!.webhook).toBe('existing');
+    expect((await run('second-secret-0123456789')).sources[0]!.webhook).toBe('configured');
     expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'second-secret-0123456789' } });
     expect(gh.calls).toEqual([]);
   });
@@ -113,10 +113,10 @@ describe('bridge setup', () => {
     const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
     const gh = new FakeGithub();
     const run = (provider: ReturnType<typeof github>) =>
-      runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', providers: [provider] }), environment), hookdeck, fetch: gh.fetch });
+      runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', sources: [provider] }), environment), hookdeck, fetch: gh.fetch });
 
     await run(github({ webhookSecret: 'manual-secret-0123456789' }));
-    expect((await run(github({ token: 't', scope: { repos: ['o/one', 'o/two'] } }))).providers[0]!.webhook).toBe('updated');
+    expect((await run(github({ token: 't', scope: { repos: ['o/one', 'o/two'] } }))).sources[0]!.webhook).toBe('updated');
     const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
     for (const path of ['/repos/o/one/hooks', '/repos/o/two/hooks']) {
       expect(gh.hooks.get(path)).toEqual([expect.objectContaining({ config: expect.objectContaining({ url: source.url }) })]);
@@ -126,7 +126,7 @@ describe('bridge setup', () => {
 
   describe('generic webhook', () => {
     const fills = (secret = env('FILLS_WEBHOOK_SECRET')) =>
-      webhook({
+      source({ type: 'webhook', 
         id: 'fills',
         verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret },
         events: ['order.filled'],
@@ -142,7 +142,7 @@ describe('bridge setup', () => {
       }) as typeof globalThis.fetch;
       const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch });
       const run = (env_: Record<string, string>) =>
-        runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', providers: [fills()] }), { ...environment, ...env_ }), hookdeck, fetch: globalThis.fetch });
+        runSetup({ config: resolveConfig(defineConfig({ deployment: 'dev', sources: [fills()] }), { ...environment, ...env_ }), hookdeck, fetch: globalThis.fetch });
       const source = () => [...gateway.sources.values()].find((s) => s.name === 'bridge-fills');
       const connection = () => [...gateway.connections.values()].find((c) => c.name === 'bridge-fills-dev');
       return { gateway, calls, run, source, connection };
@@ -154,21 +154,21 @@ describe('bridge setup', () => {
       expect(source()).toMatchObject({ type: 'WEBHOOK' });
       expect(source()!.config).toBeUndefined();
       expect(connection()).toBeUndefined();
-      expect(report.providers[0]).toMatchObject({ id: 'fills', sourceUrl: source()!.url, webhook: 'pending', waitingFor: ['FILLS_WEBHOOK_SECRET'] });
-      expect(report.providers[0]!.hint).toContain(source()!.url);
-      expect(report.providers[0]!.hint).toMatch(/Waiting for FILLS_WEBHOOK_SECRET/);
+      expect(report.sources[0]).toMatchObject({ id: 'fills', sourceUrl: source()!.url, webhook: 'pending', waitingFor: ['FILLS_WEBHOOK_SECRET'] });
+      expect(report.sources[0]!.hint).toContain(source()!.url);
+      expect(report.sources[0]!.hint).toMatch(/Waiting for FILLS_WEBHOOK_SECRET/);
       // A missing secret ends setup with an error naming it, not a quiet success.
       expect(missingCredentialsError(report)).toMatch(/fills: set FILLS_WEBHOOK_SECRET; delivery is held/);
-      expect(missingCredentialsError({ providers: [{ ...report.providers[0]!, waitingFor: undefined }] })).toBeUndefined();
+      expect(missingCredentialsError({ sources: [{ ...report.sources[0]!, waitingFor: undefined }] })).toBeUndefined();
     });
 
     it('once the secret is set: applies it to the same source and connects it; re-running changes nothing', async () => {
       const { run, source, connection, calls } = webhookSetup();
-      const url = (await run({})).providers[0]!.sourceUrl;
+      const url = (await run({})).sources[0]!.sourceUrl;
 
       const applied = await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' });
-      expect(applied.providers[0]).toMatchObject({ sourceUrl: url, webhook: 'configured' });
-      expect(applied.providers[0]!.hint).not.toContain('secret-one');
+      expect(applied.sources[0]).toMatchObject({ sourceUrl: url, webhook: 'configured' });
+      expect(applied.sources[0]!.hint).not.toContain('secret-one');
       expect(source()!.config).toEqual({ auth_type: 'HMAC', auth: { algorithm: 'sha256', encoding: 'hex', header_key: 'x-signature', webhook_secret_key: 'secret-one-0123456789' } });
       expect(connection()!.rules).toEqual([
         { type: 'deduplicate', include_fields: ['headers.x-delivery-id'], window: 3_600_000 },
@@ -176,16 +176,16 @@ describe('bridge setup', () => {
       ]);
 
       calls.length = 0;
-      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).providers[0]!.webhook).toBe('existing');
+      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).sources[0]!.webhook).toBe('existing');
       expect(calls.filter((c) => c === 'PUT /sources')).toEqual([]);
 
-      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-two-0123456789' })).providers[0]!.webhook).toBe('configured');
+      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-two-0123456789' })).sources[0]!.webhook).toBe('configured');
       expect(source()!.config).toMatchObject({ auth: { webhook_secret_key: 'secret-two-0123456789' } });
     });
 
     it('with the secret from the start: creates the source with verification already on', async () => {
       const { run, source, calls } = webhookSetup();
-      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).providers[0]!.webhook).toBe('configured');
+      expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).sources[0]!.webhook).toBe('configured');
       expect(calls.filter((c) => c === 'PUT /sources')).toHaveLength(1);
       expect(source()!.config).toMatchObject({ auth_type: 'HMAC' });
     });

@@ -14,10 +14,10 @@ import { generateWebhookSecret } from '../../src/core/secret.js';
 import { matchSignatures, type SignedHeaders } from '../../src/core/sign.js';
 import { healthyDelivery, type SubscriptionInput } from '../../src/core/store.js';
 import { SubscriptionService } from '../../src/core/subscriptions.js';
-import { resend } from '../../src/providers.js';
+import { resend } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
-const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 'hs' });
+const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 'hs' });
 
 function setup({ graceMs = 60 * 60 * 1000 } = {}) {
   const gateway = new FakeEventGateway();
@@ -193,6 +193,46 @@ describe('CallbackRegistry: deleting unused callbacks', () => {
     expect(await flaky.sweep()).toEqual(['agent-laptop-email']);
     expect(gateway.sources.has(record.sourceId)).toBe(false);
   });
+
+  it("doesn't recreate a callback's connection when a retry run finishes after the sweep deleted it", async () => {
+    const { gateway, callbacks } = setup({ graceMs: 0 });
+    await callbacks.create({ agent: 'laptop', name: 'email' });
+    const realFetch = gateway.fetch;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    (gateway as unknown as { fetch: typeof fetch }).fetch = (async (input: URL | string, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      // The retry run's listings: held until the sweep is done, then empty (nothing missed).
+      if (/\/(requests|events)$/.test(path)) {
+        await gate;
+        return new Response(JSON.stringify({ models: [], pagination: {} }), { status: 200 });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+    const registry = new CallbackRegistry({
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: (i, o) => gateway.fetch(i, o) }),
+      inUse: () => false,
+      subscription: () => undefined,
+      settings: { graceMs: 0 },
+    });
+    await registry.load();
+    const retry = registry.retryMissed('laptop');
+    expect(await registry.sweep()).toEqual(['agent-laptop-email']);
+    release();
+    await retry;
+    expect([...gateway.connections.values()].map((c) => c.name)).not.toContain('agent-laptop-email');
+  });
+
+  it('deletes, on load, a callback connection whose source was deleted (listed with no name), instead of listening for it', async () => {
+    const { gateway, hookdeck, callbacks } = setup();
+    const record = await callbacks.create({ agent: 'laptop', name: 'email' });
+    const source = gateway.sources.get(record.sourceId)!;
+    gateway.sources.set(record.sourceId, { ...source, name: null as unknown as string });
+    const fresh = new CallbackRegistry({ hookdeck, inUse: () => false, subscription: () => undefined });
+    expect(await fresh.load()).toBe(0);
+    expect(fresh.listenPlan()).toEqual([]);
+    expect(gateway.connections.has(record.connectionId)).toBe(false);
+  });
 });
 
 describe('Signing for callback URLs', () => {
@@ -221,7 +261,7 @@ describe('Signing for callback URLs', () => {
     const service = new SubscriptionService({
       settings: DEFAULT_SUBSCRIPTION_SETTINGS,
       store,
-      catalog: new Catalog(config.providers),
+      catalog: new Catalog(config.sources),
       transport: { assertPublicHost: async () => {}, post: async () => ({ status: 200, body: '' }) },
       verify: async (_t, options) => (seen.push([options.secret, ...(options.extraSecrets ?? [])]), { ok: true }),
       callbacks,
@@ -253,7 +293,7 @@ describe('Signing for callback URLs', () => {
     const record = await callbacks.create({ agent: 'laptop', name: 'email' });
     const agentSecret = generateWebhookSecret();
     await store.put(subscription({ url: record.url, secret: agentSecret }));
-    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.providers), store, hookdeck, callbacks, now: () => new Date('2026-10-05T16:30:00.000Z') });
+    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.sources), store, hookdeck, callbacks, now: () => new Date('2026-10-05T16:30:00.000Z') });
 
     const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fixtures', 'resend', 'email-received.json'), 'utf8')) as { headers: Record<string, string>; body: unknown };
     const raw = JSON.stringify(fixture.body);
@@ -281,7 +321,7 @@ describe('Paths under a tunnel URL (one base URL for every subscription, as Herm
     const service = new SubscriptionService({
       settings: DEFAULT_SUBSCRIPTION_SETTINGS,
       store,
-      catalog: new Catalog(config.providers),
+      catalog: new Catalog(config.sources),
       transport: { assertPublicHost: async () => {}, post: async () => ({ status: 200, body: '' }) },
       verify: async (_t, options) => (seen.push([options.secret, ...(options.extraSecrets ?? [])]), { ok: true }),
       callbacks,
@@ -291,7 +331,7 @@ describe('Paths under a tunnel URL (one base URL for every subscription, as Herm
     expect(seen).toEqual([[agentSecret, sourceSecret]]);
 
     // Deliveries too.
-    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.providers), store, hookdeck, callbacks, now: () => new Date() });
+    const relay = new Relay({ signingSecret: 'hs', providerIds: ['resend'], catalog: new Catalog(config.sources), store, hookdeck, callbacks, now: () => new Date() });
     const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fixtures', 'resend', 'email-received.json'), 'utf8')) as { headers: Record<string, string>; body: unknown };
     const raw = JSON.stringify(fixture.body);
     await relay.handle('/inbound/resend', { ...fixture.headers, 'x-hookdeck-signature': createHmac('sha256', 'hs').update(raw).digest('base64') }, raw);
