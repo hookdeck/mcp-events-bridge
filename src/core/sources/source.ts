@@ -199,7 +199,7 @@ function typedVerification(type: SourceTypeName): Verification {
     sourceConfig: (c) => ({
       auth: Object.fromEntries(Object.entries(auth).flatMap(([option, { field }]) => (c[option] ? [[field, c[option]]] : []))),
     }),
-    describe: (_, name) => `Event Gateway checks ${type}'s signatures with ${Object.keys(auth).map(name).join(' and ')}`,
+    describe: (_, name) => `Event Gateway verifies ${type}'s requests (its signature or credentials) with ${Object.keys(auth).map(name).join(' and ')}`,
   };
 }
 

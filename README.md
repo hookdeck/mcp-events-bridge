@@ -209,7 +209,8 @@ export default defineConfig({
 - **Credentials:** most types take `secret`, the service's webhook signing secret. Others take their own fields: `source({ type: 'postmark', username, password, ... })`, `source({ type: 'twitter', apiKey, ... })`. The TypeScript types list each type's fields, and the config won't compile with a missing or unknown one.
 - **Events:** you name the events and say where the service puts the event type and id, with the same options as a webhook source (below). Presets that fill these in per service are planned.
 - **Not offered yet:** source types with a choice of verification methods (GitLab, Grafana, Azure Event Grid, SendGrid Inbound Parse, Ordinal) and those configured without credentials (AWS SNS and a few others). Use a webhook source, or your own definition, for those.
-- **Tested** with Stripe-signed requests on 26 Oct 2026: a correctly signed `invoice.paid` reached a subscriber, and a wrongly signed one was rejected by Event Gateway (`VERIFICATION_FAILED`).
+- **Registration handshakes:** some services check a URL when you register it. Slack's Events API sends a `url_verification` challenge, and Event Gateway's `slack` source answers it itself, so registering the URL in Slack needs no code. A `webhook` source answers every request with Event Gateway's standard response, not the challenge. Other services' handshakes haven't been checked.
+- **Tested** on 26 Oct 2026 with requests signed or authenticated as each service does (no accounts at the services): Stripe and Slack (a signature over a timestamp and the body) and Postmark (Basic auth). Correct ones reached a subscriber; wrong ones were rejected by Event Gateway (`VERIFICATION_FAILED`). The other source types use the same path, but haven't each been tested.
 
 ### Any HTTP sender: webhook sources
 

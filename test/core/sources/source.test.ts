@@ -169,7 +169,7 @@ describe('typed sources: an Event Gateway source type verifies the service\'s si
     expect(s).toMatchObject({ id: 'stripe', events: ['invoice.paid', 'customer.created'] });
     expect(s.definition).toMatchObject({ type: 'stripe', sourceType: 'STRIPE', inboundDedupeFields: ['body.id'] });
     expect(s.definition.sourceConfig!(s.options)).toEqual({ auth: { webhook_secret_key: 'whsec_stripe' } });
-    expect(s.definition.setupHint!({ sourceUrl: 'https://hkdk.events/x', providerEvents: [], options: s.options })).toContain("Event Gateway checks stripe's signatures with STRIPE_WEBHOOK_SECRET");
+    expect(s.definition.setupHint!({ sourceUrl: 'https://hkdk.events/x', providerEvents: [], options: s.options })).toContain("Event Gateway verifies stripe's requests (its signature or credentials) with STRIPE_WEBHOOK_SECRET");
   });
 
   it('maps events as a webhook source does', () => {
