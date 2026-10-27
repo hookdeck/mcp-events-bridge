@@ -48,6 +48,11 @@ const WATERMARK_MARGIN_MS = 2 * 60 * 1000;
  * pending; after that, it's judged again.
  */
 const RETRY_SETTLE_MS = 3 * 60 * 1000;
+/**
+ * Event Gateway's header search can lag a new event (seen live: a delivery missed seconds earlier wasn't found yet), so
+ * a missed delivery whose event isn't found counts as pending for this long; after that, its event is judged gone.
+ */
+const EVENT_SEARCH_LAG_MS = 10 * 60 * 1000;
 
 export interface CallbackSettings {
   /** How long a callback with no subscription is kept before the sweeper deletes it. */
@@ -399,7 +404,9 @@ export class CallbackRegistry {
     // Every attempt at each delivery: the original, and the requests retrying the subscription's event created.
     const deliveries = new Map<string, { subscriptionId: string; webhookId: string; requests: HookdeckRequest[] }>();
     for (const request of requests.models) {
-      if (request.verified === false || request.rejection_cause) continue; // rejected at the source: never meant for the agent
+      // Rejected at the source (a bad signature at a URL with a secret): never meant for the agent. A pass-through source
+      // verifies nothing, so its requests are all `verified: false` (verified live): that isn't a rejection.
+      if (request.rejection_cause) continue;
       const subscriptionId = header(request, 'x-mcp-subscription-id');
       const webhookId = header(request, 'webhook-id');
       if (!subscriptionId || !webhookId) continue; // not a subscription's delivery (a stray request to a pass-through URL)
@@ -435,6 +442,13 @@ export class CallbackRegistry {
       const upstream = (await hookdeck.listEvents({ webhook_id: subscription.connectionId, headers: { 'webhook-id': delivery.webhookId }, limit: 5 })).models;
       const event = upstream.at(-1);
       if (!event) {
+        const newest = Math.max(...delivery.requests.map((r) => Date.parse(r.created_at)));
+        if (this.now().getTime() - newest < EVENT_SEARCH_LAG_MS) {
+          // Probably not searchable yet: try again next run, and hold the watermark.
+          report.pending++;
+          clean = false;
+          continue;
+        }
         this.log(`can't retry ${delivery.webhookId} for ${delivery.subscriptionId}: Event Gateway no longer has its event`);
         continue;
       }

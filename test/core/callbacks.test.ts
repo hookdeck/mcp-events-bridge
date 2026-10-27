@@ -311,6 +311,7 @@ describe('Retrying missed deliveries', () => {
     id: string;
     created_at?: string;
     verified?: boolean;
+    rejected?: boolean;
     webhookId?: string | null;
     subscription?: string | null;
     events?: Array<{ id: string; status: string; response_status?: number | null; webhook_id?: string }>;
@@ -327,6 +328,7 @@ describe('Retrying missed deliveries', () => {
     const model = (r: Req) => ({
       id: r.id,
       verified: r.verified ?? true,
+      rejection_cause: r.rejected ? 'VERIFICATION_FAILED' : null,
       created_at: r.created_at ?? '2026-10-07T11:00:00.000Z',
       ignored_count: (r.ignored ?? []).length,
       data: {
@@ -436,7 +438,7 @@ describe('Retrying missed deliveries', () => {
       { id: 'req_dropped', webhookId: 'evt_a', events: [{ id: 'cb_a', status: 'FAILED', response_status: null }] },
       { id: 'req_rejected', webhookId: 'evt_b', events: [{ id: 'cb_b', status: 'FAILED', response_status: 401 }] },
       { id: 'req_done', webhookId: 'evt_c', events: [{ id: 'cb_c', status: 'SUCCESSFUL' }] },
-      { id: 'req_bad_signature', webhookId: 'evt_d', verified: false },
+      { id: 'req_bad_signature', webhookId: 'evt_d', verified: false, rejected: true },
     ]);
     await callbacks.load();
     expect(await callbacks.retryMissed('laptop')).toMatchObject({ deliveriesChecked: 3, retried: 1, rejectedByAgent: 1 });
@@ -461,6 +463,21 @@ describe('Retrying missed deliveries', () => {
     await callbacks.load();
     expect(await callbacks.retryMissed('laptop')).toMatchObject({ deliveriesChecked: 1, retried: 0, upToDate: true });
     expect(retried).toEqual([]);
+  });
+
+  it("retries a missed delivery at a pass-through URL, whose requests are all unverified (it verifies nothing)", async () => {
+    const { callbacks, retried } = retrySetup([{ id: 'req_offline', verified: false, ignored: ['CLI_DISCONNECTED'] }]);
+    await callbacks.load();
+    expect(await callbacks.retryMissed('laptop')).toMatchObject({ retried: 1 });
+    expect(retried).toEqual(['evt_web_sub_1_evt_1']);
+  });
+
+  it("counts a missed delivery whose event isn't found yet as pending (Event Gateway's search can lag a new event)", async () => {
+    const { callbacks, retried, checkedUntil } = retrySetup([{ id: 'req_offline', created_at: '2026-10-07T11:58:00.000Z', ignored: ['CLI_DISCONNECTED'] }], { upstream: false });
+    await callbacks.load();
+    expect(await callbacks.retryMissed('laptop')).toMatchObject({ retried: 0, pending: 1, upToDate: false });
+    expect(retried).toEqual([]);
+    expect(checkedUntil()).toBeNull();
   });
 
   it("logs a missed delivery whose event Event Gateway no longer has, and doesn't hold the watermark for it", async () => {
