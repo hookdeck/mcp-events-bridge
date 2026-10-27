@@ -128,7 +128,7 @@ With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Crea
 
 ![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email notifications" task that is Monitoring](docs/images/chatgpt-subscribe.png)
 
-When an event arrives, the task runs with it, as in the screenshot at the top. A chat that's already open may not show it until you reload the page (seen on 27 Oct, with the callback answered in about 2 seconds). Pausing the task unsubscribes it from the bridge, so events that arrive while it's paused aren't delivered to it later: the bridge can't replay missed webhook deliveries yet ([#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)). They're still in Event Gateway, so ChatGPT can list them with `list_events`.
+When an event arrives, the task runs with it, as in the screenshot at the top. A chat that's already open may not show it until you reload the page (seen on 27 Oct, with the callback answered in about 2 seconds). Pausing the task unsubscribes it from the bridge. ChatGPT saves each subscription's cursor, and if it subscribes again with it, the bridge replays what the task missed. What ChatGPT does when a paused task resumes hasn't been tested yet; either way, the events are still in Event Gateway, so ChatGPT can list them with `list_events`.
 
 ChatGPT keeps the list of events it can subscribe to from when you added the plugin. After you upgrade the bridge or add a source, refresh the plugin in Plugins, or ChatGPT can't subscribe to the new or renamed events (it may still list them, since that call goes to the bridge). Then ask it to subscribe again.
 
@@ -394,6 +394,7 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 - **No public URL needed:** each poll reads the source's requests from Event Gateway, so it works from a laptop, with a deployed or a local bridge.
 - **Start from now:** a first call without a cursor returns no events, only a cursor. For events that already happened, use `list_events`.
 - **At least once:** events can repeat, so dedupe by `eventId`. `truncated: true` means events were skipped (`maxAgeMs`, or older than Event Gateway keeps).
+- **Replay:** every delivery and every subscribe response carries a `cursor`, a position in Event Gateway's history of the source's requests. Subscribe again with the latest one, after an unsubscribe, an expiry or downtime, and the bridge delivers what you missed, alongside live events, up to Event Gateway's retention (3 days on the Developer plan). Refreshing a live subscription with it changes nothing. Poll mode uses the same cursors.
 - **Latency:** an event reaches a poller about 2 seconds after Event Gateway receives it, sometimes up to 15. Polls share one listing of Event Gateway's requests, at most every 2 seconds, so the API's rate limit (240 requests a minute per key) is shared, however many agents poll, as long as each polls at the `nextPollMs` it's given (`wait_for_event` does). When the limit runs low, `nextPollMs` grows to 30 seconds.
 
 ### In the background: `watch`

@@ -195,6 +195,43 @@ describe('Relay: generic webhook', () => {
     expect(JSON.parse(gateway.published[0]!.body)).toMatchObject({ eventId: 'dlv_42', name: 'fills.order.filled', data: { symbol: 'AAPL', side: 'buy', quantity: 100 } });
   });
 
+  it('gives each subscriber its own cursor, from the Event Gateway request, and delivers one stored event to one subscriber', async () => {
+    const gateway = new FakeEventGateway();
+    const store = new MemoryStore();
+    const asked: Array<[string, string | undefined]> = [];
+    const relay = new Relay({
+      signingSecret: SIGNING_SECRET,
+      providerIds: ['fills'],
+      catalog: new Catalog(fillsConfig.sources),
+      store,
+      hookdeck: new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch }),
+      cursor: (s, requestId) => {
+        asked.push([s.id, requestId]);
+        return `cur_${s.id}`;
+      },
+    });
+    await store.put(subscription({ name: 'fills.order.filled', arguments: { symbol: 'AAPL' } }));
+    await store.put(subscription({ id: 'sub_b', name: 'fills.order.filled', arguments: {} }));
+    const raw = JSON.stringify({ symbol: 'AAPL', side: 'buy', quantity: 100 });
+    const headers = { 'x-hookdeck-verified': 'true', 'x-delivery-id': 'dlv_44', 'x-hookdeck-requestid': 'req_44' };
+    expect(await relay.handle('/inbound/fills', signed(raw, headers), raw)).toEqual({ status: 200, body: { published: 2 } });
+    const cursors = gateway.published.map((p) => [p.headers['X-MCP-Subscription-Id'], JSON.parse(p.body).cursor]).sort();
+    expect(cursors).toEqual([
+      ['sub_a', 'cur_sub_a'],
+      ['sub_b', 'cur_sub_b'],
+    ]);
+    expect(asked.sort()).toEqual([
+      ['sub_a', 'req_44'],
+      ['sub_b', 'req_44'],
+    ]);
+
+    // Replay: one event from Event Gateway's history, to one subscriber, signed and shaped as a live delivery.
+    const replayed = { eventId: 'dlv_1', name: 'fills.order.filled', timestamp: '2026-10-05T16:00:00.000Z', data: { symbol: 'AAPL' } };
+    await relay.deliver(store.get('sub_a')!, replayed, 'cur_replay');
+    expect(gateway.published.at(-1)).toMatchObject({ headers: { 'webhook-id': 'dlv_1', 'X-MCP-Subscription-Id': 'sub_a' } });
+    expect(JSON.parse(gateway.published.at(-1)!.body)).toEqual({ ...replayed, cursor: 'cur_replay' });
+  });
+
   it('keeps an integer beyond 2^53 exact, as a string of its digits', async () => {
     const gateway = new FakeEventGateway();
     const store = new MemoryStore();

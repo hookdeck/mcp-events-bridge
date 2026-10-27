@@ -11,6 +11,7 @@ import { HookdeckClient } from '../core/hookdeck.js';
 import { buildMcpServer } from '../core/mcp.js';
 import { PollService, type PollServiceDeps } from '../core/poll.js';
 import { Relay } from '../core/relay.js';
+import { WebhookReplay } from '../core/replay.js';
 import type { SubscriptionStore } from '../core/store.js';
 import { SubscriptionService, type SubscriptionServiceDeps } from '../core/subscriptions.js';
 import { createNodeCallbackTransport } from './callback-transport.js';
@@ -108,15 +109,8 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   for (const subscription of store.list()) {
     if (!catalog.get(subscription.name)) log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer`);
   }
-  const subscriptions = new SubscriptionService({
-    settings: config.subscriptions,
-    store,
-    catalog,
-    transport: createNodeCallbackTransport(),
-    callbacks,
-    log,
-    ...options.subscriptionOverrides,
-  });
+  const history = new EventHistory({ hookdeck, catalog, providers: config.sources });
+  const poll = new PollService({ hookdeck, catalog, history, ...options.pollOverrides });
   const recoveredRequests = new Set<string>();
   const relay = new Relay({
     signingSecret: config.hookdeck.signingSecret,
@@ -126,10 +120,25 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     hookdeck,
     callbacks,
     recovered: (id) => recoveredRequests.has(id),
+    // Webhook cursors are poll's, so a subscriber can replay from one (SEP-3415).
+    cursor: (subscription, requestId) => poll.webhookCursor(subscription.name, subscription.arguments, { requestId }),
     log,
   });
-  const history = new EventHistory({ hookdeck, catalog, providers: config.sources });
-  const poll = new PollService({ hookdeck, catalog, history, ...options.pollOverrides });
+  const replay = new WebhookReplay({ poll, deliver: (subscription, event, cursor) => relay.deliver(subscription, event, cursor), current: (id) => store.get(id), log });
+  const subscriptions = new SubscriptionService({
+    settings: config.subscriptions,
+    store,
+    catalog,
+    transport: createNodeCallbackTransport(),
+    callbacks,
+    cursors: {
+      watermark: (name, args) => poll.webhookCursor(name, args),
+      check: (name, args, cursor) => poll.checkCursor(name, args, cursor),
+      replay: (subscription, cursor) => replay.start(subscription, cursor),
+    },
+    log,
+    ...options.subscriptionOverrides,
+  });
   const sources = () =>
     config.sources.map((p) => {
       // MCP names, as in events/list and events/subscribe.
