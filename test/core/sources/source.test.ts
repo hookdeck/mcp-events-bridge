@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { matchesFilter } from '../../../src/core/filter.js';
 import { assertCredentials, ConfigError, defineConfig, env, resolveConfig } from '../../../src/core/config.js';
 import { readPath, type SourceOptions, type WebhookSourceOptions } from '../../../src/core/sources/source.js';
-import type { InboundRequest } from '../../../src/core/sources/types.js';
+import type { InboundRequest, SourceDefinition } from '../../../src/core/sources/types.js';
 import { source, webhook } from '../../../src/sources.js';
 
 type WebhookOptions = WebhookSourceOptions;
@@ -22,6 +24,19 @@ const fills: WebhookOptions = {
 const resolved = (options: WebhookOptions = fills, environment: Record<string, string> = { FILLS_WEBHOOK_SECRET: SECRET }) =>
   resolveConfig(defineConfig({ deployment: 'dev', sources: [source(options)] }), { ...base, ...environment }).sources[0]!;
 
+// An event as the bridge and its transformation use it: the metadata, the runtime's mapping and the filter.
+const eventOf = (definition: SourceDefinition, name: string) => {
+  const meta = definition.events.find((e) => e.name === name)!;
+  const runtime = definition.runtime(definition.runtimeConfig)[name]!;
+  return { ...meta, ...runtime, accepts: (args: Record<string, unknown>, summary: unknown) => matchesFilter(meta.filter(args), summary) };
+};
+const canonical = (value: unknown): string =>
+  Array.isArray(value)
+    ? `[${value.map(canonical).join(',')}]`
+    : typeof value === 'object' && value !== null
+      ? `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`).join(',')}}`
+      : JSON.stringify(value);
+
 const fill = { id: 'fill_1', symbol: 'AAPL', side: 'buy', quantity: 100, price: 187.5, filled_at: '2026-10-07T14:30:00.123Z' };
 const request = (body: unknown = fill, headers: Record<string, string> = {}): InboundRequest => ({
   headers: { 'x-hookdeck-verified': 'true', 'x-hookdeck-requestid': 'req_123', 'x-delivery-id': 'dlv_1', ...headers },
@@ -32,7 +47,7 @@ describe('webhook source: config', () => {
   it('creates an instance with the given id and events, and a WEBHOOK source with HMAC verification', () => {
     const provider = resolved();
     expect(provider).toMatchObject({ id: 'fills', events: ['order.filled'] });
-    expect(provider.definition).toMatchObject({ type: 'webhook', sourceType: 'WEBHOOK', inboundDedupeFields: ['headers.x-delivery-id'], eventIdHeader: 'x-delivery-id' });
+    expect(provider.definition).toMatchObject({ type: 'webhook', sourceType: 'WEBHOOK', eventIdHeader: 'x-delivery-id' });
     expect(provider.definition.sourceConfig!(provider.options)).toEqual({
       auth_type: 'HMAC',
       auth: { algorithm: 'sha256', encoding: 'hex', header_key: 'x-signature', webhook_secret_key: SECRET },
@@ -76,13 +91,12 @@ describe('webhook source: config', () => {
 });
 
 describe('webhook source: mapping', () => {
-  const event = (options: WebhookOptions = fills, name = 'order.filled') => resolved(options).definition.events.find((e) => e.name === name)!;
+  const event = (options: WebhookOptions = fills, name = 'order.filled') => eventOf(resolved(options).definition, name);
 
-  it('matches only requests Event Gateway verified', () => {
+  it("doesn't depend on Event Gateway's delivery headers: a request that fails verification never reaches the runtime", () => {
     expect(event().matches(request())).toBe(true);
-    expect(event().matches(request(fill, { 'x-hookdeck-verified': 'false' }))).toBe(false);
-    const { 'x-hookdeck-verified': _, ...unmarked } = request().headers;
-    expect(event().matches({ headers: unmarked, body: fill })).toBe(false);
+    const { 'x-hookdeck-verified': _, 'x-hookdeck-requestid': __, ...plain } = request().headers;
+    expect(event().matches({ headers: plain, body: fill })).toBe(true);
   });
 
   it('picks the event by a body field or header, with a value-to-name map', () => {
@@ -95,16 +109,20 @@ describe('webhook source: mapping', () => {
     expect(event(byHeader).matches(request(fill, { 'x-event': 'other' }))).toBe(false);
   });
 
-  it('takes the event id from a header or body path, else Event Gateway\'s request id', () => {
+  it('takes the event id from a header or body path, else a SHA-256 of the body', () => {
     expect(event().eventId(request())).toBe('dlv_1');
     expect(() => event().eventId(request(fill, { 'x-delivery-id': '' }))).toThrow(/x-delivery-id header/);
     const byField = resolved({ ...fills, eventId: { field: 'id' } });
-    expect(byField.definition.inboundDedupeFields).toEqual(['body.id']);
     expect(byField.definition.eventIdHeader).toBeUndefined();
-    expect(byField.definition.events[0]!.eventId(request())).toBe('fill_1');
-    const fallback = resolved({ ...fills, eventId: undefined });
-    expect(fallback.definition.inboundDedupeFields).toBeUndefined();
-    expect(fallback.definition.events[0]!.eventId(request())).toBe('req_123');
+    expect(eventOf(byField.definition, 'order.filled').eventId(request())).toBe('fill_1');
+    // No eventId: the body's hash (canonical JSON, so key order doesn't matter), the same in Event Gateway.
+    const fallback = eventOf(resolved({ ...fills, eventId: undefined }).definition, 'order.filled');
+    const expected = createHash('sha256').update(canonical(fill)).digest('hex').slice(0, 32);
+    expect(fallback.eventId(request())).toBe(expected);
+    expect(fallback.eventId(request({ ...Object.fromEntries(Object.entries(fill).reverse()) }))).toBe(expected);
+    expect(fallback.eventId(request({ ...fill, quantity: 101 }))).not.toBe(expected);
+    const unicode = { note: 'caf\u00e9 \u{1F680}', long: 'x'.repeat(10_000) };
+    expect(fallback.eventId(request(unicode))).toBe(createHash('sha256').update(canonical(unicode)).digest('hex').slice(0, 32));
   });
 
   it('takes occurred-at from a body field (ISO 8601 or Unix time), else the time received', () => {
@@ -131,7 +149,7 @@ describe('webhook source: mapping', () => {
 });
 
 describe('webhook source: subscribe arguments', () => {
-  const event = resolved().definition.events[0]!;
+  const event = eventOf(resolved().definition, 'order.filled');
 
   it('offers equality filters on the declared fields', () => {
     expect(event.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, properties: { symbol: expect.any(Object), side: expect.any(Object) } });
@@ -149,6 +167,9 @@ describe('webhook source: subscribe arguments', () => {
     expect(event.accepts({ side: 'sell' }, summary)).toBe(false);
     expect(event.accepts({ symbol: 'AAPL' }, { symbol: { nested: true } })).toBe(false);
     expect(event.accepts({ symbol: 'AAPL' }, {})).toBe(false);
+    // Type included, as Event Gateway's filters compare.
+    expect(event.accepts({ quantity: 100 }, summary)).toBe(true);
+    expect(event.accepts({ quantity: '100' }, summary)).toBe(false);
   });
 });
 
@@ -167,13 +188,13 @@ describe('typed sources: an Event Gateway source type verifies the service\'s si
   it('creates a STRIPE source whose auth holds the secret, with the type as the default id', () => {
     const s = resolvedStripe();
     expect(s).toMatchObject({ id: 'stripe', events: ['invoice.paid', 'customer.created'] });
-    expect(s.definition).toMatchObject({ type: 'stripe', sourceType: 'STRIPE', inboundDedupeFields: ['body.id'] });
+    expect(s.definition).toMatchObject({ type: 'stripe', sourceType: 'STRIPE' });
     expect(s.definition.sourceConfig!(s.options)).toEqual({ auth: { webhook_secret_key: 'whsec_stripe' } });
     expect(s.definition.setupHint!({ sourceUrl: 'https://hkdk.events/x', providerEvents: [], options: s.options })).toContain("Event Gateway verifies stripe's requests (its signature or credentials) with STRIPE_WEBHOOK_SECRET");
   });
 
   it('maps events as a webhook source does', () => {
-    const paid = resolvedStripe().definition.events.find((e) => e.name === 'invoice.paid')!;
+    const paid = eventOf(resolvedStripe().definition, 'invoice.paid');
     const body = { id: 'evt_1', type: 'invoice.paid', created: 1791383400, data: { object: { id: 'in_1' } } };
     expect(paid.matches(request(body))).toBe(true);
     expect(paid.matches(request({ ...body, type: 'customer.created' }))).toBe(false);

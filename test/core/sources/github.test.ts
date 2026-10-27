@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { matchesFilter } from '../../../src/core/filter.js';
 import { DEFAULT_GITHUB_EVENTS, githubProvider } from '../../../src/core/sources/github.js';
 import type { InboundRequest } from '../../../src/core/sources/types.js';
 import { github } from '../../../src/sources.js';
@@ -10,8 +11,13 @@ const load = (name: string): InboundRequest => {
   const f = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'fixtures', 'github', name), 'utf8')) as InboundRequest;
   return { headers: f.headers, body: f.body };
 };
-const event = (name: string) => githubProvider.events.find((e) => e.name === name)!;
-const matching = (req: InboundRequest) => githubProvider.events.filter((e) => e.matches(req)).map((e) => e.name);
+// Each event as the bridge and its transformation use it: the runtime for the mapping, the filter for arguments.
+const runtimes = githubProvider.runtime(githubProvider.runtimeConfig);
+const event = (name: string) => {
+  const meta = githubProvider.events.find((e) => e.name === name)!;
+  return { ...meta, ...runtimes[name]!, accepts: (args: Record<string, unknown>, summary: unknown) => matchesFilter(meta.filter(args), summary) };
+};
+const matching = (req: InboundRequest) => githubProvider.events.filter((e) => runtimes[e.name]!.matches(req)).map((e) => e.name);
 
 describe('GitHub provider', () => {
   it('offers one MCP event per GitHub event type, and a default set', () => {

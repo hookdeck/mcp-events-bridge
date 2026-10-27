@@ -152,12 +152,7 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedSource) {
     return report('pending');
   }
 
-  const rules: Rule[] = [
-    ...(definition.inboundDedupeFields?.length
-      ? [{ type: 'deduplicate' as const, include_fields: definition.inboundDedupeFields, window: 3_600_000 }]
-      : []),
-    INBOUND_RETRY_RULE,
-  ];
+  const rules: Rule[] = [INBOUND_RETRY_RULE];
   await hookdeck.upsertConnection({
     name: connectionName,
     source_id: source.id,

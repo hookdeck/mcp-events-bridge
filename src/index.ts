@@ -9,4 +9,4 @@ export const defineProvider = defineSource;
 /** @deprecated Renamed to `SourceDefinition`. */
 export type ProviderDefinition<Options = Record<string, unknown>> = SourceDefinition<Options>;
 /** @deprecated Renamed to `SourceEvent`. */
-export type ProviderEvent<Args = Record<string, unknown>, Summary extends Record<string, unknown> = Record<string, unknown>> = SourceEvent<Args, Summary>;
+export type ProviderEvent<Args = Record<string, unknown>> = SourceEvent<Args>;

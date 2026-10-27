@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { InboundRequest, SourceDefinition, SourceEvent } from './types.js';
+import type { EventRuntime, SourceDefinition, SourceEvent } from './types.js';
 
 /*
  * GitHub. One event per GitHub webhook event type (`issues`, `pull_request`,
@@ -43,7 +43,6 @@ const HOOKS_BY_URL = 'matched-by-source-url';
 const MANUAL = 'manual';
 const MIN_SECRET_LENGTH = 16;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const TEXT_LIMIT = 500;
 
 /** GitHub event types offered, with what they cover. */
 const EVENT_TYPES: Record<string, string> = {
@@ -77,25 +76,6 @@ const EVENT_TYPES: Record<string, string> = {
 
 export const DEFAULT_GITHUB_EVENTS = ['issues', 'issue_comment', 'pull_request', 'pull_request_review', 'push', 'release', 'workflow_run'];
 
-/** The payload key holding each type's main object, where it isn't the type name itself. */
-const OBJECT_KEY: Record<string, string> = {
-  issues: 'issue',
-  issue_comment: 'comment',
-  pull_request_review: 'review',
-  pull_request_review_comment: 'comment',
-  discussion_comment: 'comment',
-  deployment_status: 'deployment_status',
-  fork: 'forkee',
-};
-
-type Payload = Record<string, any>;
-
-const clip = (value: unknown) => {
-  if (typeof value !== 'string') return null;
-  return value.length > TEXT_LIMIT ? `${value.slice(0, TEXT_LIMIT)}…` : value;
-};
-const lower = (value: unknown) => (typeof value === 'string' ? value.toLowerCase() : null);
-
 export interface GithubSummary extends Record<string, unknown> {
   event: string;
   action: string | null;
@@ -106,74 +86,112 @@ export interface GithubSummary extends Record<string, unknown> {
   url: string | null;
 }
 
-/** Fields every GitHub event has, normalized for matching (repository and sender lower-cased). */
-function genericSummary(type: string, body: Payload): GithubSummary {
-  const object = body[OBJECT_KEY[type] ?? type] as Payload | undefined;
-  const parent = (body.issue ?? body.pull_request ?? body.discussion) as Payload | undefined;
-  return {
-    event: type,
-    action: typeof body.action === 'string' ? body.action : null,
-    repository: lower(body.repository?.full_name),
-    sender: lower(body.sender?.login),
-    title: clip(object?.title ?? object?.name ?? parent?.title ?? null),
-    number: typeof object?.number === 'number' ? object.number : typeof parent?.number === 'number' ? parent.number : null,
-    url: typeof object?.html_url === 'string' ? object.html_url : typeof body.compare === 'string' ? body.compare : null,
-  };
-}
-
-/** A few more fields for the most-used types. */
-function extras(type: string, body: Payload): Record<string, unknown> {
-  switch (type) {
-    case 'issues':
-      return { state: body.issue?.state ?? null, labels: (body.issue?.labels ?? []).map((l: Payload) => l.name).slice(0, 20) };
-    case 'issue_comment':
-    case 'pull_request_review_comment':
-    case 'discussion_comment':
-      return { comment: clip(body.comment?.body), onPullRequest: Boolean(body.issue?.pull_request ?? body.pull_request) };
-    case 'pull_request':
-      return {
-        state: body.pull_request?.state ?? null,
-        merged: Boolean(body.pull_request?.merged),
-        draft: Boolean(body.pull_request?.draft),
-        head: body.pull_request?.head?.ref ?? null,
-        base: body.pull_request?.base?.ref ?? null,
-      };
-    case 'pull_request_review':
-      return { state: body.review?.state ?? null, review: clip(body.review?.body) };
-    case 'push':
-      return {
-        ref: body.ref ?? null,
-        commits: Array.isArray(body.commits) ? body.commits.length : 0,
-        headCommit: clip(body.head_commit?.message),
-        created: Boolean(body.created),
-        deleted: Boolean(body.deleted),
-        forced: Boolean(body.forced),
-      };
-    case 'release':
-      return { tag: body.release?.tag_name ?? null, prerelease: Boolean(body.release?.prerelease) };
-    case 'workflow_run':
-      return {
-        workflow: body.workflow_run?.name ?? null,
-        status: body.workflow_run?.status ?? null,
-        conclusion: body.workflow_run?.conclusion ?? null,
-        branch: body.workflow_run?.head_branch ?? null,
-      };
-    default:
-      return {};
-  }
-}
-
 /**
- * When it happened: for a push, when GitHub received it (`repository.pushed_at`,
- * unix seconds; the head commit's timestamp is when the commit was made, which
- * can be much earlier); otherwise the main object's latest timestamp; else now.
+ * GitHub's runtime: self-contained, since it also runs inside Event Gateway (see SourceRuntime). Takes the event
+ * types offered, and maps each from the X-GitHub-Event header.
  */
-function occurredAt(type: string, body: Payload): string {
-  const object = body[OBJECT_KEY[type] ?? type] as Payload | undefined;
-  const pushedAt = type === 'push' && typeof body.repository?.pushed_at === 'number' ? new Date(body.repository.pushed_at * 1000).toISOString() : undefined;
-  const candidates = [pushedAt, object?.completed_at, object?.submitted_at, object?.updated_at, object?.published_at, object?.created_at, body.head_commit?.timestamp];
-  const found = candidates.find((value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
-  return new Date(found ?? Date.now()).toISOString();
+export function githubRuntime(types: string[]): Record<string, EventRuntime> {
+  const TEXT_LIMIT = 500;
+  // The payload key holding each type's main object, where it isn't the type name itself.
+  const OBJECT_KEY: Record<string, string> = {
+    issues: 'issue',
+    issue_comment: 'comment',
+    pull_request_review: 'review',
+    pull_request_review_comment: 'comment',
+    discussion_comment: 'comment',
+    deployment_status: 'deployment_status',
+    fork: 'forkee',
+  };
+  type Payload = Record<string, any>;
+  const clip = (value: unknown) => {
+    if (typeof value !== 'string') return null;
+    return value.length > TEXT_LIMIT ? `${value.slice(0, TEXT_LIMIT)}…` : value;
+  };
+  const lower = (value: unknown) => (typeof value === 'string' ? value.toLowerCase() : null);
+  const bodyOf = (body: unknown): Payload => (typeof body === 'object' && body !== null ? (body as Payload) : {});
+
+  // Fields every GitHub event has, normalized for filtering (repository and sender lower-cased).
+  const genericSummary = (type: string, body: Payload) => {
+    const object = body[OBJECT_KEY[type] ?? type] as Payload | undefined;
+    const parent = (body.issue ?? body.pull_request ?? body.discussion) as Payload | undefined;
+    return {
+      event: type,
+      action: typeof body.action === 'string' ? body.action : null,
+      repository: lower(body.repository?.full_name),
+      sender: lower(body.sender?.login),
+      title: clip(object?.title ?? object?.name ?? parent?.title ?? null),
+      number: typeof object?.number === 'number' ? object.number : typeof parent?.number === 'number' ? parent.number : null,
+      url: typeof object?.html_url === 'string' ? object.html_url : typeof body.compare === 'string' ? body.compare : null,
+    };
+  };
+
+  // A few more fields for the most-used types.
+  const extras = (type: string, body: Payload): Record<string, unknown> => {
+    switch (type) {
+      case 'issues':
+        return { state: body.issue?.state ?? null, labels: (body.issue?.labels ?? []).map((l: Payload) => l.name).slice(0, 20) };
+      case 'issue_comment':
+      case 'pull_request_review_comment':
+      case 'discussion_comment':
+        return { comment: clip(body.comment?.body), onPullRequest: Boolean(body.issue?.pull_request ?? body.pull_request) };
+      case 'pull_request':
+        return {
+          state: body.pull_request?.state ?? null,
+          merged: Boolean(body.pull_request?.merged),
+          draft: Boolean(body.pull_request?.draft),
+          head: body.pull_request?.head?.ref ?? null,
+          base: body.pull_request?.base?.ref ?? null,
+        };
+      case 'pull_request_review':
+        return { state: body.review?.state ?? null, review: clip(body.review?.body) };
+      case 'push':
+        return {
+          ref: body.ref ?? null,
+          commits: Array.isArray(body.commits) ? body.commits.length : 0,
+          headCommit: clip(body.head_commit?.message),
+          created: Boolean(body.created),
+          deleted: Boolean(body.deleted),
+          forced: Boolean(body.forced),
+        };
+      case 'release':
+        return { tag: body.release?.tag_name ?? null, prerelease: Boolean(body.release?.prerelease) };
+      case 'workflow_run':
+        return {
+          workflow: body.workflow_run?.name ?? null,
+          status: body.workflow_run?.status ?? null,
+          conclusion: body.workflow_run?.conclusion ?? null,
+          branch: body.workflow_run?.head_branch ?? null,
+        };
+      default:
+        return {};
+    }
+  };
+
+  // When it happened: for a push, when GitHub received it (`repository.pushed_at`, unix seconds; the head commit's
+  // timestamp is when the commit was made, which can be much earlier); otherwise the main object's latest timestamp;
+  // else now.
+  const occurredAt = (type: string, body: Payload) => {
+    const object = body[OBJECT_KEY[type] ?? type] as Payload | undefined;
+    const pushedAt = type === 'push' && typeof body.repository?.pushed_at === 'number' ? new Date(body.repository.pushed_at * 1000).toISOString() : undefined;
+    const candidates = [pushedAt, object?.completed_at, object?.submitted_at, object?.updated_at, object?.published_at, object?.created_at, body.head_commit?.timestamp];
+    const found = candidates.find((value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
+    return new Date(found ?? Date.now()).toISOString();
+  };
+
+  const runtimes: Record<string, EventRuntime> = {};
+  for (const type of types) {
+    runtimes[type] = {
+      matches: (req) => req.headers['x-github-event'] === type,
+      eventId: (req) => {
+        const id = req.headers['x-github-delivery'];
+        if (!id) throw new Error('GitHub delivery has no X-GitHub-Delivery header');
+        return id;
+      },
+      occurredAt: (req) => occurredAt(type, bodyOf(req.body)),
+      summarize: (req) => ({ ...genericSummary(type, bodyOf(req.body)), ...extras(type, bodyOf(req.body)) }),
+    };
+  }
+  return runtimes;
 }
 
 const githubArguments = z
@@ -196,19 +214,11 @@ const githubPayload = z.object({
 
 type GithubArguments = z.infer<typeof githubArguments>;
 
-function githubEvent(type: string, description: string): SourceEvent<GithubArguments, GithubSummary> {
+function githubEvent(type: string, description: string): SourceEvent<GithubArguments> {
   return {
     name: type,
     description: `GitHub ${type}: ${description} Carries a summary (repository, action, sender, title, number, URL); read the full object with GitHub's own tools. Filter by repository, actions or sender.`,
     providerEvent: type,
-    matches: (req: InboundRequest) => req.headers['x-github-event'] === type,
-    eventId: (req) => {
-      const id = req.headers['x-github-delivery'];
-      if (!id) throw new Error('GitHub delivery has no X-GitHub-Delivery header');
-      return id;
-    },
-    occurredAt: (req) => occurredAt(type, req.body as Payload),
-    summarize: (req) => ({ ...genericSummary(type, req.body as Payload), ...extras(type, req.body as Payload) }),
     inputSchema: z.toJSONSchema(githubArguments) as Record<string, unknown>,
     parseArguments: (args) => {
       const parsed = githubArguments.parse(args ?? {});
@@ -218,10 +228,12 @@ function githubEvent(type: string, description: string): SourceEvent<GithubArgum
         ...(parsed.sender !== undefined && { sender: parsed.sender.toLowerCase() }),
       };
     },
-    accepts: (args, summary) =>
-      (args.repository === undefined || summary.repository === args.repository) &&
-      (args.sender === undefined || summary.sender === args.sender) &&
-      (args.actions === undefined || (summary.action !== null && args.actions.includes(summary.action))),
+    // Any of the actions: `$or`, which Event Gateway takes at the top level of a filter.
+    filter: (args) => ({
+      ...(args.repository !== undefined && { repository: args.repository }),
+      ...(args.sender !== undefined && { sender: args.sender }),
+      ...(args.actions !== undefined && { $or: args.actions.map((action) => ({ action })) }),
+    }),
     payloadSchema: z.toJSONSchema(githubPayload) as Record<string, unknown>,
   };
 }
@@ -271,9 +283,10 @@ export const githubProvider: SourceDefinition<GithubOptions> = {
   type: 'github',
   displayName: 'GitHub',
   sourceType: 'GITHUB',
-  inboundDedupeFields: ['headers.x-github-delivery'],
   eventIdHeader: 'x-github-delivery',
   events: Object.entries(EVENT_TYPES).map(([type, description]) => githubEvent(type, description)),
+  runtime: githubRuntime,
+  runtimeConfig: Object.keys(EVENT_TYPES),
   defaultEvents: DEFAULT_GITHUB_EVENTS,
 
   registrationTarget: ({ scope }) =>

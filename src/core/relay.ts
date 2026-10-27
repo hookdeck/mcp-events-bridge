@@ -1,6 +1,7 @@
 import type { Catalog } from './catalog.js';
 import type { CallbackFailureReason } from './errors.js';
 import type { PastEvent } from './event-history.js';
+import { matchesFilter } from './filter.js';
 import type { HookdeckClient } from './hookdeck.js';
 import { verifyHookdeckSignature } from './hookdeck-signature.js';
 import { parseJson } from './json.js';
@@ -105,13 +106,13 @@ export class Relay {
   }
 
   private async relay(providerId: string, req: InboundRequest): Promise<InboundResponse> {
-    const entry = this.deps.catalog.forProvider(providerId).find((e) => e.event.matches(req));
+    const entry = this.deps.catalog.forProvider(providerId).find((e) => e.runtime.matches(req));
     if (!entry) return { status: 200, body: { ignored: 'event type not enabled' } };
-    const { event, name } = entry;
+    const { event, name, runtime } = entry;
 
-    const eventId = event.eventId(req);
-    const occurredAt = event.occurredAt(req);
-    const summary = event.summarize(req);
+    const eventId = runtime.eventId(req);
+    const occurredAt = runtime.occurredAt(req);
+    const summary = runtime.summarize(req);
     const now = this.now();
     // A retry is any delivery but the first: Event Gateway's own retries (attempt count above 1, trigger AUTOMATIC),
     // manual ones (MANUAL), and the bridge's recovery of requests it missed while its `listen` was down (a new event,
@@ -130,7 +131,7 @@ export class Relay {
       // attempt, since provider timestamps can predate the action (editing an old GitHub release keeps its
       // published_at), which would drop the event for good.
       .filter((s) => !retry || Date.parse(s.createdAt) <= Date.parse(occurredAt))
-      .filter((s) => event.accepts(s.arguments, summary));
+      .filter((s) => matchesFilter(event.filter(s.arguments), summary));
 
     // Each subscriber's body carries its own cursor (a position for its event name and arguments).
     const envelope = { eventId, name, timestamp: occurredAt, data: summary };

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-json.js';
 import type { Catalog } from './catalog.js';
 import { internalError, invalidParams, notFound } from './errors.js';
+import { matchesFilter } from './filter.js';
 import type { EventHistory, PastEvent } from './event-history.js';
 import { HookdeckApiError, type HookdeckClient, type HookdeckRequest, type ResponseMeta } from './hookdeck.js';
 
@@ -228,7 +229,7 @@ function decodeCursor(cursor: string): CursorState {
   throw invalidParams('cursor is not a cursor this bridge returned', { field: 'cursor' });
 }
 
-const argumentsHash = (args: unknown) => createHash('sha256').update(canonicalJson(args)).digest('hex').slice(0, 16);
+export const argumentsHash = (args: unknown) => createHash('sha256').update(canonicalJson(args)).digest('hex').slice(0, 16);
 
 export interface PollServiceDeps {
   hookdeck: ListingClient;
@@ -393,7 +394,7 @@ export class PollService {
         if (created >= listing.t - this.lookbackMs) holdAt(created);
         continue;
       }
-      if (!event || event.name !== entry.name || !entry.event.accepts(args, event.data)) continue;
+      if (!event || event.name !== entry.name || !matchesFilter(entry.event.filter(args), event.data)) continue;
       if (events.length >= maxEvents) {
         hasMore = true;
         holdAt(created);
