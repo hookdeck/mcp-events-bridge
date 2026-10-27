@@ -6,6 +6,7 @@
  */
 
 export const DEFAULT_API_BASE = 'https://api.hookdeck.com/2026-09-01';
+export const DEFAULT_PUBLISH_URL = 'https://hkdk.events/v1/publish';
 
 export interface Page<T> {
   models: T[];
@@ -107,7 +108,10 @@ export interface UpsertConnectionInput {
    */
   source?: { name: string; type?: string; config?: Record<string, unknown> };
   source_id?: string;
-  destination: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK_API'; description?: string; config?: Record<string, unknown> };
+  /** An inline destination, created or updated by name; or bind an existing one with `destination_id`. */
+  destination?: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK_API'; description?: string; config?: Record<string, unknown> };
+  /** A second connection can share a destination (verified 27 Oct); deleting the destination deletes its connections. */
+  destination_id?: string;
   rules?: Rule[];
 }
 
@@ -182,6 +186,7 @@ export class HookdeckApiError extends Error {
 export interface HookdeckClientOptions {
   apiKey: string;
   apiBase?: string;
+  publishUrl?: string;
   fetch?: typeof fetch;
   /** Back-off delays for 429s, in milliseconds. */
   retryDelaysMs?: number[];
@@ -209,11 +214,13 @@ const responseMeta = (headers: Headers): ResponseMeta => {
 
 export class HookdeckClient {
   private readonly apiBase: string;
+  private readonly publishUrl: string;
   private readonly fetch: typeof fetch;
   private readonly retryDelaysMs: number[];
 
   constructor(private readonly options: HookdeckClientOptions) {
     this.apiBase = options.apiBase ?? DEFAULT_API_BASE;
+    this.publishUrl = options.publishUrl ?? DEFAULT_PUBLISH_URL;
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.retryDelaysMs = options.retryDelaysMs ?? [500, 1000, 2000, 4000];
   }
@@ -349,7 +356,8 @@ export class HookdeckClient {
   /**
    * Retry a request, optionally limited to some connections. `webhook_ids` is
    * what `hookdeck gateway request retry --connection-ids` sends; it isn't in
-   * the public API reference. A request retry creates new event ids.
+   * the public API reference. A request retry creates new event ids, only for the connections the
+   * request was routed to when it arrived: not one created since (verified 27 Oct).
    */
   retryRequest(requestId: string, connectionIds?: string[]) {
     return this.api<{ request: HookdeckRequest; events: HookdeckEvent[] }>(`/requests/${encodeURIComponent(requestId)}/retry`, {
@@ -361,6 +369,24 @@ export class HookdeckClient {
   /** Retry one event: a new attempt, signed afresh. Works on a SUCCESSFUL event too (verified live 27 Oct). */
   retryEvent(eventId: string) {
     return this.api<HookdeckEvent>(`/events/${encodeURIComponent(eventId)}/retry`, { method: 'POST' });
+  }
+
+  // --- Publish API (replay) ---
+
+  /** Publish a request to a PUBLISH_API source by name. Headers and body pass through to its connections. */
+  async publish(sourceName: string, headers: Record<string, string>, body: string): Promise<{ requestId?: string }> {
+    const res = await this.fetch(this.publishUrl, {
+      method: 'POST',
+      headers: { ...headers, Authorization: `Bearer ${this.options.apiKey}`, 'X-Hookdeck-Source-Name': sourceName },
+      body,
+    });
+    const text = await res.text();
+    if (!res.ok) throw new HookdeckApiError('POST', new URL(this.publishUrl).pathname, res.status, text);
+    try {
+      return { requestId: (JSON.parse(text) as { request_id?: string }).request_id };
+    } catch {
+      return {};
+    }
   }
 
   // --- connections, sources, destinations ---

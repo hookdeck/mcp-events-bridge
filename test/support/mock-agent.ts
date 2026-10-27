@@ -6,8 +6,9 @@ import { generateWebhookSecret } from '../../src/core/secret.js';
 
 /*
  * A mock local agent: stands in for an agent host that supports MCP Events
- * itself and runs on a laptop, next to the bridge. It asks the bridge for a
- * tunnel URL per subscription, subscribes with a secret it generates, and
+ * itself and runs on a laptop, next to the bridge. It asks the bridge for
+ * callback URLs (with the secret it subscribes with, or pass-through, as a
+ * client with a secret per subscription under one base URL needs), and
  * receives every delivery on one local port and path (the bridge runs
  * `hookdeck listen` for it), routing each by X-MCP-Subscription-Id
  * (which the spec requires so a receiver can pick the right secret) and
@@ -26,11 +27,12 @@ export interface AgentDelivery {
   body: Record<string, unknown>;
 }
 
-export interface TunnelUrl {
+export interface CallbackUrl {
   name: string;
   url: string;
   port: number;
   path: string;
+  passThrough: boolean;
 }
 
 export class MockAgent {
@@ -89,17 +91,17 @@ export class MockAgent {
     return result.structuredContent;
   }
 
-  createTunnel(name: string): Promise<TunnelUrl> {
-    return this.tool<TunnelUrl>('create_tunnel_url', { agent: this.options.agent, name, port: this.options.port, path: this.options.path ?? '/events' });
+  /** A callback URL holding `secret` (the one the agent then subscribes with), or a pass-through one without. */
+  createCallbackUrl(name: string, secret?: string): Promise<CallbackUrl> {
+    return this.tool<CallbackUrl>('create_callback_url', { agent: this.options.agent, name, port: this.options.port, path: this.options.path ?? '/events', ...(secret && { secret }) });
   }
 
-  listTunnels(): Promise<{ tunnelUrls: TunnelUrl[] }> {
-    return this.tool('list_tunnel_urls', { agent: this.options.agent });
+  listCallbackUrls(): Promise<{ callbackUrls: CallbackUrl[] }> {
+    return this.tool('list_callback_urls', { agent: this.options.agent });
   }
 
-  /** events/subscribe with the callback URL and a secret this agent generates. Returns the subscription id. */
-  async subscribe(url: string, name: string, args: Record<string, unknown> = {}): Promise<string> {
-    const secret = generateWebhookSecret();
+  /** events/subscribe with the callback URL and a secret (by default one this agent generates). Returns the subscription id. */
+  async subscribe(url: string, name: string, args: Record<string, unknown> = {}, secret = generateWebhookSecret()): Promise<string> {
     const result = await this.client.request(
       { method: 'events/subscribe', params: { name, arguments: args, delivery: { mode: 'webhook', url, secret } } } as never,
       anyResult,

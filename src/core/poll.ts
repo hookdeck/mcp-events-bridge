@@ -294,16 +294,16 @@ export class PollService {
   }
 
   async poll(params: Record<string, unknown>): Promise<PollResult> {
-    return (await this.scan(params)).result;
+    return this.scan(params);
   }
 
-  /** One poll, with the ids of the requests its events came from: what a replay retries (src/core/replay.ts). */
-  async pollRequests(params: Record<string, unknown>): Promise<PollResult & { requestIds: string[] }> {
-    const { result, requestIds } = await this.scan(params);
-    return { ...result, requestIds };
+  /** The cursor a replay's deliveries carry: poll's format, at the position the replay started from. */
+  replayCursor(name: string, args: Record<string, unknown>, position: { f: number; w: number }): string {
+    const { entry, args: parsed } = this.parse({ name, arguments: args });
+    return encodeCursor({ v: 1, n: entry.name, a: argumentsHash(parsed), f: position.f, w: position.w, t: this.window.egNow(), ids: [] });
   }
 
-  private async scan(params: Record<string, unknown>): Promise<{ result: PollResult; requestIds: string[] }> {
+  private async scan(params: Record<string, unknown>): Promise<PollResult> {
     const { entry, args, cursor, maxAgeMs, maxEvents } = this.parse(params);
     const hash = argumentsHash(args);
     const sourceId = await this.deps.history.sourceIdFor(entry.providerId);
@@ -315,7 +315,7 @@ export class PollService {
     if (cursor === null) {
       await this.window.get(sourceId).catch(() => {});
       const t = this.window.egNow();
-      return { result: this.result([], { v: 1, n: entry.name, a: hash, f: t, w: t - this.lookbackMs, t, ids: [] }, false, false), requestIds: [] };
+      return this.result([], { v: 1, n: entry.name, a: hash, f: t, w: t - this.lookbackMs, t, ids: [] }, false, false);
     }
 
     const state = decodeCursor(cursor);
@@ -325,7 +325,7 @@ export class PollService {
     try {
       window = await this.window.get(sourceId);
     } catch (error) {
-      if (error instanceof RateLimitedError) return { result: this.unchanged(cursor), requestIds: [] };
+      if (error instanceof RateLimitedError) return this.unchanged(cursor);
       throw error;
     }
 
@@ -350,7 +350,7 @@ export class PollService {
     else {
       // Catch-up: older than the shared window, so this poll lists its own source from where it is. Not while the
       // window is backing off, and its rate limit feeds the window's interval.
-      if (this.window.backingOff) return { result: this.unchanged(cursor), requestIds: [] };
+      if (this.window.backingOff) return this.unchanged(cursor);
       try {
         const requestedAt = (this.deps.now ?? Date.now)();
         const { requests, meta, until } = await listFrom(this.deps.hookdeck, [sourceId], start, CATCH_UP_MAX_PAGES);
@@ -359,7 +359,7 @@ export class PollService {
       } catch (error) {
         if (error instanceof RateLimitedError) {
           this.window.fail(error);
-          return { result: this.unchanged(cursor), requestIds: [] };
+          return this.unchanged(cursor);
         }
         throw error;
       }
@@ -367,7 +367,6 @@ export class PollService {
 
     const seen = new Map(state.ids);
     const events: PastEvent[] = [];
-    const requestIds: string[] = [];
     let hold: number | undefined;
     let hasMore = false;
     const holdAt = (at: number) => (hold = hold === undefined ? at : Math.min(hold, at));
@@ -392,7 +391,6 @@ export class PollService {
         break;
       }
       events.push(event);
-      requestIds.push(request.id);
       seen.set(event.eventId, created);
     }
     if (listing.until !== undefined) {
@@ -405,7 +403,7 @@ export class PollService {
     w = Math.max(w, state.w, floor);
     // A hold before the floor can't happen (requests before `start` are skipped), so w only moves forward.
     const ids = [...seen].filter(([, at]) => at >= w);
-    return { result: this.result(events, { v: 1, n: entry.name, a: hash, f: floor, w, t: listing.t, ids }, truncated, hasMore), requestIds };
+    return this.result(events, { v: 1, n: entry.name, a: hash, f: floor, w, t: listing.t, ids }, truncated, hasMore);
   }
 
   /**

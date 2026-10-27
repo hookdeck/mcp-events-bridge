@@ -7,9 +7,10 @@ import { Catalog, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
-import { HookdeckClient, isSettled } from '../core/hookdeck.js';
+import { HookdeckApiError, HookdeckClient, isSettled, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE } from '../core/hookdeck.js';
 import { buildMcpServer } from '../core/mcp.js';
 import { Notifications } from '../core/notifications.js';
+import { REPLAY_CONNECTION_PREFIX, REPLAY_SOURCE, replayConnectionName } from '../core/names.js';
 import { placeSubscriptions } from '../core/placement.js';
 import { PollService, type PollServiceDeps } from '../core/poll.js';
 import { WebhookReplay } from '../core/replay.js';
@@ -111,6 +112,18 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     settings: options.callbackSettings,
     log,
   });
+  const ignoreNotFound = (error: unknown) => {
+    if (!(error instanceof HookdeckApiError && error.status === 404)) throw error;
+  };
+  // A replay a restart interrupted: its connection goes, and so does the marker its deliveries' cursors carry.
+  if (!options.store) {
+    for (const connection of await hookdeck.listAllConnections()) {
+      if (connection.name.startsWith(REPLAY_CONNECTION_PREFIX)) await hookdeck.deleteConnection(connection.id).catch(ignoreNotFound);
+    }
+  }
+  for (const subscription of store.list()) {
+    if (subscription.replay) await store.update(subscription.id, (current) => (current?.replay ? { ...current, replay: null } : null));
+  }
   const loadedCallbacks = await callbacks.load();
   if (loadedCallbacks.loaded) log(`loaded ${loadedCallbacks.loaded} callback URL(s) for local agents`);
   if (loadedCallbacks.legacy) log(`${loadedCallbacks.legacy} callback URL(s) from 0.7 or earlier, not served until migrated (run setup)`);
@@ -121,18 +134,33 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   }
   const poll = new PollService({ hookdeck, catalog, history, ...options.pollOverrides });
   const notifications = new Notifications({ signingSecret: config.hookdeck.signingSecret, store, hookdeck, log });
+  let replaySourceId: string | undefined;
   const replay = new WebhookReplay({
     poll,
-    retry: (requestId, connectionId) => hookdeck.retryRequest(requestId, [connectionId]),
-    settled: async (eventIds, timeoutMs) => {
+    cursor: (subscription) =>
+      subscription.replay ? poll.replayCursor(subscription.name, subscription.arguments, subscription.replay) : poll.webhookCursor(subscription.name, subscription.arguments),
+    // A connection from the replay source to the subscription's own destination, so Event Gateway signs and retries.
+    open: async (subscription) => {
+      replaySourceId ??= (await hookdeck.upsertSource({ name: REPLAY_SOURCE, type: 'PUBLISH_API' })).id;
+      const connection = await hookdeck.upsertConnection({
+        name: replayConnectionName(subscription.id),
+        source_id: replaySourceId,
+        destination_id: subscription.destinationId,
+        rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': subscription.id } }, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
+      });
+      return connection.id;
+    },
+    publish: (subscription, envelope) =>
+      hookdeck.publish(REPLAY_SOURCE, { 'content-type': 'application/json', 'webhook-id': envelope.eventId, 'x-mcp-subscription-id': subscription.id }, JSON.stringify(envelope)),
+    settled: async (connectionId, count, timeoutMs) => {
       const deadline = Date.now() + timeoutMs;
-      let pending = eventIds;
-      while (pending.length && Date.now() < deadline) {
+      while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
-        const states = await Promise.all(pending.map((id) => hookdeck.getEvent(id).then(isSettled, () => true)));
-        pending = pending.filter((_, i) => !states[i]);
+        const events = (await hookdeck.listEvents({ webhook_id: connectionId, limit: 250 }).catch(() => undefined))?.models;
+        if (events && events.length >= count && events.every(isSettled)) return;
       }
     },
+    close: (connectionId) => hookdeck.deleteConnection(connectionId).catch(ignoreNotFound),
     current: (id) => store.get(id),
     finish: (id) => store.update(id, (current) => (current?.replay ? { ...current, replay: null } : null)),
     log,
