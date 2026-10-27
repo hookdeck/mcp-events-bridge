@@ -1,15 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-10-27)
 
 ### Added
 
-- **Webhook cursors and replay** ([#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)). Every webhook delivery and subscribe response now carries a `cursor` (it was always `null`), in poll mode's format: a position in Event Gateway's history of the source's requests. Subscribing again with one, after an unsubscribe, an expiry or downtime, replays the events since it, alongside live ones (log: `replaying to <id> from the client's cursor`, then `replayed <n> event(s) to <id>`). A cursor older than Event Gateway's retention replays what's left, with `truncated: true`; a refresh of a live subscription treats its cursor as a no-op. OpenAI's guide says ChatGPT saves each subscription's cursor and sends it when it refreshes. `truncated` on subscribe is now true only for a cursor past retention (it was true for any cursor). Replayed events can repeat ones already delivered: receivers dedupe by `eventId`, as before.
+- **Webhook cursors and replay** ([#50](https://github.com/hookdeck/mcp-events-bridge/issues/50), [#64](https://github.com/hookdeck/mcp-events-bridge/pull/64)). Every webhook delivery and subscribe response now carries a `cursor` (it was always `null`), in poll mode's format: a position in Event Gateway's history of the source's requests. Subscribing again with one, after an unsubscribe, an expiry or downtime, replays the events since it, alongside live ones (log: `replaying to <id> from the client's cursor`, then `replayed <n> event(s) to <id>`). A cursor older than Event Gateway's retention replays what's left, with `truncated: true`; a refresh of a live subscription treats its cursor as a no-op. OpenAI's guide says ChatGPT saves each subscription's cursor and sends it when it refreshes. `truncated` on subscribe is now true only for a cursor past retention (it was true for any cursor). Replayed events can repeat ones already delivered: receivers dedupe by `eventId`, as before.
 
 ### Fixed
 
-- **Docs:** the Claude Code plugin is tested with Claude Code 2.1.310, and the README's clients table says 2.1.294 to 2.1.310. The ChatGPT steps and the skill's troubleshooting say that an open ChatGPT chat shows a delivered event only after a reload, and that pausing ChatGPT's task unsubscribes it.
-- **The Claude Code plugin's monitor failed in the bridge's own repository** (`sh: mcp-events-bridge: command not found`, exit 127): there, npx ran the repository's own package instead of the pinned version. The plugin now runs the published CLI from an empty directory, so it works in any project. `MCP_EVENTS_BRIDGE_CLI` still runs in your directory.
+- **Docs:** the Claude Code plugin is tested with Claude Code 2.1.310, and the README's clients table says 2.1.294 to 2.1.310. The ChatGPT steps and the skill's troubleshooting say that an open ChatGPT chat shows a delivered event only after a reload, and that pausing ChatGPT's task unsubscribes it ([#62](https://github.com/hookdeck/mcp-events-bridge/pull/62), [#65](https://github.com/hookdeck/mcp-events-bridge/pull/65)).
+- **The Claude Code plugin's monitor failed in the bridge's own repository** (`sh: mcp-events-bridge: command not found`, exit 127): there, npx ran the repository's own package instead of the pinned version. The plugin now runs the published CLI from an empty directory, so it works in any project. `MCP_EVENTS_BRIDGE_CLI` still runs in your directory ([#65](https://github.com/hookdeck/mcp-events-bridge/pull/65)).
 
 ## 0.6.0 (2026-10-26)
 
