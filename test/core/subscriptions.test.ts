@@ -96,7 +96,7 @@ describe('SubscriptionService.subscribe', () => {
     expect(verifications).toHaveLength(1);
   });
 
-  it('refreshes in place, rotates the secret with a grace window, and reports delivery status', async () => {
+  it('refreshes in place, replaces the secret at once (Event Gateway signs with one key), and reports delivery status', async () => {
     const { service, store, advance } = setup();
     const first = params();
     const { id } = await service.subscribe('owner', first);
@@ -108,8 +108,6 @@ describe('SubscriptionService.subscribe', () => {
     expect(refreshed.deliveryStatus).toEqual({ active: true, lastError: 'http_5xx', failedSince: '2026-10-05T12:30:00.000Z' });
     expect(store.get(id)).toMatchObject({
       secret: newSecret,
-      previousSecret: first.delivery.secret,
-      previousSecretExpiresAt: '2026-10-05T13:10:00.000Z',
       delivery: { active: true, lastError: null },
       createdAt: '2026-10-05T12:00:00.000Z',
     });
@@ -123,7 +121,7 @@ describe('SubscriptionService: cursors and replay (SEP-3415)', () => {
       watermark: (name) => `now:${name}`,
       check: (_name, _args, cursor) => {
         if (cursor === 'bad') throw invalidParams('cursor is not a cursor this bridge returned', { field: 'cursor' });
-        return { truncated };
+        return { truncated, position: { f: 1, w: 1 } };
       },
       replay: (subscription, cursor) => void replays.push([subscription.id, cursor]),
     };

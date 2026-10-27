@@ -18,26 +18,24 @@ function setup(over: Partial<BridgeConfig> = {}) {
 }
 
 describe('inbound plan', () => {
-  it('lists one connection per provider instance plus notifications', () => {
+  it("lists only the notifications connection: events go from each source straight to subscribers", () => {
     const { config } = setup({ sources: [resend({ apiKey: 'a' }), resend({ id: 'resend-support', apiKey: 'b' })] });
     expect(inboundConnections(config)).toEqual([
-      { source: 'bridge-resend', connection: 'bridge-resend-dev', path: '/inbound/resend' },
-      { source: 'bridge-resend-support', connection: 'bridge-resend-support-dev', path: '/inbound/resend-support' },
       { source: 'bridge-hookdeck-notifications', connection: 'bridge-notifications-dev', path: '/inbound/hookdeck' },
     ]);
   });
 
-  it('builds one hookdeck listen for every source in the config', () => {
+  it('builds the hookdeck listen for the notifications source', () => {
     const { config } = setup({ sources: [resend({ apiKey: 'a' }), resend({ id: 'resend-support', apiKey: 'b' })] });
     expect(listenArgs(config, 8080, '.hookdeck/config.toml')).toEqual([
-      'listen', '8080', 'bridge-resend,bridge-resend-support,bridge-hookdeck-notifications',
+      'listen', '8080', 'bridge-hookdeck-notifications',
       '--output', 'compact', '--device-name', 'bridge-dev', '--hookdeck-config', '.hookdeck/config.toml',
     ]);
   });
 
-  it('reports every missing connection before setup has run', async () => {
+  it('reports every missing source and connection before setup has run', async () => {
     const { hookdeck, config } = setup();
-    expect(await checkInbound(config, hookdeck)).toEqual(['connection bridge-resend-dev not found', 'connection bridge-notifications-dev not found']);
+    expect(await checkInbound(config, hookdeck)).toEqual(['source bridge-resend not found', 'connection bridge-notifications-dev not found']);
   });
 
   it('is ready after setup', async () => {
@@ -46,20 +44,17 @@ describe('inbound plan', () => {
     expect(await checkInbound(config, hookdeck)).toEqual([]);
   });
 
-  it('catches a provider added to the config but not set up', async () => {
+  it('catches a source added to the config but not set up', async () => {
     const { hookdeck, runSetup } = setup();
     await runSetup();
     const grown = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'a' }), resend({ id: 'resend-support', apiKey: 'b' })] }), environment);
-    expect(await checkInbound(grown, hookdeck)).toEqual(['connection bridge-resend-support-dev not found']);
+    expect(await checkInbound(grown, hookdeck)).toEqual(['source bridge-resend-support not found']);
   });
 
   it('catches an HTTP-inbound setup run with a CLI-inbound config', async () => {
     const { hookdeck, runSetup } = setup({ inbound: 'http', publicUrl: 'https://bridge.example.com' });
     await runSetup();
     const cli = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'a' })] }), environment);
-    expect(await checkInbound(cli, hookdeck)).toEqual([
-      'bridge-resend-dev has a HTTP destination, expected CLI',
-      'bridge-notifications-dev has a HTTP destination, expected CLI',
-    ]);
+    expect(await checkInbound(cli, hookdeck)).toEqual(['bridge-notifications-dev has a HTTP destination, expected CLI']);
   });
 });

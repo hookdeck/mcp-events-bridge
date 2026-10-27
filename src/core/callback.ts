@@ -68,8 +68,6 @@ export type VerificationResult = { ok: true } | { ok: false; reason: CallbackFai
 export interface VerifyEndpointOptions {
   url: URL;
   secret: string;
-  /** More secrets to sign the challenge with, e.g. a bridge callback source's own (see callbacks.ts). */
-  extraSecrets?: string[];
   subscriptionId: string;
   timeoutMs: number;
 }
@@ -85,7 +83,7 @@ export async function verifyEndpoint(transport: CallbackTransport, options: Veri
   const body = JSON.stringify({ type: 'verification', challenge });
   const headers = {
     'content-type': 'application/json',
-    ...signStandardWebhook([options.secret, ...(options.extraSecrets ?? [])], msgId, body),
+    ...signStandardWebhook([options.secret], msgId, body),
     'X-MCP-Subscription-Id': options.subscriptionId,
   };
 

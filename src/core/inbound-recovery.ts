@@ -1,9 +1,9 @@
 import { allPages, type HookdeckClient, type HookdeckEvent } from './hookdeck.js';
 
 /*
- * Recovers provider events a bridge on a laptop missed while its `hookdeck
- * listen` was down (the laptop slept, or the bridge was stopped). Ported from
- * the fleet demo's recover.ts. Event Gateway keeps every request, so nothing
+ * Recovers Event Gateway issue notifications a bridge on a laptop missed while
+ * its `hookdeck listen` was down (the laptop slept, or the bridge was stopped).
+ * Ported from the fleet demo's recover.ts. Event Gateway keeps every request, so nothing
  * is lost, only undelivered, in one of two ways:
  *
  *   Within about 2 minutes of the session dropping, an event is created for
@@ -16,9 +16,7 @@ import { allPages, type HookdeckClient, type HookdeckEvent } from './hookdeck.js
  *   provider source has its own connection and already got it).
  *
  * Only settled events are retried: an event still queued or scheduled is
- * Event Gateway's to finish, and retrying it would deliver it twice. The
- * relay signs fresh deliveries for each retried event, as for any inbound
- * request.
+ * Event Gateway's to finish, and retrying it would deliver it twice.
  *
  * Each run makes two listings, both narrowed to what matters: the
  * connection's own events (`GET /events?webhook_id=`), and the source's
@@ -85,8 +83,6 @@ export class InboundRecovery {
       hookdeck: RecoveryHookdeck;
       targets: InboundTarget[];
       state?: RecoveryState;
-      /** Called with each request id it retries, so the relay treats that delivery as a retry (see RelayDeps.recovered). */
-      onRetried?: (requestId: string) => void;
       /** How far back the first run looks when there's no saved watermark. Default 24 hours. */
       lookbackMs?: number;
       now?: () => Date;
@@ -126,7 +122,7 @@ export class InboundRecovery {
       this.log(`inbound recovery: could not save the watermark: ${(error as Error).message}`);
     }
     if (report.retriedRequests || report.retriedEvents) {
-      this.log(`inbound recovery: retried ${report.retriedRequests} request(s) and ${report.retriedEvents} event(s) missed while listen was down`);
+      this.log(`inbound recovery: retried ${report.retriedRequests} notification request(s) and ${report.retriedEvents} event(s) missed while listen was down`);
     }
     return report;
   }
@@ -156,7 +152,6 @@ export class InboundRecovery {
         clean = false;
         continue;
       }
-      this.deps.onRetried?.(latest.request_id);
       await hookdeck.retryEvent(latest.id);
       report.retriedEvents++;
       clean = false;
@@ -174,7 +169,6 @@ export class InboundRecovery {
         clean = false;
         continue;
       }
-      this.deps.onRetried?.(request.id);
       await hookdeck.retryRequest(request.id, [connectionId]);
       report.retriedRequests++;
       clean = false;

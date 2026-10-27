@@ -150,27 +150,30 @@ export function buildMcpServer(deps: {
   const callbacks = deps.callbacks;
   if (callbacks) {
     const agent = z.string().describe('Your agent or machine name (letters, digits, _), e.g. "laptop". Names the shared Event Gateway destination.');
-    const describe = (record: CallbackRecord) => ({ name: record.name, url: record.url, port: record.port, path: record.path });
+    const describe = (record: CallbackRecord) => ({ name: record.name, url: record.url, port: record.port, path: record.path, passThrough: record.passThrough });
 
     server.registerTool(
-      'create_tunnel_url',
+      'create_callback_url',
       {
         description:
-          'For an agent on this machine without a public URL: create a public URL for one MCP Events webhook subscription, then call events/subscribe with it and a whsec_ secret you generate. ' +
-          'Hookdeck Event Gateway receives deliveries at the URL (it answers the subscribe challenge and only accepts deliveries signed by this bridge), and the bridge forwards them to http://localhost:<port><path> through the Hookdeck CLI. ' +
-          'Deliveries arrive signed with your secret, all on one local port and path; route them by X-MCP-Subscription-Id and dedupe by webhook-id. ' +
-          'Deliveries missed while your agent or the forwarding was down are sent again automatically, freshly signed. ' +
-          'Create one per subscription. A URL no subscription has used for an hour is deleted.',
+          'For an agent on this machine without a public URL: create a public callback URL for MCP Events webhook delivery, then call events/subscribe with it. ' +
+          'Hookdeck Event Gateway receives deliveries at the URL, and the bridge forwards them to http://localhost:<port><path> through the Hookdeck CLI. ' +
+          'With secret (the whsec_ secret you subscribe with), Event Gateway answers the subscribe challenge and only accepts deliveries signed with it; one URL holds one secret, so to rotate, create a new URL. ' +
+          'Without secret, the URL is pass-through: Event Gateway verifies nothing, so your receiver must check every signature. Use it when you use a different secret per subscription under one base URL. ' +
+          'Deliveries arrive signed with your subscription secret, all on one local port and path; route them by X-MCP-Subscription-Id and dedupe by webhook-id. ' +
+          'Deliveries missed while your agent or the forwarding was down are retried automatically, freshly signed. ' +
+          'A URL no subscription has used for an hour is deleted.',
         inputSchema: z.object({
           agent,
-          name: z.string().describe('A name for this subscription (letters, digits, _), e.g. "email_from_alice".'),
+          name: z.string().describe('A name for this URL (letters, digits, _), e.g. "email_from_alice".'),
           port: z.number().int().min(1).max(65535).optional().describe(`Local port your agent receives deliveries on. Set by your first URL (default ${DEFAULT_AGENT_PORT}) and shared by all of them.`),
           path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by your first URL (default ${DEFAULT_CALLBACK_PATH}) and shared by all of them.`),
+          secret: z.string().optional().describe('The whsec_ secret you will subscribe with. Omit for a pass-through URL.'),
         }),
       },
-      async ({ agent: name, name: urlName, port, path }) => {
+      async ({ agent: name, name: urlName, port, path, secret }) => {
         try {
-          return json(describe(await callbacks.create({ agent: name, name: urlName, port, path })));
+          return json(describe(await callbacks.create({ agent: name, name: urlName, port, path, secret })));
         } catch (error) {
           if (error instanceof CallbackInputError) return { content: [{ type: 'text', text: error.message }], isError: true };
           throw error;
@@ -179,9 +182,9 @@ export function buildMcpServer(deps: {
     );
 
     server.registerTool(
-      'list_tunnel_urls',
-      { description: "List an agent's tunnel URLs.", inputSchema: z.object({ agent }) },
-      async ({ agent: name }) => json({ tunnelUrls: callbacks.forAgent(name).map(describe) }),
+      'list_callback_urls',
+      { description: "List an agent's callback URLs.", inputSchema: z.object({ agent }) },
+      async ({ agent: name }) => json({ callbackUrls: callbacks.forAgent(name).map(describe) }),
     );
   }
 

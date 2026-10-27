@@ -29,3 +29,5 @@ export const providerConnectionName = (instanceId: string, deployment: string) =
   assertResourceName(`bridge-${slug(instanceId)}-${slug(deployment)}`);
 
 export const notificationsConnectionName = (deployment: string) => assertResourceName(`bridge-notifications-${slug(deployment)}`);
+/** The transformation every subscription to a source's events shares: it builds the MCP event. */
+export const transformationName = (instanceId: string) => assertResourceName(`bridge-${slug(instanceId)}-envelope`);

@@ -222,8 +222,8 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
 
 /**
  * Fails closed when a source instance's credentials aren't set (for example a generic webhook's secret, which
- * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` instead
- * holds that instance's delivery until they're set.
+ * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` creates the
+ * source and reports what's still to set.
  */
 export function assertCredentials(config: ResolvedConfig): void {
   const missing = config.sources.flatMap((p) => (p.definition.missingCredentials?.(p.options) ?? []).map((name) => `${name} (source ${p.id})`));

@@ -1,21 +1,21 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { ResolvedConfig, ResolvedSource } from './config.js';
-import type { HookdeckClient, Rule, UpsertConnectionInput } from './hookdeck.js';
-import { notificationsConnectionName, providerConnectionName, providerSourceName } from './names.js';
+import { Catalog } from './catalog.js';
+import type { HookdeckClient, UpsertConnectionInput } from './hookdeck.js';
+import { notificationsConnectionName, providerSourceName, transformationName } from './names.js';
+import { ensureTransformations } from './transformation.js';
 
 /*
- * `bridge setup`: creates or updates everything the config describes in Event
- * Gateway and at providers. Idempotent: a provider webhook is registered once
- * and its id is kept in the source description, so re-running doesn't create
- * another. If the enabled events or the provider's registration target (for
- * example GitHub repositories) change, the webhook is updated.
+ * `setup`: creates or updates everything the config describes in Event Gateway and at services: each source, its
+ * webhook at the service, and the transformation its subscriptions share. Idempotent: a webhook is registered once
+ * and its id is kept in the source description, so re-running doesn't create another. If the enabled events or the
+ * registration target (for example GitHub repositories) change, the webhook is updated. Subscriptions themselves are
+ * connections the bridge creates on each source when clients subscribe.
  */
 
 export const NOTIFICATIONS_SOURCE = 'bridge-hookdeck-notifications';
 const NOTIFICATION_TOPICS = ['issue.opened', 'issue.updated'];
 
-/** Provider deliveries retry inside the 1-hour dedupe window (5 x 10 minutes). */
-const INBOUND_RETRY_RULE: Rule = { type: 'retry', strategy: 'linear', count: 5, interval: 600_000, response_status_codes: ['>=300'] };
 
 interface SourceDescription {
   provider: string;
@@ -29,9 +29,10 @@ export interface SetupReport {
   sources: Array<{
     id: string;
     sourceUrl: string;
-    connection: string;
+    /** The transformation the source's subscriptions share. */
+    transformation: string;
     webhook: 'registered' | 'updated' | 'configured' | 'existing' | 'pending' | 'none';
-    /** Credentials still to set (pending): the inbound connection isn't created until they are. */
+    /** Credentials still to set (pending): `serve` refuses to start until they are. */
     waitingFor?: string[];
     hint?: string;
   }>;
@@ -49,7 +50,7 @@ export interface SetupReport {
 export function missingCredentialsError(report: Pick<SetupReport, 'sources'>): string | undefined {
   const waiting = report.sources.filter((p) => p.waitingFor?.length);
   if (!waiting.length) return undefined;
-  const lines = waiting.map((p) => `  ${p.id}: set ${p.waitingFor!.join(', ')}; delivery is held until then`);
+  const lines = waiting.map((p) => `  ${p.id}: set ${p.waitingFor!.join(', ')}; serve refuses to start until then`);
   return `Setup isn't complete:\n${lines.join('\n')}\nSet the variable (for example in .env) and run setup again.`;
 }
 
@@ -122,7 +123,7 @@ export async function ensureSource(hookdeck: HookdeckClient, provider: ResolvedS
       log(`set verification on ${sourceName}`);
     }
   }
-  if (configured) log(`note: ${SECRET_PROPAGATION_NOTE}; until then the bridge ignores requests Event Gateway didn't verify`);
+  if (configured) log(`note: ${SECRET_PROPAGATION_NOTE}; until then Event Gateway rejects requests signed with the new one`);
   return { source, existing, configured, missing };
 }
 
@@ -131,7 +132,6 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedSource) {
   const log = deps.log ?? (() => {});
   const { definition } = provider;
   const sourceName = providerSourceName(provider.id);
-  const connectionName = providerConnectionName(provider.id, config.deployment);
   const providerEvents = definition.events.filter((e) => provider.events.includes(e.name)).map((e) => e.providerEvent);
   const target = definition.registrationTarget ? fingerprint(definition.registrationTarget(provider.options)) : undefined;
 
@@ -140,26 +140,17 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedSource) {
   const report = (webhook: SetupReport['sources'][number]['webhook']) => ({
     id: provider.id,
     sourceUrl: source.url,
-    connection: connectionName,
+    transformation: transformationName(provider.id),
     webhook,
     ...(missing.length > 0 && { waitingFor: missing }),
     ...(hint !== undefined && { hint }),
   });
-  // Without its credentials the source can't verify anything, so nothing may reach the bridge: no inbound
-  // connection yet. Requests that arrive meanwhile are kept by Event Gateway, rejected as NO_CONNECTION (verified live).
+  // Without its credentials the source can't verify anything, so the bridge refuses subscriptions to its events (a
+  // subscription is a connection on it). Requests that arrive meanwhile are kept by Event Gateway.
   if (missing.length) {
-    log(`${sourceName}: waiting for ${missing.join(', ')}; delivery is held (no inbound connection) until it's set`);
+    log(`${sourceName}: waiting for ${missing.join(', ')}; serve refuses to start until it's set`);
     return report('pending');
   }
-
-  const rules: Rule[] = [INBOUND_RETRY_RULE];
-  await hookdeck.upsertConnection({
-    name: connectionName,
-    source_id: source.id,
-    destination: inboundDestination(config, connectionName, `/inbound/${provider.id}`),
-    rules,
-  });
-  log(`upserted connection ${connectionName} (${config.inbound} inbound)`);
 
   if (definition.sourceConfig) return report(configured ? 'configured' : 'existing');
   if (!definition.register) return report('none');
@@ -247,6 +238,8 @@ export function mcpUrl(config: ResolvedConfig, secret: string): string {
 export async function runSetup(deps: SetupDeps): Promise<SetupReport> {
   const sources = [];
   for (const source of deps.config.sources) sources.push(await setupProvider(deps, source));
+  await ensureTransformations(deps.hookdeck, deps.config.sources, new Catalog(deps.config.sources));
+  deps.log?.(`upserted ${deps.config.sources.length} transformation(s): ${deps.config.sources.map((s) => transformationName(s.id)).join(', ')}`);
   const { notifications, triggers } = await setupNotifications(deps);
   const generated = !deps.config.auth.mcpSecret;
   const secret = deps.config.auth.mcpSecret ?? randomBytes(32).toString('base64url');

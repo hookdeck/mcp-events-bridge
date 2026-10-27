@@ -5,13 +5,16 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
 import { Catalog, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
-import { EventGatewayStore } from '../core/event-gateway-store.js';
+import { EventGatewayStore, type PlaceSubscription } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
-import { HookdeckClient } from '../core/hookdeck.js';
+import { connectionFilterRule } from '../core/filter.js';
+import { HookdeckClient, isSettled } from '../core/hookdeck.js';
 import { buildMcpServer } from '../core/mcp.js';
-import { PollService, type PollServiceDeps } from '../core/poll.js';
-import { Relay } from '../core/relay.js';
+import { providerSourceName } from '../core/names.js';
+import { Notifications } from '../core/notifications.js';
+import { argumentsHash, PollService, type PollServiceDeps } from '../core/poll.js';
 import { WebhookReplay } from '../core/replay.js';
+import { ensureTransformations } from '../core/transformation.js';
 import type { SubscriptionStore } from '../core/store.js';
 import { SubscriptionService, type SubscriptionServiceDeps } from '../core/subscriptions.js';
 import { createNodeCallbackTransport } from './callback-transport.js';
@@ -27,8 +30,8 @@ function tooLarge(req: http.IncomingMessage, res: http.ServerResponse) {
 /*
  * The bridge's single HTTP listener:
  *
- *   POST /inbound/<instance id>   provider events from Event Gateway
- *   POST /inbound/hookdeck        Event Gateway issue notifications
+ *   POST /inbound/hookdeck        Event Gateway issue notifications (events go from each source straight to
+ *                                 subscribers, so this is all Event Gateway sends the bridge)
  *   /mcp                          the MCP endpoint, with Authorization: Bearer <BRIDGE_MCP_SECRET>
  *   /mcp/<secret>                 the same, with the secret in the URL instead, for clients that can't send a
  *                                 header (ChatGPT); off with auth.secretUrl: false. Either way, one principal: the owner
@@ -45,8 +48,6 @@ export interface BridgeServer {
   store: SubscriptionStore;
   callbacks: CallbackRegistry;
   hookdeck: HookdeckClient;
-  /** Inbound request ids the bridge retried itself (local recovery): the relay treats their delivery as a retry. */
-  recoveredRequests: Set<string>;
   listen(): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
 }
@@ -87,13 +88,32 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const mcpSecret = config.auth.mcpSecret;
 
   const hookdeck = options.hookdeck ?? new HookdeckClient({ apiKey: config.hookdeck.apiKey });
-  const store = options.store ?? new EventGatewayStore(hookdeck);
+  const catalog = new Catalog(config.sources);
+  for (const warning of descriptionWarnings(catalog)) log(`warning: ${warning}`);
+  const history = new EventHistory({ hookdeck, catalog, providers: config.sources });
+
+  // Each subscription is a connection on its source, with the source's transformation (written here for this version
+  // and config), a filter for its event and arguments, and the cursor's arguments hash.
+  const transformations = options.store ? new Map<string, string>() : await ensureTransformations(hookdeck, config.sources, catalog);
+  const place: PlaceSubscription = async (name, args) => {
+    const entry = catalog.get(name);
+    if (!entry) throw new Error(`${name} isn't offered`);
+    const sourceId = await history.sourceIdFor(entry.providerId);
+    if (!sourceId) throw new Error(`source ${providerSourceName(entry.providerId)} not found: run setup`);
+    const transformationId = transformations.get(entry.providerId);
+    if (!transformationId) throw new Error(`no transformation for ${entry.providerId}`);
+    return { sourceId, transformationId, filter: connectionFilterRule(name, entry.event.filter(args)), cursorArgs: argumentsHash(args) };
+  };
+  const store = options.store ?? new EventGatewayStore(hookdeck, place);
   const loaded = await store.load();
-  log(`loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}`);
+  log(
+    `loaded ${loaded.loaded} subscription(s) from Event Gateway${loaded.unreadable.length ? `; unreadable: ${loaded.unreadable.join(', ')}` : ''}` +
+      (loaded.legacy ? `; ${loaded.legacy} from 0.7 or earlier, not served until migrated (run setup)` : ''),
+  );
 
   const callbacks = new CallbackRegistry({
     hookdeck,
-    // In use if a subscription's callback is the tunnel URL or a path under it.
+    // In use if a subscription's callback is the callback URL or a path under it.
     inUse: (url) => store.list().some((s) => s.url === url || s.url.startsWith(`${url}/`)),
     subscription: (id) => store.get(id),
     onDeleted: (url) => subscriptions.forgetVerification(url),
@@ -101,30 +121,31 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     log,
   });
   const loadedCallbacks = await callbacks.load();
-  if (loadedCallbacks) log(`loaded ${loadedCallbacks} callback URL(s) for local agents`);
+  if (loadedCallbacks.loaded) log(`loaded ${loadedCallbacks.loaded} callback URL(s) for local agents`);
+  if (loadedCallbacks.legacy) log(`${loadedCallbacks.legacy} callback URL(s) from 0.7 or earlier, not served until migrated (run setup)`);
 
-  const catalog = new Catalog(config.sources);
-  for (const warning of descriptionWarnings(catalog)) log(`warning: ${warning}`);
   // Subscriptions to an event this bridge doesn't offer (a provider removed, an `id` renamed) get nothing; say so.
   for (const subscription of store.list()) {
     if (!catalog.get(subscription.name)) log(`subscription ${subscription.id} is for "${subscription.name}", which this bridge doesn't offer`);
   }
-  const history = new EventHistory({ hookdeck, catalog, providers: config.sources });
   const poll = new PollService({ hookdeck, catalog, history, ...options.pollOverrides });
-  const recoveredRequests = new Set<string>();
-  const relay = new Relay({
-    signingSecret: config.hookdeck.signingSecret,
-    providerIds: config.sources.map((p) => p.id),
-    catalog,
-    store,
-    hookdeck,
-    callbacks,
-    recovered: (id) => recoveredRequests.has(id),
-    // Webhook cursors are poll's, so a subscriber can replay from one (SEP-3415).
-    cursor: (subscription, requestId) => poll.webhookCursor(subscription.name, subscription.arguments, { requestId }),
+  const notifications = new Notifications({ signingSecret: config.hookdeck.signingSecret, store, hookdeck, log });
+  const replay = new WebhookReplay({
+    poll,
+    retry: (requestId, connectionId) => hookdeck.retryRequest(requestId, [connectionId]),
+    settled: async (eventIds, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      let pending = eventIds;
+      while (pending.length && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        const states = await Promise.all(pending.map((id) => hookdeck.getEvent(id).then(isSettled, () => true)));
+        pending = pending.filter((_, i) => !states[i]);
+      }
+    },
+    current: (id) => store.get(id),
+    finish: (id) => store.update(id, (current) => (current?.replay ? { ...current, replay: null } : null)),
     log,
   });
-  const replay = new WebhookReplay({ poll, deliver: (subscription, event, cursor) => relay.deliver(subscription, event, cursor), current: (id) => store.get(id), log });
   const subscriptions = new SubscriptionService({
     settings: config.subscriptions,
     store,
@@ -190,7 +211,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
           chunks.push(chunk as Buffer);
         }
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]));
-        const response = await relay.handle(pathname, headers, Buffer.concat(chunks));
+        const response = await notifications.handle(pathname, headers, Buffer.concat(chunks));
         return json(res, response.status, response.body);
       }
 
@@ -215,7 +236,6 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     store,
     callbacks,
     hookdeck,
-    recoveredRequests,
     listen: () =>
       new Promise((resolve) => server.listen(config.port, host, () => resolve({ host, port: (server.address() as { port: number }).port }))),
     close: () =>

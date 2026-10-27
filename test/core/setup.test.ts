@@ -26,7 +26,7 @@ function setup(over: Record<string, unknown> = {}, env_: Record<string, string> 
 }
 
 describe('bridge setup', () => {
-  it('creates the provider source, a CLI inbound connection, and registers the provider webhook', async () => {
+  it("creates the source, registers its webhook, and writes the transformation its subscriptions share (no inbound connection: events don't pass through the bridge)", async () => {
     const { gateway, run, resendFake } = setup();
     const report = await run();
     const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!;
@@ -34,13 +34,10 @@ describe('bridge setup', () => {
     expect(JSON.parse(source.description!)).toEqual({ provider: 'resend', events: ['email.received'], webhookId: 'wh_1' });
     expect(resendFake.calls[0]).toEqual({ url: 'https://api.resend.com/webhooks', body: { endpoint: source.url, events: ['email.received'] } });
 
-    const connection = [...gateway.connections.values()].find((c) => c.name === 'bridge-resend-dev')!;
-    expect(gateway.destinations.get(connection.destinationId)).toMatchObject({ type: 'CLI', config: { path: '/inbound/resend' } });
-    expect(connection.rules).toEqual([
-      { type: 'deduplicate', include_fields: ['headers.svix-id'], window: 3_600_000 },
-      expect.objectContaining({ type: 'retry', strategy: 'linear' }),
-    ]);
-    expect(report.sources).toEqual([{ id: 'resend', sourceUrl: source.url, connection: 'bridge-resend-dev', webhook: 'registered' }]);
+    expect([...gateway.connections.values()].map((c) => c.name)).toEqual(['bridge-notifications-dev']);
+    const transformation = [...gateway.transformations.values()].find((t) => t.name === 'bridge-resend-envelope')!;
+    expect(transformation.code).toContain("addHandler('transform'");
+    expect(report.sources).toEqual([{ id: 'resend', sourceUrl: source.url, transformation: 'bridge-resend-envelope', webhook: 'registered' }]);
   });
 
   it('is idempotent: a second run reuses the registered webhook and keeps the source secret', async () => {
@@ -50,7 +47,7 @@ describe('bridge setup', () => {
     expect(resendFake.calls).toHaveLength(1);
     expect(second.sources[0]!.webhook).toBe('existing');
     expect([...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
-    expect([...gateway.connections.values()].filter((c) => c.name === 'bridge-resend-dev')).toHaveLength(1);
+    expect([...gateway.transformations.values()].map((t) => t.name)).toEqual(['bridge-resend-envelope']);
   });
 
   it('replaces the provider webhook if the source lost its signing secret', async () => {
@@ -148,7 +145,7 @@ describe('bridge setup', () => {
       return { gateway, calls, run, source, connection };
     }
 
-    it('without the secret: creates the source and prints its URL, but holds delivery (no inbound connection)', async () => {
+    it("without the secret: creates the source and prints its URL, and serve won't start until it's set", async () => {
       const { run, source, connection } = webhookSetup();
       const report = await run({});
       expect(source()).toMatchObject({ type: 'WEBHOOK' });
@@ -158,11 +155,11 @@ describe('bridge setup', () => {
       expect(report.sources[0]!.hint).toContain(source()!.url);
       expect(report.sources[0]!.hint).toMatch(/Waiting for FILLS_WEBHOOK_SECRET/);
       // A missing secret ends setup with an error naming it, not a quiet success.
-      expect(missingCredentialsError(report)).toMatch(/fills: set FILLS_WEBHOOK_SECRET; delivery is held/);
+      expect(missingCredentialsError(report)).toMatch(/fills: set FILLS_WEBHOOK_SECRET; serve refuses to start until then/);
       expect(missingCredentialsError({ sources: [{ ...report.sources[0]!, waitingFor: undefined }] })).toBeUndefined();
     });
 
-    it('once the secret is set: applies it to the same source and connects it; re-running changes nothing', async () => {
+    it('once the secret is set: applies it to the same source; re-running changes nothing', async () => {
       const { run, source, connection, calls } = webhookSetup();
       const url = (await run({})).sources[0]!.sourceUrl;
 
@@ -170,10 +167,7 @@ describe('bridge setup', () => {
       expect(applied.sources[0]).toMatchObject({ sourceUrl: url, webhook: 'configured' });
       expect(applied.sources[0]!.hint).not.toContain('secret-one');
       expect(source()!.config).toEqual({ auth_type: 'HMAC', auth: { algorithm: 'sha256', encoding: 'hex', header_key: 'x-signature', webhook_secret_key: 'secret-one-0123456789' } });
-      expect(connection()!.rules).toEqual([
-        { type: 'deduplicate', include_fields: ['headers.x-delivery-id'], window: 3_600_000 },
-        expect.objectContaining({ type: 'retry' }),
-      ]);
+      expect(connection()).toBeUndefined();
 
       calls.length = 0;
       expect((await run({ FILLS_WEBHOOK_SECRET: 'secret-one-0123456789' })).sources[0]!.webhook).toBe('existing');
@@ -194,10 +188,10 @@ describe('bridge setup', () => {
   it('uses an HTTP destination with Hookdeck signatures for http inbound', async () => {
     const { gateway, run } = setup({ inbound: 'http', publicUrl: 'https://bridge.example.com' });
     await run();
-    const connection = [...gateway.connections.values()].find((c) => c.name === 'bridge-resend-dev')!;
+    const connection = [...gateway.connections.values()].find((c) => c.name === 'bridge-notifications-dev')!;
     expect(gateway.destinations.get(connection.destinationId)).toMatchObject({
       type: 'HTTP',
-      config: { url: 'https://bridge.example.com/inbound/resend', auth_type: 'HOOKDECK_SIGNATURE' },
+      config: { url: 'https://bridge.example.com/inbound/hookdeck', auth_type: 'HOOKDECK_SIGNATURE' },
     });
   });
 

@@ -10,6 +10,7 @@ import { providerSourceName } from './core/names.js';
 import { source, type SourceOptions, type WebhookVerification } from './core/sources/source.js';
 import { SOURCE_TYPES, type SourceTypeName } from './core/sources/source-types.generated.js';
 import { ensureSource, mcpEndpoint, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
+import { callbackUrlCommand } from './host/callback-url-cli.js';
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
@@ -18,7 +19,7 @@ import { createBridgeServer } from './host/server.js';
 import { watchCommand, watchesCommand } from './host/watch-cli.js';
 
 /*
- * mcp-events-bridge setup | serve | sources add <id> | watch | watches | doctor
+ * mcp-events-bridge setup | serve | sources add <id> | watch | watches | callback-url | doctor
  *
  * `doctor` comes in stage 7.
  */
@@ -27,10 +28,10 @@ const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen
 
 Commands:
   setup   Create or update the Event Gateway resources, and the webhooks of the sources in bridge.config.ts
-  serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper. With CLI inbound it checks
-          the Event Gateway setup, runs \`hookdeck listen\` for every configured source (--no-listen
-          to run it yourself) and for local agents' tunnel URLs, and recovers events missed while
-          \`listen\` was down
+  serve   Run the bridge: MCP endpoint, subscriptions (Event Gateway delivers each event from its source)
+          and expiry sweeper. With CLI inbound it checks the Event Gateway setup, runs \`hookdeck listen\`
+          for Event Gateway's issue notifications (--no-listen to run it yourself) and for local agents'
+          callback URLs, and retries what they missed while \`listen\` was down
   sources add <id> [--type <type>] [options]
           Add a source you register with the sender yourself (a service's source type, such as
           stripe, or webhook for any HTTP sender): create its Event Gateway source and print the
@@ -41,6 +42,9 @@ Commands:
           watch list, follow it as it changes and resume where it left off. \`watch --help\`
   watches add|remove|list
           Edit a watch list. \`watches --help\`
+  callback-url create|list --agent <name> [options]
+          Ask the bridge on this machine for a callback URL that forwards to a local agent's port, with
+          the agent's secret read from an environment variable. \`callback-url --help\`
   doctor  Check the deployment (not built yet)`;
 
 const SOURCES_ADD_USAGE = `Usage: mcp-events-bridge sources add <id> [--type <type>] [options]
@@ -77,18 +81,16 @@ async function setup(configFile: string | undefined) {
 
   console.log(`\nDeployment "${config.deployment}", ${config.inbound} inbound`);
   for (const p of report.sources) {
-    const connection = p.waitingFor ? `connection not created until ${p.waitingFor.join(', ')} is set` : `connection ${p.connection}`;
-    console.log(`  source ${p.id}: ${p.sourceUrl}, ${connection}, webhook ${p.webhook}`);
+    const state = p.waitingFor ? `waiting for ${p.waitingFor.join(', ')}` : `transformation ${p.transformation}`;
+    console.log(`  source ${p.id}: ${p.sourceUrl}, ${state}, webhook ${p.webhook}`);
     if (p.hint) console.log(p.hint.split('\n').map((line) => `    ${line}`).join('\n'));
   }
   for (const warning of descriptionWarnings(new Catalog(config.sources))) console.warn(`  warning: ${warning}`);
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
-    // Without providers still waiting for a secret: their source has no connection yet, and `listen` would create a default one.
-    const waiting = new Set(report.sources.filter((p) => p.waitingFor?.length).map((p) => p.id));
-    const ready = { ...config, sources: config.sources.filter((p) => !waiting.has(p.id)) };
-    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(ready, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
+    // `listen` only carries Event Gateway's issue notifications: events go from each source straight to subscribers.
+    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(config, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     // Log the CLI in now rather than at the first `serve`, so `hookdeck` commands run here use the bridge's project from the start.
     const cliConfigPath = process.env.BRIDGE_HOOKDECK_CLI_CONFIG ?? DEFAULT_CLI_CONFIG;
     try {
@@ -116,7 +118,7 @@ async function setup(configFile: string | undefined) {
 async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {
   const config = await loadConfig({ file: configFile });
   for (const warning of config.warnings) console.warn(`[bridge] warning: ${warning}`);
-  // Fail closed: an instance waiting for its secret has no inbound connection and must not be served.
+  // Fail closed: a source waiting for its secret can't verify what it receives, so nothing is served until it's set.
   assertCredentials(config);
 
   // Check Event Gateway first: a CLI-inbound deployment must not start `hookdeck listen` against missing
@@ -349,9 +351,10 @@ async function main() {
     loadDotEnv();
     return sourcesCommand(argv.slice(1), { legacy: argv[0] === 'providers' });
   }
-  if (argv[0] === 'watch' || argv[0] === 'watches') {
+  if (argv[0] === 'watch' || argv[0] === 'watches' || argv[0] === 'callback-url') {
+    const command = argv[0] === 'watch' ? watchCommand : argv[0] === 'watches' ? watchesCommand : callbackUrlCommand;
     try {
-      return await (argv[0] === 'watch' ? watchCommand : watchesCommand)(argv.slice(1), packageVersion(), loadDotEnv);
+      return await command(argv.slice(1), packageVersion(), loadDotEnv);
     } catch (error) {
       console.error(`[${argv[0]}] ${(error as Error).message}`);
       process.exitCode = 1;

@@ -5,7 +5,7 @@ export class MemoryStore implements SubscriptionStore {
   private readonly records = new Map<string, SubscriptionRecord>();
 
   async load() {
-    return { loaded: this.records.size, unreadable: [] };
+    return { loaded: this.records.size, unreadable: [], legacy: 0 };
   }
 
   get(id: string) {
@@ -29,7 +29,7 @@ export class MemoryStore implements SubscriptionStore {
       ...input,
       connectionId: `web_${input.id}`,
       destinationId: `des_${input.id}`,
-      topicSourceId: `src_${input.name}`,
+      sourceId: `src_${input.name.split('.')[0]}`,
     };
     this.records.set(record.id, record);
     return record;

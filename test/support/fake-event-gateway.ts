@@ -28,13 +28,11 @@ export class FakeEventGateway {
   readonly sources = new Map<string, Resource>();
   readonly destinations = new Map<string, Resource>();
   readonly connections = new Map<string, ConnectionResource>();
+  readonly transformations = new Map<string, { id: string; name: string; code: string }>();
   readonly issueTriggers = new Map<string, Record<string, unknown>>();
   readonly issues = new Map<string, { id: string; type: string; status: string; aggregation_keys: Record<string, unknown[]> }>();
-  readonly published: Array<{ sourceName: string; headers: Record<string, string>; body: string }> = [];
   /** Stored requests, for get_event, list_events and poll; all listed at once (no appearance delay). */
   readonly requests: Array<{ id: string; source_id: string; created_at: string; verified: boolean; rejection_cause: string | null; events_count: number; ignored_count: number; data: { headers: Record<string, string>; body: unknown } }> = [];
-  /** Subscription ids (X-MCP-Subscription-Id) whose publish should fail with 503. */
-  readonly failPublishFor = new Set<string>();
   webhookNotifications: Record<string, unknown> | null = null;
   private counter = 0;
 
@@ -114,13 +112,6 @@ export class FakeEventGateway {
       return json(200, this.view(connection));
     }
 
-    if (method === 'POST' && url.host === 'hkdk.events' && url.pathname === '/v1/publish') {
-      const headers = init?.headers as Record<string, string>;
-      if (this.failPublishFor.has(headers['X-MCP-Subscription-Id'] ?? '')) return json(503, { message: 'unavailable' });
-      this.published.push({ sourceName: headers['X-Hookdeck-Source-Name']!, headers, body: String(init?.body) });
-      return json(200, { status: 'SUCCESS', request_id: this.nextId('req') });
-    }
-
     const issueMatch = /^\/issues\/([^/]+)$/.exec(path);
     if (issueMatch) {
       const issue = this.issues.get(issueMatch[1]!);
@@ -171,6 +162,16 @@ export class FakeEventGateway {
     }
 
     if (method === 'GET' && /^\/requests\/[^/]+\/ignored_events$/.test(path)) return json(200, { models: [] });
+
+    if (method === 'PUT' && path === '/transformations') {
+      const body = JSON.parse(String(init?.body)) as { name: string; code: string };
+      if (!NAME.test(body.name)) return json(422, { data: ['transformation name fails to match the required pattern'] });
+      const existing = this.byName(this.transformations, body.name);
+      const transformation = existing ?? { id: this.nextId('trs'), name: body.name, code: '' };
+      transformation.code = body.code;
+      this.transformations.set(transformation.id, transformation);
+      return json(200, transformation);
+    }
 
     if (method === 'PUT' && path === '/notifications/webhooks') {
       this.webhookNotifications = JSON.parse(String(init?.body));

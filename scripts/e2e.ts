@@ -269,15 +269,7 @@ async function main() {
     if (!health) return;
     deployment = health.deployment ?? deployment;
   } else {
-    const failing = new (class extends HookdeckClient {
-      override async publish(sourceName: string, headers: Record<string, string>, body: string) {
-        if (failNextPublishFor && headers['X-MCP-Subscription-Id'] === failNextPublishFor) {
-          failNextPublishFor = undefined;
-          throw new Error('e2e: forced publish failure');
-        }
-        return super.publish(sourceName, headers, body);
-      }
-    })({ apiKey: config.hookdeck.apiKey });
+    const failing = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
     // A short grace period for unused tunnel URLs, so the local agent checks can see them deleted.
     const bridge = await createBridgeServer(config, { hookdeck: failing, callbackSettings: { graceMs: 90_000 }, log: (m) => console.log(`[bridge] ${m}`) });
     const { port } = await bridge.listen();

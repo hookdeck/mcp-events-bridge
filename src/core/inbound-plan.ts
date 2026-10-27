@@ -1,14 +1,13 @@
 import type { ResolvedConfig } from './config.js';
 import type { HookdeckClient } from './hookdeck.js';
-import { notificationsConnectionName, providerConnectionName, providerSourceName } from './names.js';
+import { notificationsConnectionName, providerSourceName } from './names.js';
 import { NOTIFICATIONS_SOURCE } from './setup.js';
 
 /*
- * What a deployment's inbound side looks like in Event Gateway, derived from
- * the config: one connection per provider instance, plus the notifications
- * connection. Used to check a CLI-inbound deployment before `hookdeck listen`
- * starts (so it never falls back to creating default connections) and to
- * build that listen command.
+ * What a deployment's inbound side looks like in Event Gateway: the notifications connection, the only thing Event
+ * Gateway sends the bridge itself (events go from each source straight to subscribers). Used to check a deployment
+ * before it serves (and, with CLI inbound, before `hookdeck listen` starts, so it never falls back to creating default
+ * connections), and to build that listen command.
  */
 
 export interface InboundConnection {
@@ -19,11 +18,6 @@ export interface InboundConnection {
 
 export function inboundConnections(config: ResolvedConfig): InboundConnection[] {
   return [
-    ...config.sources.map((p) => ({
-      source: providerSourceName(p.id),
-      connection: providerConnectionName(p.id, config.deployment),
-      path: `/inbound/${p.id}`,
-    })),
     { source: NOTIFICATIONS_SOURCE, connection: notificationsConnectionName(config.deployment), path: '/inbound/hookdeck' },
   ];
 }
@@ -31,6 +25,11 @@ export function inboundConnections(config: ResolvedConfig): InboundConnection[] 
 /** Problems that would make `hookdeck listen` misroute or create default connections. Empty when ready. */
 export async function checkInbound(config: ResolvedConfig, hookdeck: HookdeckClient): Promise<string[]> {
   const problems: string[] = [];
+  // Each source must exist: subscriptions are connections on it.
+  for (const source of config.sources) {
+    const name = providerSourceName(source.id);
+    if (!(await hookdeck.listSources({ name })).models.some((s) => s.name === name)) problems.push(`source ${name} not found`);
+  }
   const connections = await hookdeck.listAllConnections();
   for (const expected of inboundConnections(config)) {
     const found = connections.find((c) => c.name === expected.connection);

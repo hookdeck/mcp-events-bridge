@@ -40,7 +40,7 @@ const catalog = new Catalog(config.sources);
 const sourceOf = (id: string) => config.sources.find((s) => s.id === id) as ResolvedSource;
 
 /** Runs a transformation as Event Gateway would: a fresh context with only built-ins, no imports. */
-function run(code: string, request: Record<string, unknown>, connection: Record<string, unknown> = { name: 'mcp-sub-sub_1', description: '{}' }) {
+function run(code: string, request: object, connection: Record<string, unknown> = { name: 'mcp-sub-sub_1', description: '{}' }) {
   let handler: ((req: unknown, ctx: unknown) => unknown) | undefined;
   vm.runInNewContext(code, { addHandler: (_type: string, fn: typeof handler) => (handler = fn), Buffer, TextEncoder });
   // Through JSON, as Event Gateway returns it, so the comparison isn't across realms.
@@ -58,7 +58,7 @@ describe('transformation: built from the source runtime, self-contained', () => 
     const req = fixture('resend', 'email-received.json');
     const out = run(buildTransformation(sourceOf('resend'), catalog), { ...req, path: '/', query: 'x=1', parsed_query: { x: '1' } }, {
       name: 'mcp-sub-sub_1',
-      description: JSON.stringify({ v: 1, cursorArgs: 'abc123' }),
+      description: JSON.stringify({ v: 2, ca: 'abc123' }),
     });
     const runtime = catalog.get('resend.email.received')!.runtime;
     expect(out.headers).toEqual({ 'content-type': 'application/json', 'x-mcp-subscription-id': 'sub_1', 'webhook-id': 'msg_3KHbIt3gcFjtCyW4hdA6Ug4T61H' });
@@ -71,10 +71,11 @@ describe('transformation: built from the source runtime, self-contained', () => 
     expect(Number(cursor.t) - Number(cursor.w)).toBe(60_000);
   });
 
-  it('carries the replay cursor while a replay runs, and no cursor without subscription metadata', () => {
+  it('carries the replay\'s start while a replay runs, and no cursor without subscription metadata', () => {
     const req = fixture('resend', 'email-received.json');
     const code = buildTransformation(sourceOf('resend'), catalog);
-    expect(run(code, req, { name: 'mcp-sub-sub_1', description: JSON.stringify({ cursorArgs: 'a', replayFrom: 'cur_start' }) }).body.cursor).toBe('cur_start');
+    const during = run(code, req, { name: 'mcp-sub-sub_1', description: JSON.stringify({ v: 2, ca: 'a', rp: { f: 1000, w: 2000 } }) });
+    expect(decode(during.body.cursor!)).toMatchObject({ v: 1, n: 'resend.email.received', a: 'a', f: 1000, w: 2000, ids: [] });
     expect(run(code, req, { name: 'mcp-sub-sub_1', description: 'not json' }).body.cursor).toBeNull();
     expect(run(code, req, { name: 'other-connection' }).headers['x-mcp-subscription-id']).toBe('');
   });

@@ -1,6 +1,7 @@
 import type { Catalog } from './catalog.js';
 import type { ResolvedSource } from './config.js';
-import { SUBSCRIPTION_PREFIX } from './names.js';
+import type { HookdeckClient } from './hookdeck.js';
+import { SUBSCRIPTION_PREFIX, transformationName } from './names.js';
 import { LOOKBACK_MS } from './poll.js';
 import type { EventRuntime, SourceDefinition } from './sources/types.js';
 
@@ -12,14 +13,6 @@ import type { EventRuntime, SourceDefinition } from './sources/types.js';
  */
 
 export const MAX_BODY_BYTES = 256 * 1024;
-
-/** What a subscription's connection description gives the transformation, beyond the subscription itself. */
-export interface CursorMetadata {
-  /** The cursor's hash of the subscription's arguments (poll's format). */
-  cursorArgs?: string;
-  /** While a replay runs: the cursor it started from, which every delivery carries until it's done. */
-  replayFrom?: string;
-}
 
 /** A source's runtime in the bridge: the function the transformation runs, called with the same config. */
 export function instantiateRuntime(definition: Pick<SourceDefinition<any, any>, 'runtime' | 'runtimeConfig'>): Record<string, EventRuntime> {
@@ -43,16 +36,20 @@ export function envelopeHandler(
   events: Array<{ key: string; name: string }>,
   constants: { subscriptionPrefix: string; maxBodyBytes: number; lookbackMs: number },
 ) {
-  type Meta = { cursorArgs?: unknown; replayFrom?: unknown } | null;
-  // Poll's cursor format, from now less the look-back, so a client persisting it never skips an event still in flight.
+  // From the connection description (event-gateway-store.ts): `ca`, the cursor's arguments hash, and `rp` while a
+  // replay runs.
+  type Meta = { ca?: unknown; rp?: { f?: unknown; w?: unknown } } | null;
+  // Poll's cursor format, from now less the look-back, so a client persisting it never skips an event still in flight;
+  // during a replay, from where the replay started.
   const cursorFor = (meta: Meta, name: string, now: number) => {
     if (!meta) return null;
-    if (typeof meta.replayFrom === 'string') return meta.replayFrom;
-    const w = now - constants.lookbackMs;
-    const state = { v: 1, n: name, a: typeof meta.cursorArgs === 'string' ? meta.cursorArgs : '', f: w, w, t: now, ids: [] };
+    const a = typeof meta.ca === 'string' ? meta.ca : '';
+    const replay = meta.rp && typeof meta.rp.f === 'number' && typeof meta.rp.w === 'number' ? meta.rp : null;
+    const w = replay ? (replay.w as number) : now - constants.lookbackMs;
+    const state = { v: 1, n: name, a, f: replay ? (replay.f as number) : w, w, t: now, ids: [] };
     return Buffer.from(JSON.stringify(state)).toString('base64url');
   };
-  return (request: Record<string, unknown> & { headers?: Record<string, unknown>; body?: unknown }, context?: { connection?: Record<string, unknown> }) => {
+  return (request: { headers?: Record<string, unknown>; body?: unknown }, context?: { connection?: Record<string, unknown> }) => {
     const connection = context?.connection ?? {};
     const connectionName = typeof connection.name === 'string' ? connection.name : '';
     const subscriptionId = connectionName.startsWith(constants.subscriptionPrefix) ? connectionName.slice(constants.subscriptionPrefix.length) : '';
@@ -89,6 +86,24 @@ export function envelopeHandler(
     // The sender's query string isn't the subscriber's (the destination also ignores the sender's path).
     return { ...request, headers: out, body: envelope ?? {}, query: '', parsed_query: {} };
   };
+}
+
+/**
+ * Creates or updates each source's transformation (`bridge-<id>-envelope`) with the code for this bridge's version and
+ * config, and returns their ids by source id. Every subscription's connection refers to its source's transformation by
+ * id, so updating the code updates them all.
+ */
+export async function ensureTransformations(
+  hookdeck: Pick<HookdeckClient, 'upsertTransformation'>,
+  sources: Array<Pick<ResolvedSource, 'id' | 'definition'>>,
+  catalog: Catalog,
+): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  for (const source of sources) {
+    const transformation = await hookdeck.upsertTransformation({ name: transformationName(source.id), code: buildTransformation(source, catalog) });
+    ids.set(source.id, transformation.id);
+  }
+  return ids;
 }
 
 /** The code of a source's transformation. */
