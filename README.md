@@ -40,7 +40,7 @@ Clients that support MCP Events subscribe to the bridge, and receive each event 
 | Client | How it gets events | Needs a public URL? | Tested | Guide |
 | --- | --- | --- | --- | --- |
 | ChatGPT (Plus or above, Developer mode) | MCP Events, webhook delivery | Yes, for the bridge's MCP endpoint: [deploy the bridge](#deploy-to-flyio), or tunnel to a local one | Yes, end to end | [Connect ChatGPT](#connect-chatgpt) |
-| Claude Code | Polls, with no MCP Events support: `wait_for_event` and `poll_events` during a turn, and the plugin (which runs `watch`) between prompts | No | 2.1.294 to 2.1.296 | [Connect Claude Code](#connect-claude-code) |
+| Claude Code | Polls, with no MCP Events support: `wait_for_event` and `poll_events` during a turn, and the plugin (which runs `watch`) between prompts | No | 2.1.294 to 2.1.310 | [Connect Claude Code](#connect-claude-code) |
 | Hermes Agent | MCP Events, webhook delivery | No: a local bridge creates its callback URL | v0.22.5 | [Hermes Agent guide](skills/mcp-events-bridge/references/hermes-agent.md) |
 | Vercel AI SDK (`@ai-sdk/mcp`) | MCP Events, webhook delivery | A callback URL: your own public route, or one a local bridge creates | 2.0.84 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#vercel-ai-sdk) |
 | Mastra (`@mastra/mcp`) | MCP Events, poll or webhook delivery | Poll: no. Webhook: a callback URL, as for the Vercel AI SDK | 2.5.0 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#mastra) |
@@ -128,7 +128,7 @@ With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Crea
 
 ![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email notifications" task that is Monitoring](docs/images/chatgpt-subscribe.png)
 
-When an event arrives, the task runs with it, as in the screenshot at the top.
+When an event arrives, the task runs with it, as in the screenshot at the top. A chat that's already open may not show it until you reload the page (seen on 27 Oct, with the callback answered in about 2 seconds). Pausing the task unsubscribes it from the bridge.
 
 ChatGPT keeps the list of events it can subscribe to from when you added the plugin. After you upgrade the bridge or add a source, refresh the plugin in Plugins, or ChatGPT can't subscribe to the new or renamed events (it may still list them, since that call goes to the bridge). Then ask it to subscribe again.
 

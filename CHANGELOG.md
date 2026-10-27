@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Docs:** the Claude Code plugin is tested with Claude Code 2.1.310, and the README's clients table says 2.1.294 to 2.1.310. The ChatGPT steps and the skill's troubleshooting say that an open ChatGPT chat shows a delivered event only after a reload, and that pausing ChatGPT's task unsubscribes it.
+
 ## 0.6.0 (2026-10-26)
 
 ### Added
