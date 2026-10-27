@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- **Docs:** the Claude Code plugin is tested with Claude Code 2.1.310, and the README's clients table says 2.1.294 to 2.1.310. The ChatGPT steps and the skill's troubleshooting say that an open ChatGPT chat shows a delivered event only after a reload, and that pausing ChatGPT's task unsubscribes it.
+- **Docs:** the Claude Code plugin is tested with Claude Code 2.1.310, and the README's clients table says 2.1.294 to 2.1.310. The ChatGPT steps and the skill's troubleshooting say that an open ChatGPT chat shows a delivered event only after a reload, and that pausing ChatGPT's task unsubscribes it, so events while it's paused aren't delivered later (webhook replay is [#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)).
+- **The Claude Code plugin's monitor failed in the bridge's own repository** (`sh: mcp-events-bridge: command not found`, exit 127): there, npx ran the repository's own package instead of the pinned version. The plugin now runs the published CLI from an empty directory, so it works in any project. `MCP_EVENTS_BRIDGE_CLI` still runs in your directory.
 
 ## 0.6.0 (2026-10-26)
 
