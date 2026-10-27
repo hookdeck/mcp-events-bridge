@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Docs:** what pausing and resuming a ChatGPT task does, tested on 0.7.0: resuming subscribes again from now, with a new callback URL and no cursor, so events sent while it was paused aren't replayed (`list_events` still finds them). A delivered event can take a minute or so to show in ChatGPT.
+
 ## 0.7.0 (2026-10-27)
 
 ### Added
