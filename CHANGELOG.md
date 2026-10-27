@@ -4,7 +4,7 @@
 
 ### Changed
 
-- **Docs:** the README's status line calls the bridge a project you can run today, and says Hookdeck is adding the same capability to Event Gateway.
+- **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway.
 
 ### Fixed
 
