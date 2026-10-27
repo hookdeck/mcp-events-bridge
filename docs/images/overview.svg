@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="title">MCP Events bridge overview</title>
-  <desc id="desc">Services such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway, which receives and verifies them and passes them to the MCP Events bridge. The bridge turns them into MCP Events, and Event Gateway delivers them, with retries, to agents such as ChatGPT, Hermes Agent and others that subscribed over MCP. Claude Code polls the bridge over MCP instead.</desc>
+  <desc id="desc">Services such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway, which receives and verifies them, builds an MCP Event for each subscription and filters it, then signs and delivers it, with retries, to agents such as ChatGPT, Hermes Agent and others. The agents subscribe over MCP to the MCP Events bridge, which creates one Event Gateway connection per subscription. Claude Code polls the bridge over MCP instead.</desc>
   <style>
     .bg { fill: #ffffff; stroke: #d0d7de; }
     .panel { fill: #f6f8fa; stroke: #d0d7de; }
@@ -40,26 +40,31 @@
   <rect class="box dashed" x="30" y="280" width="170" height="40" rx="8"/>
   <text class="text" x="115" y="305" font-size="14" text-anchor="middle">other services</text>
 
-  <!-- Event Gateway: one container, in and out -->
+  <!-- Event Gateway: receives, builds and delivers each event -->
   <rect class="panel" x="250" y="170" width="660" height="150" rx="12"/>
   <text class="text" x="580" y="304" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
-  <rect class="box" x="280" y="200" width="200" height="60" rx="8"/>
-  <text class="text" x="380" y="226" font-size="15" text-anchor="middle">receive · verify</text>
-  <text class="muted" x="380" y="246" font-size="12" text-anchor="middle">every request kept</text>
-  <rect class="box" x="680" y="200" width="200" height="60" rx="8"/>
-  <text class="text" x="780" y="226" font-size="15" text-anchor="middle">deliver · retry</text>
-  <text class="muted" x="780" y="246" font-size="12" text-anchor="middle">per subscriber</text>
+  <rect class="box" x="268" y="200" width="180" height="60" rx="8"/>
+  <text class="text" x="358" y="226" font-size="15" text-anchor="middle">receive · verify</text>
+  <text class="muted" x="358" y="246" font-size="12" text-anchor="middle">every request kept</text>
+  <rect class="box" x="480" y="200" width="180" height="60" rx="8"/>
+  <text class="text" x="570" y="226" font-size="15" text-anchor="middle">MCP Event · filter</text>
+  <text class="muted" x="570" y="246" font-size="12" text-anchor="middle">per subscription</text>
+  <rect class="box" x="692" y="200" width="180" height="60" rx="8"/>
+  <text class="text" x="782" y="226" font-size="15" text-anchor="middle">sign · deliver · retry</text>
+  <text class="muted" x="782" y="246" font-size="12" text-anchor="middle">per subscriber</text>
+  <path class="arrow" d="M448,230 H478" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M660,230 H690" marker-end="url(#arrowhead)"/>
 
-  <path class="arrow" d="M200,200 C240,200 245,228 278,228" marker-end="url(#arrowhead)"/>
-  <path class="arrow" d="M200,250 C240,250 245,232 278,232" marker-end="url(#arrowhead)"/>
-  <path class="arrow dashed" d="M200,300 C245,300 245,238 278,238" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M200,200 C240,200 240,228 266,228" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M200,250 C240,250 240,232 266,232" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M200,300 C240,300 240,238 266,238" marker-end="url(#arrowhead)"/>
 
-  <!-- Bridge -->
+  <!-- Bridge: the MCP server, out of the data path -->
   <rect class="accent" x="470" y="40" width="220" height="80" rx="10" stroke-width="1.6"/>
   <text class="text" x="580" y="74" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
-  <text class="muted" x="580" y="98" font-size="14" text-anchor="middle">webhooks → MCP Events</text>
-  <path class="arrow" d="M380,198 C380,150 470,150 520,122" marker-end="url(#arrowhead)"/>
-  <path class="arrow" d="M640,122 C690,150 780,150 780,198" marker-end="url(#arrowhead)"/>
+  <text class="muted" x="580" y="98" font-size="14" text-anchor="middle">catalog · subscriptions</text>
+  <path class="arrow dashed" d="M570,122 V198" marker-end="url(#arrowhead)"/>
+  <text class="label" x="582" y="164">a connection per subscription</text>
 
   <!-- Agents: a stack, front to back, each card a little narrower and overlapping the top of the one behind it -->
   <text class="muted" x="955" y="168" font-size="13" font-weight="600" letter-spacing="0.5">AGENTS</text>
@@ -71,9 +76,9 @@
   <text class="text" x="1060" y="244" font-size="15" text-anchor="middle">Hermes Agent</text>
   <rect class="box" x="950" y="180" width="220" height="44" rx="8"/>
   <text class="text" x="1060" y="207" font-size="15" text-anchor="middle">ChatGPT</text>
-  <path class="arrow" d="M880,222 C915,222 920,202 948,202" marker-end="url(#arrowhead)"/>
-  <path class="arrow" d="M880,230 C915,230 925,239 954,239" marker-end="url(#arrowhead)"/>
-  <path class="arrow dashed" d="M880,238 C915,238 930,299 966,299" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M872,222 C910,222 920,202 948,202" marker-end="url(#arrowhead)"/>
+  <path class="arrow" d="M872,230 C910,230 925,239 954,239" marker-end="url(#arrowhead)"/>
+  <path class="arrow dashed" d="M872,238 C910,238 930,299 966,299" marker-end="url(#arrowhead)"/>
 
   <!-- Subscribe over MCP -->
   <path class="arrow" d="M1120,178 V88 Q1120,80 1112,80 H692" marker-end="url(#arrowhead)"/>

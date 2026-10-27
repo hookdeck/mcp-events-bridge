@@ -17,8 +17,7 @@ import type { EventRuntime, InboundRequest, SourceDefinition, SourceEvent } from
  *
  * There's no API call to register the webhook with the sender, so setup
  * creates the source and prints its URL. The credentials can come later:
- * until they're set, setup holds delivery (no inbound connection) and `serve`
- * refuses to start.
+ * until they're set, `serve` refuses to start.
  */
 
 type Credential = string | EnvRef;
@@ -59,15 +58,15 @@ export interface SourceEventOptions {
 
 /** What every source takes, whatever its type. */
 export interface SourceCommonOptions {
-  /** Instance id: names the Event Gateway source (`bridge-<id>`), the inbound route, and the events (`{id}.{event}`). Default: the type. */
+  /** Instance id: names the Event Gateway source (`bridge-<id>`), its transformation, and the events (`{id}.{event}`). Default: the type. */
   id?: string;
   /** The source's event names (offered over MCP as `{id}.{name}`), or names with a description and the sender's value for each. */
   events: string[] | Record<string, SourceEventOptions>;
   /** Where the sender says which event a request is. Needed with more than one event; without it, every request is the one event. */
   eventType?: ValueSource;
-  /** The sender's stable id for an event, for the eventId and dedupe. Default: Event Gateway's request id. */
+  /** The sender's stable id for an event, for the eventId and dedupe. Default: a SHA-256 of the body (the same body is the same event). */
   eventId?: ValueSource;
-  /** When it happened: a body field holding an ISO 8601 time or a Unix time (seconds or milliseconds). Default: when the bridge received it. */
+  /** When it happened: a body field holding an ISO 8601 time or a Unix time (seconds or milliseconds). Default: when Event Gateway received it. */
   occurredAt?: { field: string };
   /** Pass only these top-level body fields to subscribers. Default: the whole JSON body. */
   fields?: string[];
@@ -387,7 +386,7 @@ function buildDefinition(type: string, o: ParsedCommon, verification: Verificati
       const absent = missing(options);
       return [
         absent.length
-          ? `Waiting for ${absent.join(', ')}: delivery is held (no inbound connection) until it's set. Register this URL with the sender, put the secret in the environment, and run setup again:`
+          ? `Waiting for ${absent.join(', ')}: serve refuses to start until it's set. Register this URL with the sender, put the secret in the environment, and run setup again:`
           : 'Configure the sender to POST JSON to:',
         `  ${sourceUrl}`,
         `  Verification: ${verification.describe(options.credentials, envName)}`,

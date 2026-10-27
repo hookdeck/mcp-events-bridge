@@ -23,7 +23,7 @@ export function buildMcpServer(deps: {
   /** Poll mode: `events/poll` and the poll_events and wait_for_event tools. */
   poll?: PollService;
   sources: () => Array<Record<string, unknown>>;
-  /** Set when the bridge runs `hookdeck listen` for local agents: adds the tunnel URL tools. */
+  /** Set when the bridge runs `hookdeck listen` for local agents: adds the callback URL tools. */
   callbacks?: CallbackRegistry;
   principal?: string;
   version?: string;

@@ -45,7 +45,7 @@ export interface SetupReport {
 /**
  * The error setup ends with when a provider's credentials aren't set yet, or undefined when none are missing.
  * Setup still does everything it can first (including creating the waiting provider's source, so its URL can be
- * registered), but a missing secret is a failure, not a quiet success: delivery for that provider is held.
+ * registered), but a missing secret is a failure, not a quiet success: `serve` refuses to start until it's set.
  */
 export function missingCredentialsError(report: Pick<SetupReport, 'sources'>): string | undefined {
   const waiting = report.sources.filter((p) => p.waitingFor?.length);

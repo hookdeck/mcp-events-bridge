@@ -70,8 +70,7 @@ export function defineSource<Options extends Record<string, unknown>>(definition
 
 export interface BridgeConfig {
   /**
-   * Names this bridge's Event Gateway resources (its inbound connections, notifications connection and issue
-   * triggers) and its CLI devices, so bridges sharing a Hookdeck project stay apart. Default: BRIDGE_DEPLOYMENT,
+   * Names this bridge's Event Gateway resources (its notifications connection and issue triggers) and its CLI devices, so bridges sharing a Hookdeck project stay apart. Default: BRIDGE_DEPLOYMENT,
    * else `local` with CLI inbound (a bridge on your machine) and `public` with HTTP inbound (a public URL).
    */
   deployment?: string;

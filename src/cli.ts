@@ -214,7 +214,7 @@ async function serve(configFile: string | undefined, { manageListen, migrate: au
         console.error('[bridge] hookdeck listen did not connect within 30s');
         return stop(1);
       }
-      console.log('[bridge] hookdeck listen connected: forwarding source events and issue notifications, and recovering any missed while it was down');
+      console.log('[bridge] hookdeck listen connected: forwarding Event Gateway issue notifications, and recovering any missed while it was down');
     } else {
       console.log(`[bridge] --no-listen: forward events yourself with: hookdeck ${listenArgs(config, port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     }
@@ -344,8 +344,8 @@ async function sourcesCommand(argv: string[]) {
   console.log(`Register this URL with the sender:\n  ${created.url}`);
   console.log(
     missing.length
-      ? `Delivery is held until ${missing.join(', ')} is set: Event Gateway keeps requests that arrive meanwhile, and none reach the bridge.`
-      : `Its credentials are set; run setup to connect it.`,
+      ? `serve refuses to start until ${missing.join(', ')} is set: Event Gateway keeps requests that arrive meanwhile. Then run setup.`
+      : `Its credentials are set; run setup to apply them.`,
   );
 
   // 2. .env: append the variables the entry references, empty, if the file doesn't mention them.

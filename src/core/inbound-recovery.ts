@@ -40,9 +40,9 @@ const WATERMARK_MARGIN_MS = 2 * 60 * 1000;
 const RETRY_SETTLE_MS = 3 * 60 * 1000;
 
 export interface InboundTarget {
-  /** Source name, e.g. bridge-resend. */
+  /** Source name, e.g. bridge-hookdeck-notifications. */
   source: string;
-  /** This deployment's inbound connection name, e.g. bridge-resend-dev. */
+  /** This deployment's inbound connection name, e.g. bridge-notifications-local. */
   connection: string;
 }
 

@@ -271,7 +271,7 @@ Run on 22 Oct 2026, in production, after Event Gateway shipped Standard Webhooks
 ### What it means for the design
 
 - The retry gap (conformance row 56) can close: Event Gateway signs each attempt itself.
-- The relay can go. A transformation on the provider's source, shared by every subscription, plus filters and dedupe, does what the relay does. That's stage 8 in `PLAN.md`, designed in `ARCHITECTURE.md`, "Next: Event Gateway delivers". Publishing once per topic, the earlier plan, keeps the relay for no gain, so it's dropped.
+- The relay can go. A transformation on the provider's source, shared by every subscription, plus filters and dedupe, does what the relay does. That's stage 8 in `PLAN.md`, designed in `ARCHITECTURE.md`, "Next: Event Gateway delivers" (now "Delivery: Event Gateway delivers"). Publishing once per topic, the earlier plan, keeps the relay for no gain, so it's dropped.
 - A destination signs with one key, so a callback URL the bridge creates has to hold the client's own secret: `create_callback_url` takes it, from the client's code. Rotating it means a new URL until destinations take a second key, because changing a source's secret still takes about a minute.
 - Recovery for local agents needs no new code: `InboundRecovery` works on a callback URL's connection, and the bridge's own re-sending goes.
 - A mis-signed delivery to an `MCP_EVENTS` source is now a delivery failure the bridge hears about, not a silent `200`.
@@ -280,3 +280,56 @@ Run on 22 Oct 2026, in production, after Event Gateway shipped Standard Webhooks
 ### Resources
 
 The `spike-sw-*` and `spike-direct-*` sources, connections, destinations and transformations were deleted (none left, checked). The `spike-demo-*` resources were left in the project for review, minus the straight-to-CLI connection, which was deleted. Filed [hookdeck-cli#475](https://github.com/hookdeck/hookdeck-cli/issues/475) (the `//`) and [hookdeck-cli#476](https://github.com/hookdeck/hookdeck-cli/issues/476) (the startup output, the interactive view and `--help` leave out the forwarding URL's path). No Resend or GitHub webhooks were created: the provider requests were signed locally.
+
+### Build probes (27 Oct)
+
+Run while building stage 8, in the dedicated project.
+
+**What we ran:**
+
+1. Each source's generated transformation (Resend, GitHub with `issues`, `issue_comment`, `push` and `workflow_run`, and a webhook source) through `POST /transformations/run`, against the fixtures, and a throwaway transformation (`spike-txprobe`) to list what its runtime offers.
+2. `POST /events/{id}/retry` on an event that had already succeeded (`spike-demo-sub-hermes-alice`, delivering to the `spike-demo-hermes` `MCP_EVENTS` source).
+3. `GET /events?webhook_id=<subscription connection>&headers={"webhook-id":"<id>"}` (and a `body` filter on `eventId`) on the `spike-demo-sub-*` connections, and the headers of the requests those connections' deliveries made at `spike-demo-hermes`.
+4. A source `spike-type-probe` created as `MCP_EVENTS` with a secret, then upserted by name as `WEBHOOK` with `config: {}`, with an unsigned `POST` to its URL every 10 seconds.
+5. The first live e2e on 0.8.0 (signed fills to the `fills` webhook source, deployment `e2e080`), whose replay step failed; then request retries (scoped with `webhook_ids`, and unscoped) of a request that arrived before a connection existed, for that connection.
+6. A second connection given an existing destination by `destination_id`, then the destination deleted.
+
+**What we saw:**
+
+- **Transformations:** each bundle's output equaled the bridge's own runtime's (only the timestamp differed, for events without one), including a SHA-256 of a body with non-ASCII characters. The runtime has `Buffer`, `btoa`, `TextEncoder` and `crypto.subtle` (async), but no synchronous hash, so the bundle carries its own SHA-256. `context` has only `connection` (with its name, description, rules, source and destination): no request id and no time the request arrived.
+- **Retrying a succeeded event** works: `200`, a new attempt with trigger `MANUAL`, delivered (`SUCCESSFUL`, `200`).
+- **Finding a subscription's event by `webhook-id`:** the `headers` filter (and a `body` filter on `eventId`) on `GET /events?webhook_id=` returned exactly that event, and nothing for an unknown id. An event's `data.headers` hold what the destination sent, including `X-Hookdeck-EventID`; the request those deliveries made at an `MCP_EVENTS` source carried no `x-hookdeck-*` headers.
+- **The first e2e on 0.8.0** passed 8 of 9 checks: a signed fill was delivered about a second after it was sent, with `webhook-id` equal to the sender's id, `get_event` found it, the filter kept another symbol's fill out, unsubscribe deleted the connection, and deliveries carried a cursor. Replay failed: nothing reached the new subscription.
+- **A request retry reaches only the connections the request was routed to when it arrived.** For a connection created after the request, both a retry scoped to it (`webhook_ids`) and a full retry created no event.
+- **Connections can share a destination:** a second connection created with `destination_id` used the existing destination, and deleting the destination deleted both connections.
+- **Changing a source's type in place:** the upsert kept the source's id and URL, set the type to `WEBHOOK` and cleared the auth. The URL answered `401` to unsigned requests for about 61 seconds, then `200`.
+
+**What it means for the design:**
+
+- A `source()` without `eventId` can't default to Event Gateway's request id (the transformation can't see it), so it defaults to a hash of the body. A live event with no time of its own gets the time the transformation runs, moments after the request arrived.
+- Replay can't retry stored requests into a new subscription's connection. Instead, while a replay runs, a temporary connection (`bridge-replay-<subscription id>`) from a `PUBLISH_API` source (`bridge-replay`) to the subscription's own destination carries envelopes the bridge builds with the source's runtime and publishes; the destination signs every attempt with the subscriber's secret, and the bridge deletes the connection once the replayed events settle. `ARCHITECTURE.md`, "Webhook cursors and replay", is updated.
+- A delivery a local agent missed is retried by retrying the subscription's own event, found by `webhook-id` on its connection: Event Gateway signs the retry afresh, so it works for pass-through callback URLs too, which hold no secret to sign a retry at the CLI destination. (A request retry on the subscription's connection would be dropped by its dedupe rule.)
+- The migration from 0.7 turns a callback URL into a pass-through one in place, keeping its URL; deliveries refused during the minute it takes are retried by the subscription's connection.
+- The connection description's 500 characters fit the cursor fields the transformation reads only as short keys (`ca`, `rp`).
+
+**Resources:** `spike-txprobe` and `spike-type-probe` were deleted. The retry added one `MANUAL` attempt to an event on `spike-demo-sub-hermes-alice`, delivered to `spike-demo-hermes` (no `listen` was running, so nothing reached a receiver). `spike-replay-probe` and the `spike-dest-probe-*` resources were deleted.
+
+### Verification (27 Oct)
+
+Run on the built 0.8.0 branch, in the dedicated project, under deployment names of their own (`e2e080`, `mig07`), so nothing another deployment uses was changed.
+
+**What we ran:**
+
+1. The e2e with signed fills (`BRIDGE_DEPLOYMENT=e2e080 E2E_SOURCE=webhook npm run e2e`), after the replay change.
+2. An upgrade test with real 0.7 data: the published 0.7.0 ran setup and serve under deployment `mig07`, a subscriber subscribed through an `MCP_EVENTS` callback holding its secret, and `create_tunnel_url` made a 0.7 tunnel URL; a fill was delivered by the relay. Then, with 0.7.0 stopped: 0.8.0 `serve` with no terminal, 0.8.0 `setup --migrate`, and a fill with no bridge running.
+3. Hermes Agent v0.22.5 with a local 0.8.0 bridge: `mcp-events-bridge callback-url create --agent hermes --name base --port 8644 --path /` (no secret), Hermes's webhook listener's `public_url` set to it, a subscription to `fills.order.filled` approved in chat, a signed fill, then unsubscribing in chat.
+
+**What we saw:**
+
+- **The e2e passed 9 of 9**, replay included: the fill sent while nothing was subscribed reached the new subscription made with the last cursor, through `bridge-replay-<id>`.
+- **The upgrade:** 0.8.0 found 1 subscription, 1 callback URL, the topic source and `mig07`'s three inbound connections. `serve` with no terminal refused and named `setup` and `--migrate`. `setup --migrate` printed the plain-language notice and migrated them: the subscription kept its id on `bridge-fills` (version 2 metadata), the tunnel URL became a `WEBHOOK` source with the same URL, and nothing was left to migrate. A fill then reached the same subscriber, signed with its secret, with no bridge running.
+- **Hermes:** the challenge was skipped for the pass-through URL, with the warning in the bridge's log; Hermes subscribed at `<base>/webhooks/mcp-events-bridge-<id>`; the bridge started `listen` for port 8644 by itself; the fill arrived (`202`), Hermes verified it with the subscription's secret and ran the agent ("AAPL buy 100"); unsubscribing deleted the subscription.
+
+**What it means for the design:** pass-through callback URLs work for a client with a secret per subscription under one base URL, and the migration keeps subscribers' subscriptions and URLs working without a bridge in the data path.
+
+**Resources:** the `mig07` subscription, callback URL, subscriber callback and notifications connection were deleted by the test (its issue triggers, `bridge-*-mig07`, remain). The Hermes subscription was unsubscribed and its callback URL, `agent-hermes-base`, deleted. `e2e080`'s notifications connection and issue triggers are kept for further e2e runs.

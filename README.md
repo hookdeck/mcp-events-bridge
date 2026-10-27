@@ -2,7 +2,7 @@
 
 Turn webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-events), so AI agents can act the moment something happens: an email arrives, an issue is opened, a workflow fails. [Hookdeck Event Gateway](https://hookdeck.com) receives, verifies and delivers every event.
 
-<img src="docs/images/overview.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway, which receives and verifies them. The MCP Events bridge turns them into MCP Events, and Event Gateway delivers them with retries to agents, such as ChatGPT, Hermes Agent and others, which subscribed to the bridge over MCP. Claude Code polls the bridge over MCP instead." width="100%">
+<img src="docs/images/overview.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway, which receives and verifies them, turns each into an MCP Event, and delivers it with retries to agents, such as ChatGPT, Hermes Agent and others, which subscribed through the MCP Events bridge over MCP. Claude Code polls the bridge over MCP instead." width="100%">
 
 For example, an email arrives at a Resend address, and ChatGPT, subscribed through the bridge, acts on it:
 
@@ -21,15 +21,15 @@ The bridge closes that gap:
 
 It's for developers who want agents ([ChatGPT, Claude Code, Hermes Agent and others](#supported-mcp-clients)) to react to events from the services they already use.
 
-**Status:** 0.7, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions.
+**Status:** 0.8, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions. Upgrading from 0.7: see [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 ## How it works
 
-<img src="docs/images/architecture.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agents like ChatGPT and Hermes Agent (through the Hookdeck CLI) subscribe over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent's callback URL through one connection per subscription. Claude Code polls the bridge over MCP instead." width="100%">
+<img src="docs/images/architecture.svg" alt="Services (Resend, GitHub and others) send webhooks to Hookdeck Event Gateway sources, which verify and keep them. Agents like ChatGPT and Hermes Agent (through the Hookdeck CLI) subscribe to the MCP Events bridge over MCP, and the bridge creates one Event Gateway connection per subscription on the service's source. Each connection turns a webhook into an MCP Event, filters it by the subscription's arguments, and delivers it to the agent's callback URL, signed for that subscriber. Claude Code polls the bridge over MCP instead." width="100%">
 
-- **Event Gateway** verifies each service's webhook signature, keeps every request, and delivers each MCP Event to each subscriber with retries.
-- **The bridge** is the MCP server: it lists the events on offer, handles subscribe (including the spec's endpoint challenge), and turns each webhook into an MCP Event signed for each subscriber.
-- **The Hookdeck CLI** forwards source events to a bridge on your laptop, and MCP Events to [local agents](#local-agents), so neither needs a public URL.
+- **Event Gateway** verifies each service's webhook signature, keeps every request, turns each one into an MCP Event, and delivers it to each subscriber, signed with the subscriber's secret, with retries.
+- **The bridge** is the MCP server: it lists the events on offer, handles subscribe (including the spec's endpoint challenge), and manages one Event Gateway connection per subscription. Events don't pass through it.
+- **The Hookdeck CLI** forwards MCP Events to [local agents](#local-agents), and Event Gateway's notifications to a bridge on your laptop, so neither needs a public URL.
 
 The design, its trade-offs and how it maps to the spec are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -110,7 +110,7 @@ You need:
    npx mcp-events-bridge setup
    ```
 
-   The first run generates an MCP secret: add it to `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run, and updates the webhooks when you add sources or change events or repositories. Removing a source or a repository deletes nothing: delete its webhook (and its Event Gateway connection) yourself.
+   The first run generates an MCP secret: add it to `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run, and updates the webhooks when you add sources or change events or repositories. Removing a source or a repository deletes nothing: delete its webhook (and its Event Gateway source) yourself. Upgrading from 0.7, setup offers to migrate your subscriptions: see [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 5. **Run the bridge:**
 
@@ -118,7 +118,7 @@ You need:
    npx mcp-events-bridge serve
    ```
 
-   Locally, `serve` checks that setup has run and starts `hookdeck listen` for every source, so events reach your laptop through the Hookdeck CLI; it restarts `listen` if it stops, and recovers events that arrived while the bridge was down. Send an email to your Resend address, or open an issue, and the bridge logs it.
+   Locally, `serve` checks that setup has run, and starts `hookdeck listen` for Event Gateway's notifications (which tell the bridge about failing callbacks) and for [local agents](#local-agents); it restarts `listen` if it stops. Events don't pass through the bridge: Event Gateway delivers each one to its subscribers, so none are lost while the bridge is stopped. Once an agent has subscribed, send an email to your Resend address, or open an issue, and its delivery shows under the subscription's connection, `mcp-sub-<id>`, in the Event Gateway dashboard.
 
 6. **Connect an agent:** see [Connect ChatGPT](#connect-chatgpt), [Connect Claude Code](#connect-claude-code), or [Supported MCP clients](#supported-mcp-clients) for the others. ChatGPT has to reach the bridge's MCP endpoint, so [deploy](#deploy-to-flyio) the bridge, or expose your local port with a tunnel such as `cloudflared tunnel --url http://127.0.0.1:8080` and use `https://<tunnel host>/mcp/<BRIDGE_MCP_SECRET>`. Events don't need the tunnel: Event Gateway delivers them to ChatGPT directly.
 
@@ -237,7 +237,7 @@ export default defineConfig({
 
 The server signs each request's raw body with HMAC-SHA256 and the shared secret, hex-encoded in `x-signature`, and POSTs JSON such as `{ "symbol": "AAPL", "side": "buy", "quantity": 100, "price": 187.5, "filled_at": "2026-10-07T14:30:00Z" }`.
 
-- **`verification`** (required for `webhook`): Event Gateway verifies every request and rejects the rest before they reach the bridge. One of:
+- **`verification`** (required for `webhook`): Event Gateway verifies every request and rejects the rest, so they reach no subscriber. One of:
   - `{ type: 'hmac', algorithm, encoding, header, secret }`: an HMAC of the raw body in a header. `algorithm` is `sha1`, `sha256` or `sha512`; `encoding` is `hex`, `base64` or `base64url`. A `sha256=` prefix on the value is accepted. The key is the secret string as written (UTF-8), not decoded from hex or base64.
   - `{ type: 'standard-webhooks', secret }`: [Standard Webhooks](https://www.standardwebhooks.com) signatures, usually with a `whsec_...` secret.
   - `{ type: 'basic-auth', username, password }` or `{ type: 'api-key', header, key }`: a shared credential sent with every request. Prefer a signature: Event Gateway keeps request headers, so these credentials are stored with each request, and anyone who sees one can replay it.
@@ -246,10 +246,10 @@ The server signs each request's raw body with HMAC-SHA256 and the shared secret,
 These options work for every `source()`, whatever its type:
 
 - **`events`:** the sender's event names (offered as `{id}.{name}`, e.g. `fills.order.filled`), as a list or with a description each. Keep a description under about 400 characters: ChatGPT has been reported to leave out events with longer ones, and `setup` and `serve` warn about them. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
-- **`eventId`:** the sender's id for an event, from `{ header }` or `{ field }`. It becomes the MCP event's `eventId` (and its `webhook-id`), and Event Gateway drops repeats within an hour. Default: Event Gateway's request id, which stays the same when Event Gateway retries but not when the sender does, so set it if your sender retries.
-- **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when the request was received (by the bridge for a delivery; by Event Gateway for `get_event` and `list_events`).
-- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is ignored, and stays in Event Gateway), and the event at most 256 KiB. An integer beyond 2^53 (an int64 id) arrives at a callback URL as a string of its digits, since a JavaScript number would round it; events read back from Event Gateway (poll mode and `watch`, `get_event`, `list_events`, and callbacks caught up after downtime) carry it rounded for now.
-- **`filters`:** top-level body fields subscribers can filter on, by exact match.
+- **`eventId`:** the sender's id for an event, from `{ header }` or `{ field }`. It becomes the MCP event's `eventId` (and its `webhook-id`), and Event Gateway drops repeats within an hour. Default: a hash of the JSON body (the first 32 hex characters of its SHA-256), so a sender's retry with the same body is dropped as a repeat, and two different events with identical bodies count as one. Set it if your sender has an id.
+- **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when Event Gateway received the request (for a live delivery, when Event Gateway built the event from it, moments later).
+- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is skipped, and stays in Event Gateway), and the event at most 256 KiB. An integer beyond 2^53 (an int64 id) is rounded for now, since Event Gateway parses bodies as JavaScript numbers.
+- **`filters`:** top-level body fields subscribers can filter on, by exact match of value and type: `{ "quantity": 100 }` matches the number 100, not the string `"100"`.
 
 ### Adding a source from the command line
 
@@ -265,17 +265,17 @@ Credentials are `env()` references. A service usually gives you its secret only 
    It creates the Event Gateway source (`bridge-fills`, `bridge-stripe`) and prints its URL, adds the credential variables to `.env` (`FILLS_WEBHOOK_SECRET=`, `STRIPE_WEBHOOK_SECRET=`: empty, and only if `.env` doesn't have them), and prints the `source({...})` entry to paste into `sources`. `--write-config` adds the entry to `bridge.config.ts` itself (creating the file if there isn't one), or prints it if the file isn't a shape it can edit safely (for example sources built conditionally). For `--type webhook`, `--verification` chooses `hmac` (the default; `--algorithm`, `--encoding` and `--header` set the rest), `standard-webhooks`, `basic-auth` or `api-key`; `sources add --help` lists every option. Re-running it reuses the source and adds nothing twice.
 2. **Register the URL with the sender,** and copy the secret it gives you (or, for your own server, generate one with `openssl rand -hex 32` and give it to the server).
 3. **Put the secret in `.env`:** `FILLS_WEBHOOK_SECRET=...`.
-4. **Run `npx mcp-events-bridge setup`.** It sets the secret on the source and connects the source to the bridge. A new or changed secret can take up to about a minute to take effect at Event Gateway; the bridge ignores any request Event Gateway didn't verify in the meantime.
+4. **Run `npx mcp-events-bridge setup`.** It sets the secret on the source. A new or changed secret can take up to about a minute to take effect at Event Gateway, which rejects requests signed with it until then.
 
-Until the secret is set, delivery is held: `setup` creates no connection from the source to the bridge, so requests that arrive are kept in Event Gateway but never delivered. `setup` still sets up everything else, then exits with an error naming the variable (so a deploy script or CI notices), and `serve` refuses to start.
+Until the secret is set, the source verifies nothing, so `serve` refuses to start and no agent can subscribe to its events. Requests that arrive meanwhile are kept in Event Gateway. `setup` still sets up everything else, then exits with an error naming the variable (so a deploy script or CI notices).
 
 ### Your own source definition
 
-When the options above aren't enough (a payload that needs summarizing, filters on nested fields, registering the webhook through the service's API), write a `defineSource({...})` definition: the Event Gateway source type (or a `WEBHOOK` source with the verification config in `sourceConfig`), how to recognize and summarize each event, the subscribe filters, and optionally how to register the webhook. See ["Adding a source"](docs/ARCHITECTURE.md#adding-a-source) and the built-in [Resend](src/core/sources/resend.ts) and [GitHub](src/core/sources/github.ts) sources, and [`source()`](src/core/sources/source.ts).
+When the options above aren't enough (a payload that needs summarizing, filters on nested fields, registering the webhook through the service's API), write a `defineSource({...})` definition: the Event Gateway source type (or a `WEBHOOK` source with the verification config in `sourceConfig`), a `runtime` that recognizes and summarizes each event, each event's subscribe filter, and optionally how to register the webhook. The runtime runs inside Event Gateway's transformation as well as in the bridge, so it must be self-contained: no imports, no API calls. See ["Adding a source"](docs/ARCHITECTURE.md#adding-a-source) and the built-in [Resend](src/core/sources/resend.ts) and [GitHub](src/core/sources/github.ts) sources, and [`source()`](src/core/sources/source.ts).
 
-### Renamed in 0.6.0
+### Removed in 0.8.0
 
-Sources were called providers before 0.6.0. The old names still work in 0.6.0, with a warning, and will be removed in a later release: `providers` in the config (now `sources`), `webhook()` (now `source({ type: 'webhook', ... })`), `defineProvider` (now `defineSource`), `@hookdeck/mcp-events-bridge/providers` (now `/sources`), `providers add webhook` (now `sources add`), and the `list_providers` tool (now `list_sources`).
+Sources were called providers before 0.6.0, and the old names were deprecated aliases until 0.8.0, which removes them: `providers` in the config (now `sources`), `webhook()` (now `source({ type: 'webhook', ... })`), `defineProvider` (now `defineSource`), `@hookdeck/mcp-events-bridge/providers` (now `/sources`), `providers add webhook` (now `sources add`), and the `list_providers` tool (now `list_sources`). `providers` in the config and `providers add` fail with a message naming the replacement; the removed exports no longer import. See [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 ## Deploy to Fly.io
 
@@ -303,19 +303,29 @@ BRIDGE_DEPLOYMENT=fly BRIDGE_INBOUND=http BRIDGE_PUBLIC_URL=https://<app>.fly.de
 fly deploy
 ```
 
-On Fly.io, the bridge receives events over HTTP at its public URL instead of through the Hookdeck CLI, using the `fly` resources that `setup` created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret; in GitHub's manual mode, set `GITHUB_WEBHOOK_SECRET` as a Fly secret too, and likewise each `source()`'s credentials. The Dockerfile copies only `bridge.config.ts`: copy any other files your config imports, such as your own source definitions.
+On Fly.io, the bridge receives Event Gateway's notifications over HTTP at its public URL instead of through the Hookdeck CLI, using the `fly` resources that `setup` created. Only `setup` needs `GITHUB_TOKEN`, so it doesn't have to be a Fly secret; in GitHub's manual mode, set `GITHUB_WEBHOOK_SECRET` as a Fly secret too, and likewise each `source()`'s credentials. The Dockerfile copies only `bridge.config.ts`: copy any other files your config imports, such as your own source definitions.
+
+When an upgrade needs a migration (from 0.7 to 0.8, for example), `serve` doesn't start without a terminal to ask in. Run `setup` with the deployment's settings (as above) before `fly deploy`, or end the Dockerfile with `CMD ["npx", "mcp-events-bridge", "serve", "--migrate"]` to migrate without asking (see [`docs/UPGRADING.md`](docs/UPGRADING.md)).
 
 Use a separate Hookdeck project for each environment you want isolated: deployments in one project share the sources and the subscriptions. An optional namespace for sharing a project is proposed in [#13](https://github.com/hookdeck/mcp-events-bridge/issues/13).
 
 ## What setup creates
 
-In the Event Gateway dashboard, a running bridge looks like this:
+In the Event Gateway dashboard:
 
-![Event Gateway connections, grouped by source: bridge-out-email_received to one mcp-sub connection with filter, dedupe and retry rules; bridge-hookdeck-notifications to bridge-notifications-fly and bridge-notifications-dev; bridge-resend to bridge-resend-fly and bridge-resend-dev](docs/images/event-gateway-connections.png)
+```text
+bridge-resend                    source: Resend's webhooks, verified with Resend's signatures
+  mcp-sub-sub_3f9a...            one connection per subscription, created when an agent subscribes:
+                                 transformation bridge-resend-envelope, filter, dedupe, retry,
+                                 to the agent's callback URL, signed with its secret
+bridge-hookdeck-notifications    source: Event Gateway's issue notifications
+  bridge-notifications-local     to the bridge (one connection per deployment)
+```
 
-- **`bridge-<source id>`** (here `bridge-resend`) is the source's Event Gateway source. It feeds one inbound connection per deployment: `bridge-resend-local` (CLI, to a bridge on your machine) and `bridge-resend-fly` (HTTP, to the bridge on Fly.io; the screenshot predates the `local` name).
-- **`bridge-out-<event>`** (the MCP event name, slugged: `bridge-out-resend_email_received`; the screenshot predates `{id}.{event}` naming) is the topic source the bridge publishes each MCP event to. Each subscription is one connection from it, `mcp-sub-<id>`, with filter, dedupe and retry rules, to a destination at the subscriber's callback.
+- **`bridge-<source id>`** (here `bridge-resend`) is the source's Event Gateway source, the URL its webhooks are registered with. Setup also writes its transformation, `bridge-<source id>-envelope`, which turns each request into an MCP Event; every subscription to the source's events uses it.
+- **`mcp-sub-<id>`** is one subscription: a connection on the source with the transformation, a filter for the event name and the subscription's arguments, dedupe on `webhook-id` and retries, and a destination at the subscriber's callback URL that signs every attempt with the subscriber's secret. The bridge creates it when an agent subscribes, and deletes it when the subscription ends.
 - **`bridge-hookdeck-notifications`** receives Event Gateway's issue notifications and forwards them to each deployment, so the bridge hears about failing callbacks and reports them to subscribers.
+- **`bridge-replay`** (created by the first replay) is a Publish API source: while a subscription made with a cursor catches up, a connection from it, `bridge-replay-<subscription id>`, carries the replayed events to the subscription's destination, and the bridge deletes it when they're delivered.
 
 Locally (CLI inbound), `setup` also logs the Hookdeck CLI in to the bridge's project in `.hookdeck/config.toml` (gitignore it: it holds a key), so `hookdeck` commands run in the bridge's directory use that project rather than your global login.
 
@@ -327,14 +337,14 @@ Every deployment needs these, whichever sources it uses.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `HOOKDECK_API_KEY` | Yes | Project API key, for the Event Gateway API and the Publish API |
-| `HOOKDECK_SIGNING_SECRET` | Yes | Verifies Event Gateway's signature on requests to the bridge |
+| `HOOKDECK_API_KEY` | Yes | Project API key, for the Event Gateway API and the Publish API (which replay uses) |
+| `HOOKDECK_SIGNING_SECRET` | Yes | Verifies Event Gateway's signature on the notifications it sends the bridge |
 | `BRIDGE_MCP_SECRET` | To run `serve` | The MCP endpoint's secret: sent as `Authorization: Bearer <secret>` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can't send a header, such as ChatGPT. `setup` generates one |
 | `BRIDGE_MCP_SECRET_URL` | No | `false` turns the URL form (`/mcp/<secret>`) off, leaving the header; for a bridge no ChatGPT connects to. Default `true` |
-| `BRIDGE_INBOUND` | No | `cli` (through `hookdeck listen`) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
+| `BRIDGE_INBOUND` | No | How Event Gateway's notifications reach the bridge: `cli` (through `hookdeck listen`; also what offers callback URLs to local agents) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
 | `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
 | `BRIDGE_PORT` | No | Listener port (default: `PORT`, else 8080) |
-| `BRIDGE_DEPLOYMENT` | No | Names this bridge's Event Gateway resources: its inbound connections become `bridge-<source id>-<deployment>`. It doesn't keep bridges in one Hookdeck project apart: they share the sources, subscriptions and tunnel URLs, so give each bridge its own project ([#13](https://github.com/hookdeck/mcp-events-bridge/issues/13)). Default: `local` with `cli` inbound, `public` with `http` inbound (`deployment` in `bridge.config.ts` takes precedence) |
+| `BRIDGE_DEPLOYMENT` | No | Names this bridge's Event Gateway resources: its notifications connection becomes `bridge-notifications-<deployment>`. It doesn't keep bridges in one Hookdeck project apart: they share the sources, subscriptions and callback URLs, so give each bridge its own project ([#13](https://github.com/hookdeck/mcp-events-bridge/issues/13)). Default: `local` with `cli` inbound, `public` with `http` inbound (`deployment` in `bridge.config.ts` takes precedence) |
 | `BRIDGE_HOOKDECK_CLI_CONFIG` | No | Where `setup` and `serve` log the Hookdeck CLI in to the bridge's project, for `hookdeck listen` and any `hookdeck` command run in that directory (default `.hookdeck/config.toml`); the inbound recovery watermark is kept next to it |
 
 `defineConfig` also takes `inbound`, `publicUrl`, `port` and `hookdeck` directly, and `subscriptions` for subscription lifetimes. Run `npx mcp-events-bridge` for the commands and flags.
@@ -374,8 +384,8 @@ Each `source()`'s credentials, named as its `env()` references name them. `sourc
 - `events/list`, `events/subscribe`, `events/unsubscribe`, with webhook delivery, and `events/poll`, for poll delivery. Event names are `{id}.{event}` (see [Sources](#sources)).
 - `poll_events(name, arguments?, cursor?, maxAgeMs?, maxEvents?)` and `wait_for_event(name, arguments?, cursor?, timeoutMs?)`: the same polling as tools, for MCP clients without MCP Events support (see [Polling](#polling)).
 - `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (`events/list` is the catalog of events you can subscribe to). `get_event` takes the event's name as well as its id, since an id is the service's own and two sources can share one.
-- `list_sources()`: configured sources, their types and events, and their subscriptions (`list_providers()`, the old name, still answers in 0.6.0).
-- `create_tunnel_url` and `list_tunnel_urls`: public URLs for agents on the same machine as a local bridge (see below). Not offered by a deployed bridge.
+- `list_sources()`: configured sources, their types and events, and their subscriptions.
+- `create_callback_url(agent, name, port?, path?, secret?)` and `list_callback_urls(agent)`: public callback URLs for agents on the same machine as a local bridge (see [Local agents](#local-agents)). Not offered by a deployed bridge.
 
 ## Polling
 
@@ -419,26 +429,34 @@ In Claude Code, install the plugin, which runs `watch` for the whole session and
 
 ## Local agents
 
-An agent on a laptop has no public URL to receive webhooks on. Run the bridge on the same machine, in its own Hookdeck project, and it gives the agent one per subscription, through Event Gateway and the Hookdeck CLI:
+An agent on a laptop has no public URL to receive webhooks on. Run the bridge on the same machine, in its own Hookdeck project, and it gives the agent public callback URLs, through Event Gateway and the Hookdeck CLI:
 
-1. **Create a tunnel URL** with the `create_tunnel_url` tool: your `agent` name, a `name` for the subscription, and your local `port` (default 3000) and `path` (default `/events`). Your first URL sets the port and path, and the rest share them.
-2. **Subscribe** with `events/subscribe`, using the URL and a `whsec_` secret your agent generates. Event Gateway answers the challenge. Deliveries arrive at `http://localhost:<port><path>`, signed with your secret; route them by `X-MCP-Subscription-Id`.
+1. **Create a callback URL** with the `create_callback_url` tool, or `npx mcp-events-bridge callback-url create` from the bridge's directory: your `agent` name, a `name` for the URL, your local `port` (default 3000) and `path` (default `/events`), and the `secret` you'll subscribe with. Your first URL sets the port and path, and the rest share them.
+2. **Subscribe** with `events/subscribe`, using the URL and that secret. Event Gateway answers the challenge. Deliveries arrive at `http://localhost:<port><path>`, signed with your secret; route them by `X-MCP-Subscription-Id`.
 
-That's all the agent does. The bridge runs `hookdeck listen` for your port, and restarts it to cover each new URL. Deliveries missed while `listen` was down (the laptop slept, or during a restart) wait in Event Gateway, and the bridge sends them again when it reconnects, with the same `webhook-id` and a fresh signature, so standard verification (including its 5-minute window) passes. Delivery is at least once: dedupe by `webhook-id`. Source events that reach Event Gateway while the bridge itself is stopped are recovered the same way when it starts again.
+That's all the agent does. The bridge runs `hookdeck listen` for your port, and restarts it to cover each new URL. Deliveries missed while `listen` was down (the laptop slept, or during a restart) wait in Event Gateway, and the bridge retries them when it reconnects: Event Gateway signs each retry afresh, so standard verification (including its 5-minute window) passes. Delivery is at least once: dedupe by `webhook-id`.
 
-If your agent builds every callback URL from one base URL plus a path, create one tunnel URL with path `/` and use it as the base: the URL covers the paths under it. A tunnel URL only accepts deliveries signed by the bridge, and one that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it.
+A callback URL with a secret accepts only deliveries signed with that secret, so it holds one secret: to rotate, create a new URL and subscribe with it. The command line reads the secret from an environment variable, so it stays out of your shell history:
+
+```sh
+npx mcp-events-bridge callback-url create --agent laptop --name email --port 4000 --secret-env MY_AGENT_SECRET
+```
+
+**Pass-through callback URLs.** If your agent uses a different secret for each subscription under one base URL plus a path (Hermes Agent, and the AI SDK, Mastra and TanStack AI libraries do), create one callback URL with no secret and path `/`, and use it as the base: the URL covers the paths under it. Event Gateway can hold only one secret on a source, so a URL without one is pass-through: Event Gateway neither answers the challenge nor verifies deliveries, the bridge skips the challenge for it (it created the URL for this agent) and logs a warning, and your receiver must verify every delivery's signature, as the spec asks receivers to.
+
+A URL that no subscription has used for an hour is deleted. An agent name is a label, not an identity: any client of the bridge's owner can use it.
 
 What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in [`skills/mcp-events-bridge/references/receiving-deliveries.md`](skills/mcp-events-bridge/references/receiving-deliveries.md). `npm run e2e` tests this path with a mock agent; see [`docs/PLAN.md`](docs/PLAN.md).
 
 ### Hermes Agent (experimental)
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.5 and later work with a local bridge through a tunnel URL: Hermes subscribes, with your approval, and each event starts an agent run. MCP Events is experimental in Hermes too, and Hermes supports webhook delivery only.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.5 and later work with a local bridge through a pass-through callback URL: Hermes subscribes, with your approval, and each event starts an agent run. MCP Events is experimental in Hermes too, and Hermes supports webhook delivery only.
 
-[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) covers installing Hermes with what it needs, the tunnel URL, Hermes's configuration, subscribing and checking a delivery. The bridge is an MCP server in Hermes's `config.yaml` with `events: true`, and its secret goes in an `Authorization: Bearer` header that reads it from Hermes's `.env`, so the secret stays out of the model's context and Hermes's other files.
+[`skills/mcp-events-bridge/references/hermes-agent.md`](skills/mcp-events-bridge/references/hermes-agent.md) covers installing Hermes with what it needs, the callback URL, Hermes's configuration, subscribing and checking a delivery. The bridge is an MCP server in Hermes's `config.yaml` with `events: true`, and its secret goes in an `Authorization: Bearer` header that reads it from Hermes's `.env`, so the secret stays out of the model's context and Hermes's other files.
 
 ### MCP client libraries: Vercel AI SDK, Mastra, TanStack AI
 
-Three TypeScript MCP client libraries have experimental MCP Events support, and each works with the bridge (tested 26 Oct 2026, with a deployed bridge's `/mcp` endpoint or a local one through a tunnel URL):
+Three TypeScript MCP client libraries have experimental MCP Events support, and each works with the bridge (tested 26 Oct 2026, before 0.8, with a deployed bridge's `/mcp` endpoint or a local one through a callback URL from the bridge):
 
 | Library | Tested | Delivery |
 | --- | --- | --- |
@@ -446,16 +464,18 @@ Three TypeScript MCP client libraries have experimental MCP Events support, and 
 | Mastra (`@mastra/mcp`) | 2.5.0 | Poll or webhook |
 | TanStack AI (`@tanstack/ai-mcp`) | 1.0.0 | Webhook |
 
-[`skills/mcp-events-bridge/references/library-clients.md`](skills/mcp-events-bridge/references/library-clients.md) has the code for each: the bearer header, the callback URL (your own route, or a path under a tunnel URL with a local bridge), and the receiver.
+[`skills/mcp-events-bridge/references/library-clients.md`](skills/mcp-events-bridge/references/library-clients.md) has the code for each: the bearer header, the callback URL (your own route, or a path under a pass-through callback URL from a local bridge), and the receiver.
 
 ## Security and limitations
 
 - **The MCP secret is a credential.** `BRIDGE_MCP_SECRET` authenticates one owner, sent as `Authorization: Bearer` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can only take a URL, such as ChatGPT. Prefer the header where the client supports it: a URL is easily logged or saved in a client's files, a header much less so. A bridge no ChatGPT connects to can turn the URL form off (`BRIDGE_MCP_SECRET_URL=false`). The secret is redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned, for ChatGPT without a secret in the URL.
 - **The Claude Code plugin keeps a copy of the endpoint and secret on disk.** Claude Code keeps them in secure storage, but plugin monitors can't read that, so a session-start hook writes them to `~/.claude/plugins/data/mcp-events-bridge-hookdeck/` (`mcp-url` and `mcp-secret`), readable only by you. Uninstalling the plugin deletes that directory.
-- **Inbound requests must be signed.** The bridge accepts only requests signed by Event Gateway, which verifies each service's own signature first. Sources have no unverified option, and the bridge relays only requests Event Gateway marked as verified.
+- **Every event is verified.** Event Gateway verifies each service's own signature, and sources have no unverified option. The bridge's own inbound route, for Event Gateway's notifications, accepts only requests Event Gateway signed.
+- **Each delivery is signed for its subscriber.** Event Gateway signs every attempt, retries included, with the subscriber's secret, which lives only in the subscription's Event Gateway destination. A refresh with a new secret replaces it at once: there's no window in which both are signed with (Event Gateway destinations take one key).
+- **A pass-through callback URL verifies nothing.** Anyone who learns one can post to the agent's port through it, so the agent must check every delivery's signature (standard libraries do). A callback URL with a secret accepts only deliveries signed with it.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook and poll delivery.** Push (`events/stream`) may come later if clients need it. Local agents receive webhooks through the Hookdeck CLI (above). Poll mode misses a request that takes more than 60 seconds to appear in Event Gateway's request listing (it took up to 15 when measured).
-- **Retries reuse the first signature.** The spec asks for a fresh signature on each attempt. Retries are kept inside the 5-minute window receivers check, until Event Gateway signs deliveries itself.
+- **Integers beyond 2^53 are rounded,** since Event Gateway parses bodies as JavaScript numbers, until it keeps them exact.
 
 ## Troubleshooting
 
@@ -463,11 +483,16 @@ Three TypeScript MCP client libraries have experimental MCP Events support, and 
 |---|---|---|
 | `setup` exits 1: "Setup isn't complete", then `<id>: set <VAR>` | A generic webhook's secret isn't set; everything else was set up | Register the printed URL with the sender, put the secret in `.env`, run `setup` again |
 | `serve`: "Event Gateway isn't set up for deployment ..." | `setup` hasn't run with this deployment name and inbound mode | Run `setup` with the same `BRIDGE_DEPLOYMENT` and `BRIDGE_INBOUND` |
+| `serve` exits: "The bridge's data model in Event Gateway changed in 0.8 ... must be migrated before serve starts" | The project has subscriptions or callback URLs from 0.7, and there's no terminal to ask in | Run `setup` (it asks), or start `serve --migrate`; see [`docs/UPGRADING.md`](docs/UPGRADING.md) |
+| `serve` logs `<n> from 0.7 or earlier, not served until migrated` | The same, in a bridge started without the check (for example from code) | Run `setup` and migrate |
+| ``Config: `providers` in the config is now `sources` ...`` (or another name "removed in 0.8.0") | A name deprecated in 0.6.0 | Rename it as the message says |
 | `serve` logs `subscription ... is for "...", which this bridge doesn't offer` | The source was removed, its `id` renamed, or the subscription is from 0.1.0 (before `{id}.{event}` names); or it belongs to another bridge in the same Hookdeck project | The agent subscribes again, to a name from `events/list`; ignore another bridge's |
 | `events/subscribe` fails with "Unknown event" | An old or wrong name | Use a name from `events/list` |
 | A sender gets 401 | Wrong signature, header, encoding or secret | Match the source's `verification` or secret; a new secret can take about a minute to apply |
-| `serve` logs `0/0 published` | No subscription matches the event's name or filters | Check the subscription's name and arguments with `list_sources` |
-| An event takes a minute or two | `hookdeck listen` occasionally takes ~30s to connect, and Event Gateway occasionally queues a CLI delivery | Wait: the bridge re-sends missed deliveries itself |
+| An agent doesn't get an event | The subscription's filter didn't match, the event type isn't enabled, or the callback is failing | In the Event Gateway dashboard, the subscription's connection, `mcp-sub-<id>`, shows each request: `FILTERED` for a filter or an event type it doesn't offer, or the failed attempts. `list_sources` shows each source's events and subscriptions |
+| `serve` logs `warning: <name> is a pass-through callback URL` | A subscription uses a callback URL created without a secret | Expected for Hermes Agent and the client libraries; the receiver must verify every delivery |
+| Subscribing with a callback URL from the bridge fails with `CallbackEndpointError` | The URL was created with a different secret from the one subscribing | Create a callback URL with the secret you subscribe with (one URL holds one secret) |
+| An event takes a minute or two | `hookdeck listen` occasionally takes ~30s to connect, and Event Gateway occasionally queues a CLI delivery | Wait: the bridge retries missed deliveries itself |
 | The same event twice | Two bridges in one Hookdeck project, or a retry | One Hookdeck project per bridge; receivers dedupe by `webhook-id` |
 | `setup` or `serve` warns `<event>'s description is ... characters` | A description in `source()` or `defineSource` over 400 characters; ChatGPT has been reported to leave such events out | Shorten it, then refresh the plugin in ChatGPT |
 | Claude Code (plugin) reports `{"problem": "can't reach the bridge, still retrying: no MCP URL yet ..."}` | The plugin's MCP endpoint isn't set, or was set during this session | Set it, and the secret, with `/plugin configure mcp-events-bridge@hookdeck` in Claude Code (or pipe them to `claude plugin configure mcp-events-bridge@hookdeck --values-stdin`), then start a new session |
@@ -486,7 +511,7 @@ npm run build             # compiles to dist/, as published
 npm run bridge -- setup   # the CLI from source; this repo's bridge.config.ts imports from ./src
 ```
 
-`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_SOURCE=webhook` drives the same checks with signed fills to a webhook source instead of emails, so it sends no email and uses no Resend quota (needs `FILLS_WEBHOOK_SECRET`, as below). `E2E_GITHUB=1` adds a real GitHub push; `E2E_LOCAL=1` adds a mock local agent receiving through tunnel URLs, with the bridge running `hookdeck listen` and catching up by itself, and the bridge recovering its own missed inbound; `E2E_WEBHOOK=1` adds a webhook source, with the script as a trading server sending signed and wrongly signed fills (needs `FILLS_WEBHOOK_SECRET`, which enables the `fills` instance in this repo's `bridge.config.ts`, and `setup` run with it); `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
+`npm run e2e` checks the whole path against real services. It starts a bridge and `hookdeck listen`, subscribes test subscribers whose callbacks are Event Gateway MCP Events sources (they answer the spec's challenge; `hookdeck listen` forwards deliveries), sends real email through Resend, and checks delivery, filters, `get_event` and unsubscribe. `E2E_SOURCE=webhook` drives the same checks with signed fills to a webhook source instead of emails, so it sends no email and uses no Resend quota (needs `FILLS_WEBHOOK_SECRET`, as below). `E2E_GITHUB=1` adds a real GitHub push; `E2E_LOCAL=1` adds a mock local agent receiving through callback URLs from the bridge, with the bridge running `hookdeck listen` and retrying what the agent missed; `E2E_WEBHOOK=1` adds a webhook source, with the script as a trading server sending signed and wrongly signed fills (needs `FILLS_WEBHOOK_SECRET`, which enables the `fills` instance in this repo's `bridge.config.ts`, and `setup` run with it); `E2E_EXTENDED=1` adds retries, duplicates, a `410` and failing callbacks (about 10 minutes; the status-code subscribers use a cloudflared tunnel, since an MCP Events source acknowledges deliveries itself); `E2E_BRIDGE_URL=https://...` runs against a deployed bridge.
 
 Issues and pull requests are welcome. [`AGENTS.md`](AGENTS.md) has the project's conventions, for people and coding agents alike.
 

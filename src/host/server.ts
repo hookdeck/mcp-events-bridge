@@ -60,7 +60,7 @@ export interface BridgeServerOptions {
   pollOverrides?: Partial<Pick<PollServiceDeps, 'lookbackMs' | 'now' | 'retentionMs'>>;
   callbackSettings?: Partial<CallbackSettings>;
   /**
-   * Offer the tunnel URL tools for local agents. Only a bridge on the agent's machine can run `hookdeck listen`
+   * Offer the callback URL tools for local agents. Only a bridge on the agent's machine can run `hookdeck listen`
    * for them (see host/local-runtime.ts). Default: on with CLI inbound, off with HTTP inbound.
    */
   localAgents?: boolean;

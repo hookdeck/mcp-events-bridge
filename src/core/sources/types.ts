@@ -104,8 +104,8 @@ export interface SourceDefinition<Options = Record<string, unknown>, Config = an
   sourceConfig?(options: Options): Record<string, unknown>;
   /**
    * Credentials that aren't set yet, named as the user sets them (for example an environment variable). While any
-   * are missing, setup creates the source (so its URL can be registered with the sender) and subscribing to its
-   * events is refused: without them, Event Gateway would accept unverified requests.
+   * are missing, setup creates the source (so its URL can be registered with the sender) and `serve` refuses to start:
+   * without them, Event Gateway would accept unverified requests.
    */
   missingCredentials?(options: Options): string[];
   /** What the user still has to do after setup (for example add webhooks by hand), printed by `setup`. */
