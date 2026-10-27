@@ -137,8 +137,8 @@ describe('bridge server', () => {
       );
       try {
         expect(client.getServerVersion()).toMatchObject({ name: 'mcp-events-bridge' });
-        const result = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
-        expect(result.structuredContent?.providers).toHaveLength(1);
+        const result = (await client.callTool({ name: 'list_sources', arguments: {} })) as { structuredContent?: { sources: unknown[] } };
+        expect(result.structuredContent?.sources).toHaveLength(1);
       } finally {
         await client.close();
       }
@@ -169,7 +169,7 @@ describe('bridge server', () => {
     expect(typeof subscriber.events[0]!.cursor).toBe('string');
   });
 
-  it('lists providers with their MCP event names and how many subscriptions each has', async () => {
+  it('lists sources with their MCP event names and how many subscriptions each has', async () => {
     const { port } = await startBridge();
     await startSubscriber(port);
     const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
@@ -179,9 +179,8 @@ describe('bridge server', () => {
       const expected = [{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }];
       const result = (await client.callTool({ name: 'list_sources', arguments: {} })) as { structuredContent?: { sources: unknown[] } };
       expect(result.structuredContent?.sources).toEqual(expected);
-      // The old name still answers, in the old shape.
-      const old = (await client.callTool({ name: 'list_providers', arguments: {} })) as { structuredContent?: { providers: unknown[] } };
-      expect(old.structuredContent?.providers).toEqual(expected);
+      // The old name, removed in 0.8.0.
+      expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('list_providers');
     } finally {
       await client.close();
     }

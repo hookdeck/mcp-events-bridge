@@ -85,8 +85,8 @@ class FakeListing {
   };
 }
 
-function setup(options: { providers?: string[]; clockSkewMs?: number } = {}) {
-  const config = resolveConfig(defineConfig({ providers: (options.providers ?? ['fills']).map(fills) }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+function setup(options: { sources?: string[]; clockSkewMs?: number } = {}) {
+  const config = resolveConfig(defineConfig({ sources: (options.sources ?? ['fills']).map(fills) }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
   const catalog = new Catalog(config.sources);
   const listing = new FakeListing();
   const sources = { listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }) } as unknown as HookdeckClient;
@@ -265,7 +265,7 @@ describe('poll mode: cursor', () => {
 
 describe('poll mode: shared listing and back-off', () => {
   it('answers concurrent polls with one listing, and lists only sources polled recently', async () => {
-    const { listing, service } = setup({ providers: ['fills', 'orders'] });
+    const { listing, service } = setup({ sources: ['fills', 'orders'] });
     await Promise.all(Array.from({ length: 5 }, () => service.poll({ name: NAME })));
     expect(listing.calls).toHaveLength(1);
     expect(listing.calls[0]!.sources).toEqual(['src_bridge-fills']);

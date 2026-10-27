@@ -4,7 +4,7 @@ import { matchesFilter } from '../../../src/core/filter.js';
 import { assertCredentials, ConfigError, defineConfig, env, resolveConfig } from '../../../src/core/config.js';
 import { readPath, type SourceOptions, type WebhookSourceOptions } from '../../../src/core/sources/source.js';
 import type { InboundRequest, SourceDefinition } from '../../../src/core/sources/types.js';
-import { source, webhook } from '../../../src/sources.js';
+import { source } from '../../../src/sources.js';
 
 type WebhookOptions = WebhookSourceOptions;
 
@@ -231,18 +231,9 @@ describe('typed sources: an Event Gateway source type verifies the service\'s si
   });
 });
 
-describe('webhook(), the old name', () => {
-  it('still works, with a warning that resolveConfig collects', () => {
-    const { type: _, ...old } = fills;
-    const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [webhook({ ...old, id: 'fills' })] }), { ...base, FILLS_WEBHOOK_SECRET: SECRET });
-    expect(config.sources[0]).toMatchObject({ id: 'fills', definition: { type: 'webhook', sourceType: 'WEBHOOK' } });
-    expect(config.warnings).toEqual([expect.stringContaining("source({ type: 'webhook', id: 'fills', ... })")]);
-  });
-
-  it('and `providers` in the config still works, with a warning', () => {
-    const config = resolveConfig(defineConfig({ deployment: 'dev', providers: [source(fills)] }), { ...base, FILLS_WEBHOOK_SECRET: SECRET });
-    expect(config.sources.map((s) => s.id)).toEqual(['fills']);
-    expect(config.warnings).toEqual([expect.stringContaining('`providers` in the config is now `sources`')]);
-    expect(() => resolveConfig(defineConfig({ deployment: 'dev', sources: [], providers: [] }), base)).toThrow(/sources/);
+describe('the names removed in 0.8.0', () => {
+  it('refuses `providers` in the config, saying it is now `sources`', () => {
+    const old = { deployment: 'dev', providers: [source(fills)] } as unknown as Parameters<typeof defineConfig>[0];
+    expect(() => resolveConfig(defineConfig(old), { ...base, FILLS_WEBHOOK_SECRET: SECRET })).toThrow(/`providers` in the config is now `sources`/);
   });
 });

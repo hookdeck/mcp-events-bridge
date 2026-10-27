@@ -37,10 +37,6 @@
       "types": "./dist/sources.d.ts",
       "default": "./dist/sources.js"
     },
-    "./providers": {
-      "types": "./dist/providers.d.ts",
-      "default": "./dist/providers.js"
-    },
     "./package.json": "./package.json"
   },
   "bin": {

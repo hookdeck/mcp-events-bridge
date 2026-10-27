@@ -83,8 +83,6 @@ export type TypedSourceOptions = { [T in SourceTypeName]: SourceCommonOptions & 
 
 export type SourceOptions = WebhookSourceOptions | TypedSourceOptions;
 
-/** @deprecated `webhook(options)` is `source({ type: 'webhook', ...options })`. */
-export type WebhookOptions = Omit<WebhookSourceOptions, 'type' | 'id'> & { id: string };
 /** @deprecated Renamed to `SourceEventOptions`. */
 export type WebhookEventOptions = SourceEventOptions;
 
@@ -460,8 +458,3 @@ export function source(options: SourceOptions): SourceInstance {
   return defineSource(buildDefinition(type, o, verification, envNames))({ id: o.id, events: names, credentials } as never);
 }
 
-/** @deprecated Use `source({ type: 'webhook', ... })`; `webhook()` still works in 0.6.0, with a warning. */
-export function webhook(options: WebhookOptions): SourceInstance {
-  const instance = source({ ...options, type: 'webhook' });
-  return { ...instance, warnings: [`\`webhook({ id: '${instance.id}', ... })\` is now \`source({ type: 'webhook', id: '${instance.id}', ... })\`: rename it (it still works for now)`] };
-}

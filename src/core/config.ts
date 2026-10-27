@@ -83,8 +83,6 @@ export interface BridgeConfig {
   hookdeck?: { apiKey?: MaybeEnv<string>; signingSecret?: MaybeEnv<string> };
   /** Where events come from: `resend()`, `github()`, `source({ type, ... })`, or your own `defineSource()`. */
   sources?: SourceInstance[];
-  /** @deprecated Renamed to `sources` in 0.6.0; still read, with a warning. */
-  providers?: SourceInstance[];
   /**
    * The MCP endpoint takes BRIDGE_MCP_SECRET as `Authorization: Bearer <secret>` at /mcp, and in the URL
    * (/mcp/<secret>) for clients that can't send a header, such as ChatGPT. `secretUrl: false` turns the URL form off.
@@ -166,12 +164,9 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     return value;
   };
 
-  if (config.sources && config.providers) throw new ConfigError('Set `sources` only: `providers` is its old name');
-  const sources = config.sources ?? config.providers ?? [];
-  const warnings = [
-    ...(config.providers && !config.sources ? ['`providers` in the config is now `sources`: rename it (it still works for now)'] : []),
-    ...sources.flatMap((s) => s.warnings ?? []),
-  ];
+  if ('providers' in config) throw new ConfigError('`providers` in the config is now `sources` (renamed in 0.6.0, and the old name removed in 0.8.0): rename it');
+  const sources = config.sources ?? [];
+  const warnings = sources.flatMap((s) => s.warnings ?? []);
   const ids = sources.map((p) => p.id);
   // Ids name Event Gateway resources and the inbound route, /inbound/<id>; `hookdeck` is the notifications route.
   const badId = ids.find((id) => !/^[A-Za-z0-9_-]+$/.test(id) || id === 'hookdeck');

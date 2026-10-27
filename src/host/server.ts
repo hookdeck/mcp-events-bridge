@@ -5,14 +5,13 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
 import { Catalog, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
-import { EventGatewayStore, type PlaceSubscription } from '../core/event-gateway-store.js';
+import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
-import { connectionFilterRule } from '../core/filter.js';
 import { HookdeckClient, isSettled } from '../core/hookdeck.js';
 import { buildMcpServer } from '../core/mcp.js';
-import { providerSourceName } from '../core/names.js';
 import { Notifications } from '../core/notifications.js';
-import { argumentsHash, PollService, type PollServiceDeps } from '../core/poll.js';
+import { placeSubscriptions } from '../core/placement.js';
+import { PollService, type PollServiceDeps } from '../core/poll.js';
 import { WebhookReplay } from '../core/replay.js';
 import { ensureTransformations } from '../core/transformation.js';
 import type { SubscriptionStore } from '../core/store.js';
@@ -95,15 +94,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   // Each subscription is a connection on its source, with the source's transformation (written here for this version
   // and config), a filter for its event and arguments, and the cursor's arguments hash.
   const transformations = options.store ? new Map<string, string>() : await ensureTransformations(hookdeck, config.sources, catalog);
-  const place: PlaceSubscription = async (name, args) => {
-    const entry = catalog.get(name);
-    if (!entry) throw new Error(`${name} isn't offered`);
-    const sourceId = await history.sourceIdFor(entry.providerId);
-    if (!sourceId) throw new Error(`source ${providerSourceName(entry.providerId)} not found: run setup`);
-    const transformationId = transformations.get(entry.providerId);
-    if (!transformationId) throw new Error(`no transformation for ${entry.providerId}`);
-    return { sourceId, transformationId, filter: connectionFilterRule(name, entry.event.filter(args)), cursorArgs: argumentsHash(args) };
-  };
+  const place = placeSubscriptions({ catalog, sourceIdFor: (id) => history.sourceIdFor(id), transformations });
   const store = options.store ?? new EventGatewayStore(hookdeck, place);
   const loaded = await store.load();
   log(

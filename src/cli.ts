@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { Catalog, descriptionWarnings } from './core/catalog.js';
-import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedSource } from './core/config.js';
+import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedConfig, type ResolvedSource } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
+import { describeMigration, migrate, migrationNeeded, planMigration, UPGRADING_URL } from './core/migrate.js';
 import { providerSourceName } from './core/names.js';
 import { source, type SourceOptions, type WebhookVerification } from './core/sources/source.js';
 import { SOURCE_TYPES, type SourceTypeName } from './core/sources/source-types.generated.js';
@@ -24,14 +26,16 @@ import { watchCommand, watchesCommand } from './host/watch-cli.js';
  * `doctor` comes in stage 7.
  */
 
-const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen]
+const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen] [--migrate]
 
 Commands:
-  setup   Create or update the Event Gateway resources, and the webhooks of the sources in bridge.config.ts
+  setup   Create or update the Event Gateway resources, and the webhooks of the sources in bridge.config.ts.
+          Offers to migrate data from an earlier version (--migrate to do it without asking)
   serve   Run the bridge: MCP endpoint, subscriptions (Event Gateway delivers each event from its source)
           and expiry sweeper. With CLI inbound it checks the Event Gateway setup, runs \`hookdeck listen\`
           for Event Gateway's issue notifications (--no-listen to run it yourself) and for local agents'
-          callback URLs, and retries what they missed while \`listen\` was down
+          callback URLs, and retries what they missed while \`listen\` was down. Data from an earlier
+          version must be migrated first: it asks in a terminal, and --migrate does it without asking
   sources add <id> [--type <type>] [options]
           Add a source you register with the sender yourself (a service's source type, such as
           stripe, or webhook for any HTTP sender): create its Event Gateway source and print the
@@ -50,8 +54,7 @@ Commands:
 const SOURCES_ADD_USAGE = `Usage: mcp-events-bridge sources add <id> [--type <type>] [options]
 
 Creates the Event Gateway source bridge-<id> (or reuses it) and prints its URL, so you can register it
-with the sender before you have its secret. Delivery stays held until the secret is set and setup runs.
-(\`providers add webhook <id>\`, the old name, still works.)
+with the sender before you have its secret. Serve refuses to start until the secret is set and setup runs.
 
 Options:
   --type <type>              an Event Gateway source type, such as stripe, slack or shopify, verified with that
@@ -73,11 +76,45 @@ Options:
   --write-config             add the entry to bridge.config.ts, creating it if needed (default: print it to paste)
   --config <file>            the config file (default bridge.config.ts)`;
 
-async function setup(configFile: string | undefined) {
+const MIGRATION_INTRO = "The bridge's data model in Event Gateway changed in 0.8.";
+
+/** Asks a yes/no question in a terminal; Enter means yes. */
+async function confirm(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^(y|yes)?$/i.test((await rl.question(`${question} [Y/n] `)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+const interactive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+/**
+ * Migrates data from an earlier version, if there is any: with `auto` (--migrate) at once, in a terminal after asking,
+ * and otherwise not. Returns false if there's data left to migrate.
+ */
+async function offerMigration(config: ResolvedConfig, hookdeck: HookdeckClient, { auto, log }: { auto: boolean; log: (message: string) => void }): Promise<boolean> {
+  const plan = await planMigration(hookdeck, config);
+  if (!migrationNeeded(plan)) return true;
+  const found = `${MIGRATION_INTRO} This project has ${describeMigration(plan)}.`;
+  if (!auto) {
+    if (!interactive()) return false;
+    console.log(`\n${found}\nSubscribers keep their subscriptions and callback URLs. More: ${UPGRADING_URL}`);
+    if (!(await confirm('Migrate now?'))) return false;
+  } else {
+    log(`${found} Migrating (--migrate). More: ${UPGRADING_URL}`);
+  }
+  await migrate({ hookdeck, config, plan, log });
+  return true;
+}
+
+async function setup(configFile: string | undefined, { migrate: auto }: { migrate: boolean }) {
   const config = await loadConfig({ file: configFile });
   for (const warning of config.warnings) console.warn(`warning: ${warning}`);
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
   const report = await runSetup({ config, hookdeck, fetch, log: (m) => console.log(`  ${m}`) });
+  const migrated = await offerMigration(config, hookdeck, { auto, log: (m) => console.log(`  ${m}`) });
 
   console.log(`\nDeployment "${config.deployment}", ${config.inbound} inbound`);
   for (const p of report.sources) {
@@ -113,13 +150,27 @@ async function setup(configFile: string | undefined) {
     console.error(`\n${incomplete}`);
     process.exitCode = 1;
   }
+  if (!migrated) {
+    console.error(`\n${MIGRATION_INTRO} Data from an earlier version isn't migrated, and serve won't start until it is: run setup again, or setup --migrate. More: ${UPGRADING_URL}`);
+    process.exitCode = 1;
+  }
 }
 
-async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {
+async function serve(configFile: string | undefined, { manageListen, migrate: auto }: { manageListen: boolean; migrate: boolean }) {
   const config = await loadConfig({ file: configFile });
   for (const warning of config.warnings) console.warn(`[bridge] warning: ${warning}`);
   // Fail closed: a source waiting for its secret can't verify what it receives, so nothing is served until it's set.
   assertCredentials(config);
+
+  // Data from an earlier version: subscriptions there aren't served, and its inbound connections would send events here.
+  if (!(await offerMigration(config, new HookdeckClient({ apiKey: config.hookdeck.apiKey }), { auto, log: (m) => console.log(`[bridge] ${m}`) }))) {
+    console.error(
+      `[bridge] ${MIGRATION_INTRO} This project has data from an earlier version, which must be migrated before serve starts.\n` +
+        `Run \`mcp-events-bridge setup\` to migrate it, or start serve with --migrate to migrate it automatically. More: ${UPGRADING_URL}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   // Check Event Gateway first: a CLI-inbound deployment must not start `hookdeck listen` against missing
   // connections, or the CLI creates default ones and events go astray.
@@ -182,8 +233,8 @@ function loadDotEnv() {
   }
 }
 
-/** `sources add <id> [--type <type>]`, and `providers add webhook <id>`, its old name. */
-async function sourcesCommand(argv: string[], { legacy }: { legacy: boolean }) {
+/** `sources add <id> [--type <type>]`. */
+async function sourcesCommand(argv: string[]) {
   const { positionals, values } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -207,19 +258,9 @@ async function sourcesCommand(argv: string[], { legacy }: { legacy: boolean }) {
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
-  let subcommand: string | undefined;
-  let id: string | undefined;
-  let type = values.type.toLowerCase();
-  if (legacy) {
-    // providers add webhook <id>
-    const [sub, kind, legacyId] = positionals;
-    if (sub !== 'add' || kind !== 'webhook') throw new ConfigError('`providers` is now `sources`: use `sources add <id> --type webhook`');
-    console.warn('warning: `providers add webhook <id>` is now `sources add <id> --type webhook` (it still works for now)');
-    [subcommand, id, type] = [sub, legacyId, 'webhook'];
-  } else {
-    [subcommand, id] = positionals;
-    if (subcommand !== 'add') throw new ConfigError(`unknown command \`sources ${subcommand ?? ''}\`. Supported: sources add <id> [--type <type>]`);
-  }
+  const [subcommand, id] = positionals;
+  const type = values.type.toLowerCase();
+  if (subcommand !== 'add') throw new ConfigError(`unknown command \`sources ${subcommand ?? ''}\`. Supported: sources add <id> [--type <type>]`);
   if (values.help || !id) return console.log(SOURCES_ADD_USAGE);
   if (type !== 'webhook' && !Object.hasOwn(SOURCE_TYPES, type)) {
     throw new ConfigError(
@@ -347,9 +388,10 @@ function packageVersion(): string {
 
 async function main() {
   const argv = process.argv.slice(2);
-  if (argv[0] === 'sources' || argv[0] === 'providers') {
+  if (argv[0] === 'providers') throw new ConfigError('`providers` is now `sources` (renamed in 0.6.0, and the old name removed in 0.8.0): use `sources add <id> --type webhook`');
+  if (argv[0] === 'sources') {
     loadDotEnv();
-    return sourcesCommand(argv.slice(1), { legacy: argv[0] === 'providers' });
+    return sourcesCommand(argv.slice(1));
   }
   if (argv[0] === 'watch' || argv[0] === 'watches' || argv[0] === 'callback-url') {
     const command = argv[0] === 'watch' ? watchCommand : argv[0] === 'watches' ? watchesCommand : callbackUrlCommand;
@@ -366,6 +408,7 @@ async function main() {
     options: {
       config: { type: 'string' },
       'no-listen': { type: 'boolean', default: false },
+      migrate: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -375,9 +418,9 @@ async function main() {
   loadDotEnv();
   switch (positionals[0]) {
     case 'setup':
-      return setup(values.config);
+      return setup(values.config, { migrate: values.migrate });
     case 'serve':
-      return serve(values.config, { manageListen: !values['no-listen'] });
+      return serve(values.config, { manageListen: !values['no-listen'], migrate: values.migrate });
     default:
       console.error(USAGE);
       process.exitCode = 1;

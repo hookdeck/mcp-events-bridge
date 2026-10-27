@@ -81,12 +81,6 @@ export function buildMcpServer(deps: {
     },
     async () => json({ sources: deps.sources() }),
   );
-  // The old name, for clients and agents that learned it before 0.6.0.
-  server.registerTool(
-    'list_providers',
-    { description: 'Deprecated: use list_sources. Lists the configured sources, as `providers`.', inputSchema: z.object({}) },
-    async () => json({ providers: deps.sources() }),
-  );
 
   const poll = deps.poll;
   if (poll) {

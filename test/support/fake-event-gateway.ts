@@ -130,7 +130,8 @@ export class FakeEventGateway {
         this.sources.set(id, source);
       }
       Object.assign(source, { type: body.type, ...(body.description !== undefined && { description: body.description }) });
-      if (body.config) source.config = { ...(source.config ?? {}), ...body.config };
+      // Replaced, not merged (verified live 27 Oct: an upsert with config {} clears the auth).
+      if (body.config) source.config = body.config;
       const { config: _hidden, ...visible } = source;
       return json(200, visible);
     }
