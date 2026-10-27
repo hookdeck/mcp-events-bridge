@@ -6,7 +6,7 @@ Turn webhooks into [MCP Events](https://developers.openai.com/plugins/build/mcp-
 
 For example, an email arrives at a Resend address, and ChatGPT, subscribed through the bridge, acts on it:
 
-![ChatGPT, subscribed through the bridge, reporting "New email received" with the sender, the recipient and the subject "Hello ChatGPT from the MCP Events bridge"](docs/images/chatgpt-email-event.png)
+![ChatGPT, subscribed through the bridge, reporting "New inbound email" with the sender, the subject "Hello ChatGPT from the MCP Events bridge" and the recipient, under an "Inbound email alerts" task that is Monitoring](docs/images/chatgpt-email-event.png)
 
 ## Why
 
@@ -126,7 +126,7 @@ You need:
 
 With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Create MCP App, paste `https://<your bridge>/mcp/<BRIDGE_MCP_SECRET>`, and choose No Authentication. ChatGPT can't send an `Authorization` header (it offers only OAuth or no authentication), so it takes the secret in the URL. Then, in a Work chat, ask to be told about new events, for example emails from a particular sender. ChatGPT subscribes and sets up a monitoring task:
 
-![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email notifications" task that is Monitoring](docs/images/chatgpt-subscribe.png)
+![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email alerts" task that is Monitoring](docs/images/chatgpt-subscribe.png)
 
 When an event arrives, the task runs with it, as in the screenshot at the top. A chat that's already open may not show it until you reload the page, and it can take a minute or so to appear (seen on 27 Oct, with the callback answered within about 2 seconds). Pausing the task unsubscribes it from the bridge, and resuming it subscribes again from now, with a new callback URL and no cursor, so events that arrive while it's paused aren't delivered or replayed (seen on 27 Oct). They're still in Event Gateway, so ChatGPT can list them with `list_events`.
 
