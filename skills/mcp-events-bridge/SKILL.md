@@ -115,4 +115,6 @@ Every event is named **`{source id}.{event}`**: the source `id` (by default its 
 | An event arrives after a minute or two | `hookdeck listen` occasionally takes ~30s to connect; Event Gateway occasionally queues a CLI delivery | Wait; missed deliveries are retried by the bridge |
 | The same event twice | Two bridges in one Hookdeck project, or a retry | One project per bridge; receivers dedupe by `webhook-id` |
 | `warning: ... is now ...` (for example `` `providers` in the config is now `sources` ``) | A name from before 0.6.0 | Rename it as the warning says; the old name still works for now |
+| ChatGPT's task doesn't show an event that was delivered (`[bridge] ... 1/1 published`) | ChatGPT shows it in an open chat only after a reload (seen on 27 Oct) | Reload the page; the event is under the task |
+| ChatGPT's subscription is gone after pausing its task | Pausing a task unsubscribes it from the bridge | Ask ChatGPT to subscribe again |
 | `warning: <event>'s description is ... characters` | A description over 400 characters; ChatGPT has been reported to leave such events out | Shorten it in `bridge.config.ts`, then refresh the plugin in ChatGPT |
