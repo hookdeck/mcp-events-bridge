@@ -20,7 +20,7 @@ Each delivery is a `POST` to `http://localhost:<port><path>` (plus any sub-path)
 - `webhook-id`: the event id. **Dedupe on it**: delivery is at least once.
 - `webhook-timestamp`, `webhook-signature`: [Standard Webhooks](https://www.standardwebhooks.com). The signature header carries **several** space-separated `v1,` entries (one is for Event Gateway's source); accept the request if **any** verifies with your secret, as standard libraries do. Reject timestamps more than 5 minutes old.
 - `X-MCP-Subscription-Id`: which subscription it's for, so you can pick the secret (or route by path instead).
-- Body: `{ "eventId", "name", "timestamp", "data", "cursor": null }`, at most 256 KiB.
+- Body: `{ "eventId", "name", "timestamp", "data", "cursor" }`, at most 256 KiB. `cursor` is a position in the event's history: keep the latest one (from deliveries and subscribe responses) and pass it to `events/subscribe` when you refresh or subscribe again, and the bridge replays what you missed.
 
 Answer `2xx` quickly and do the work afterwards. Your status code doesn't reach the bridge (Event Gateway acknowledges at the tunnel URL), so a `410` doesn't stop deliveries: unsubscribe instead.
 

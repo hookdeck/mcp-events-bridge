@@ -41,6 +41,8 @@ export interface SubscriberOptions {
   callbackUrl?: string;
   /** Use this `whsec_` secret instead of generating one, for example the secret an Event Gateway source is configured with. */
   secret?: string;
+  /** A cursor for the first subscribe, to replay from it (for example the last one an earlier subscription delivered). */
+  cursor?: string | null;
   /** Reject deliveries whose webhook-timestamp is more than 5 minutes off. Default true. */
   checkTimestamps?: boolean;
   /** Generate a new secret on every refresh to exercise rotation. */
@@ -131,7 +133,7 @@ export class Subscriber {
           name: this.options.eventName,
           arguments: this.options.arguments ?? {},
           delivery: { mode: 'webhook', url: this.callbackUrl, secret: this.secret },
-          cursor: this.subscription?.cursor ?? null,
+          cursor: this.subscription?.cursor ?? this.options.cursor ?? null,
           ...(this.options.ttlMs !== undefined && { ttlMs: this.options.ttlMs }),
         },
       } as never,

@@ -22,9 +22,19 @@ export interface DeliveryStatus {
 export interface SubscribeResult {
   id: string;
   refreshBefore: string;
-  cursor: null;
+  cursor: string | null;
   truncated: boolean;
   deliveryStatus?: DeliveryStatus;
+}
+
+/** Webhook cursors and replay (SEP-3415), backed by poll mode's listing of Event Gateway's stored requests. */
+export interface SubscriptionCursors {
+  /** A safe-to-persist watermark for this event and arguments, as of now. */
+  watermark(name: string, args: Record<string, unknown>): string;
+  /** Checks a client's cursor, throwing invalid params if it isn't one this bridge returned for this event and arguments. */
+  check(name: string, args: Record<string, unknown>, cursor: string): { truncated: boolean };
+  /** Delivers the events since `cursor` to a new subscription, in the background. */
+  replay(subscription: SubscriptionRecord, cursor: string): void;
 }
 
 export interface SubscriptionServiceDeps {
@@ -35,6 +45,8 @@ export interface SubscriptionServiceDeps {
   verify?: (transport: CallbackTransport, options: VerifyEndpointOptions) => Promise<VerificationResult>;
   /** Callback URLs the bridge created for local agents: the challenge is also signed with the callback's own secret. */
   callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'find'>;
+  /** Without it, subscribe answers `cursor: null` and doesn't replay. */
+  cursors?: SubscriptionCursors;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -122,6 +134,10 @@ export class SubscriptionService {
     if (params.ttlMs !== undefined && params.ttlMs !== null && (typeof params.ttlMs !== 'number' || params.ttlMs < 0)) {
       throw invalidParams('ttlMs must be a non-negative number or null', { field: 'ttlMs' });
     }
+    const clientCursor = params.cursor ?? null;
+    if (clientCursor !== null && typeof clientCursor !== 'string') throw invalidParams('cursor must be a string or null', { field: 'cursor' });
+    // Checked before anything is created, so a cursor from another event or arguments fails the subscribe.
+    const cursorCheck = clientCursor !== null ? this.deps.cursors?.check(key.name, args, clientCursor) : undefined;
 
     try {
       await transport.assertPublicHost(url);
@@ -193,8 +209,7 @@ export class SubscriptionService {
     return {
       id,
       refreshBefore: expiresAt.toISOString(),
-      cursor: null, // no replay yet
-      truncated: params.cursor !== undefined && params.cursor !== null, // a client cursor can't be resumed
+      ...this.position(id, key.name, args, clientCursor, cursorCheck, existing, now),
       ...(existing && {
         deliveryStatus: {
           active: true,
@@ -206,6 +221,42 @@ export class SubscriptionService {
   }
 
   /** Idempotent: unknown subscriptions return an empty result (OpenAI's guidance) rather than NotFound. */
+  /**
+   * The subscribe response's `cursor` and `truncated` (SEP-3415), and replay. A new subscription (or one that had
+   * expired) made with a cursor replays from it, and answers with that cursor until its deliveries carry later ones.
+   * A live subscription's cursor is a no-op. Otherwise the answer is a fresh watermark, except while a live
+   * subscription's deliveries are failing: then the client's own cursor stands, so persisting the answer never skips
+   * an event Event Gateway is still retrying.
+   */
+  private position(
+    id: string,
+    name: string,
+    args: Record<string, unknown>,
+    clientCursor: string | null,
+    check: { truncated: boolean } | undefined,
+    existing: SubscriptionRecord | undefined,
+    now: Date,
+  ): { cursor: string | null; truncated: boolean } {
+    const cursors = this.deps.cursors;
+    if (!cursors) return { cursor: null, truncated: clientCursor !== null }; // no replay: a client's cursor can't be resumed
+    const live = existing !== undefined && Date.parse(existing.expiresAt) > now.getTime();
+    if (clientCursor !== null && !live) {
+      const record = this.deps.store.get(id);
+      if (record) {
+        this.log(`replaying to ${id} from the client's cursor${check?.truncated ? ', truncated (older than Event Gateway keeps)' : ''}`);
+        cursors.replay(record, clientCursor);
+      }
+      return { cursor: clientCursor, truncated: check?.truncated ?? false };
+    }
+    if (clientCursor !== null && existing && !existing.delivery.active) return { cursor: clientCursor, truncated: false };
+    try {
+      return { cursor: cursors.watermark(name, args), truncated: false };
+    } catch (error) {
+      this.log(`${id}: no cursor: ${(error as Error).message}`);
+      return { cursor: null, truncated: false };
+    }
+  }
+
   async unsubscribe(principal: string | undefined, params: Params): Promise<Record<string, never>> {
     this.log(`events/unsubscribe from ${principal ?? '(none)'}: ${describeParams(params)}`);
     if (!principal) throw forbidden();

@@ -1,5 +1,6 @@
 import type { Catalog } from './catalog.js';
 import type { CallbackFailureReason } from './errors.js';
+import type { PastEvent } from './event-history.js';
 import type { HookdeckClient } from './hookdeck.js';
 import { verifyHookdeckSignature } from './hookdeck-signature.js';
 import { parseJson } from './json.js';
@@ -41,6 +42,11 @@ export interface RelayDeps {
    * delivers such a retry as attempt 1 of a new event, with trigger INITIAL, so only the request id tells it apart.
    */
   recovered?: (requestId: string) => boolean;
+  /**
+   * The cursor a delivery carries (SEP-3415's safe-to-persist watermark), for this subscriber and the Event Gateway
+   * request being relayed: poll's format (`PollService.webhookCursor`), so a client can replay from it. Null without.
+   */
+  cursor?: (subscription: SubscriptionRecord, requestId: string | undefined) => string | null;
   now?: () => Date;
   log?: (message: string) => void;
 }
@@ -126,18 +132,40 @@ export class Relay {
       .filter((s) => !retry || Date.parse(s.createdAt) <= Date.parse(occurredAt))
       .filter((s) => event.accepts(s.arguments, summary));
 
-    const body = JSON.stringify({ eventId, name, timestamp: occurredAt, data: summary, cursor: null });
-    if (Buffer.byteLength(body) > MAX_BODY_BYTES) {
+    // Each subscriber's body carries its own cursor (a position for its event name and arguments).
+    const envelope = { eventId, name, timestamp: occurredAt, data: summary };
+    const bodies = subscribers.map((s) => JSON.stringify({ ...envelope, cursor: this.cursorFor(s, requestId) }));
+    if ([JSON.stringify({ ...envelope, cursor: null }), ...bodies].some((b) => Buffer.byteLength(b) > MAX_BODY_BYTES)) {
       this.log(`${eventId}: envelope over 256 KiB, not delivered`);
       return { status: 200, body: { ignored: 'too large' } };
     }
 
-    const results = await Promise.allSettled(subscribers.map((s) => this.publish(s, eventId, body, now)));
+    const results = await Promise.allSettled(subscribers.map((s, i) => this.publish(s, eventId, bodies[i]!, now)));
     const failed = results.filter((r) => r.status === 'rejected');
     for (const r of failed) this.log(`${eventId}: publish failed: ${(r as PromiseRejectedResult).reason}`);
     this.log(`${name} ${eventId}: ${subscribers.length - failed.length}/${subscribers.length} published`);
     if (failed.length) return { status: 502, body: { error: 'publish failed', failed: failed.length } };
     return { status: 200, body: { published: subscribers.length } };
+  }
+
+  /** One stored event to one subscriber, as a live delivery is: for replay (src/core/replay.ts). */
+  async deliver(subscription: SubscriptionRecord, event: PastEvent, cursor: string | null) {
+    const body = JSON.stringify({ eventId: event.eventId, name: event.name, timestamp: event.timestamp, data: event.data, cursor });
+    if (Buffer.byteLength(body) > MAX_BODY_BYTES) {
+      this.log(`${event.eventId}: envelope over 256 KiB, not replayed`);
+      return;
+    }
+    await this.publish(subscription, event.eventId, body, this.now());
+  }
+
+  /** A delivery's cursor; a failure to build one leaves it null rather than failing the delivery. */
+  private cursorFor(subscription: SubscriptionRecord, requestId: string | undefined): string | null {
+    try {
+      return this.deps.cursor?.(subscription, requestId) ?? null;
+    } catch (error) {
+      this.log(`${subscription.id}: no cursor: ${(error as Error).message}`);
+      return null;
+    }
   }
 
   private async publish(subscription: SubscriptionRecord, eventId: string, body: string, now: Date) {

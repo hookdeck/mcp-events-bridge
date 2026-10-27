@@ -422,6 +422,39 @@ async function main() {
   subscribers.splice(subscribers.indexOf(main), 1);
   const left = (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length;
   record('unsubscribe deletes the subscription connection', left === 0);
+
+  // 6. Replay (SEP-3415): every delivery carries a cursor, and an event sent while nothing was subscribed reaches a new
+  // subscription made with the last one, read back from Event Gateway's history.
+  const lastCursor = main.events.at(-1)?.cursor ?? null;
+  record('deliveries carry a cursor', main.events.length > 0 && main.events.every((e) => typeof e.cursor === 'string'), `${main.events.length} event(s)`);
+  if (!lastCursor) return;
+  const missed = events.tag('while unsubscribed');
+  await events.send(missed);
+  await wait(20_000); // for Event Gateway to receive and route it, so its history has it
+  const port = 4390;
+  const callback = await mcpEventsCallback(hookdeck, run, 'resumed', port);
+  if (!callback) return record('replay after subscribing again with the last cursor', false, 'no callback');
+  const resumed = new Subscriber({
+    serverUrl: mcpUrl,
+    token: '',
+    eventName: events.event,
+    arguments: events.matching,
+    receiverPort: port,
+    callbackUrl: callback.url,
+    secret: callback.secret,
+    cursor: lastCursor,
+    log: (m) => console.log(`[subscriber:resumed] ${m}`),
+  });
+  const response = await resumed.start();
+  subscribers.push(resumed);
+  const replayed = await until(() => countTag(events, resumed, missed) > 0, 120_000);
+  record(
+    'replay after subscribing again with the last cursor',
+    Boolean(replayed) && response.cursor === lastCursor && !response.truncated,
+    `${replayed ? `${NOUN} sent while unsubscribed arrived` : 'timed out'}; cursor ${response.cursor === lastCursor ? 'echoed' : 'not echoed'}, truncated ${response.truncated}`,
+  );
+  await resumed.stop({ unsubscribe: true });
+  subscribers.splice(subscribers.indexOf(resumed), 1);
 }
 
 type LocalContext = {

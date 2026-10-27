@@ -276,6 +276,27 @@ export class PollService {
     return { entry, args, cursor: (cursor as string | null | undefined) ?? null, maxAgeMs: maxAgeMs as number | null | undefined, maxEvents: Math.min((maxEvents as number | undefined) ?? DEFAULT_MAX_EVENTS, MAX_EVENTS) };
   }
 
+  /**
+   * A webhook cursor (SEP-3415's safe-to-persist watermark), in poll's format: a position `at` (Event Gateway's clock,
+   * default now) less the look-back, so replaying from it re-reads the last minute rather than skipping an event still
+   * in flight. `requestId` is a request already delivered, which a replay skips. Events can repeat; clients dedupe by eventId.
+   */
+  webhookCursor(name: string, args: Record<string, unknown>, options: { requestId?: string; at?: number } = {}): string {
+    const { entry, args: parsed } = this.parse({ name, arguments: args });
+    const at = options.at ?? this.window.egNow();
+    const w = at - this.lookbackMs;
+    return encodeCursor({ v: 1, n: entry.name, a: argumentsHash(parsed), f: w, w, t: at, ids: options.requestId ? [[options.requestId, at]] : [] });
+  }
+
+  /** Checks a cursor a client passed to events/subscribe: one this bridge returned, for the same event and arguments. */
+  checkCursor(name: string, args: Record<string, unknown>, cursor: string): { truncated: boolean } {
+    const { entry, args: parsed } = this.parse({ name, arguments: args });
+    const state = decodeCursor(cursor);
+    if (state.n !== entry.name || state.a !== argumentsHash(parsed)) throw invalidParams('cursor is for another event name or arguments', { field: 'cursor' });
+    // Older than Event Gateway keeps: the replay starts later than the cursor.
+    return { truncated: state.w < this.window.egNow() - (this.deps.retentionMs ?? DEFAULT_RETENTION_MS) };
+  }
+
   async poll(params: Record<string, unknown>): Promise<PollResult> {
     const { entry, args, cursor, maxAgeMs, maxEvents } = this.parse(params);
     const hash = argumentsHash(args);

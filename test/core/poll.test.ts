@@ -445,3 +445,29 @@ describe('poll mode: wait_for_event', () => {
     expect(again.events.map((e) => e.eventId)).toEqual(['next']);
   });
 });
+
+describe('webhook cursors (SEP-3415 replay)', () => {
+  it("replays what came after a delivery's cursor, skipping the delivered request and other arguments' events", async () => {
+    const { listing, service } = setup();
+    listing.now = T0 + 120_000;
+    const delivered = listing.add({ createdAt: T0 + 100_000, deliveryId: 'delivered' });
+    // The cursor a live delivery of `delivered` carries.
+    const cursor = service.webhookCursor(NAME, { symbol: 'AAPL' }, { requestId: delivered.id, at: listing.now });
+    listing.add({ createdAt: T0 + 200_000, deliveryId: 'missed' });
+    listing.add({ createdAt: T0 + 210_000, symbol: 'MSFT', deliveryId: 'other-symbol' });
+    listing.now = T0 + 300_000;
+
+    const result = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' }, cursor });
+    expect(result.events.map((e) => e.eventId)).toEqual(['missed']);
+    expect(service.checkCursor(NAME, { symbol: 'AAPL' }, cursor)).toEqual({ truncated: false });
+  });
+
+  it('checks a cursor: the same event and arguments, one this bridge returned, and truncated past retention', () => {
+    const { listing, service } = setup();
+    const cursor = service.webhookCursor(NAME, { symbol: 'AAPL' }, { at: listing.now });
+    expect(() => service.checkCursor(NAME, { symbol: 'MSFT' }, cursor)).toThrow(/another event name or arguments/);
+    expect(() => service.checkCursor(NAME, { symbol: 'AAPL' }, 'not-a-cursor')).toThrow(/not a cursor this bridge returned/);
+    listing.now = T0 + 4 * 24 * 60 * 60 * 1000; // Event Gateway keeps 3 days by default
+    expect(service.checkCursor(NAME, { symbol: 'AAPL' }, cursor)).toEqual({ truncated: true });
+  });
+});

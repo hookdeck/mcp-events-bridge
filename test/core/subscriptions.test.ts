@@ -5,14 +5,15 @@ import { DEFAULT_SUBSCRIPTION_SETTINGS, defineConfig, resolveConfig } from '../.
 import { MemoryStore } from '../../src/core/memory-store.js';
 import { SubscriptionTooLargeError } from '../../src/core/store.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
-import { SubscriptionService, describeParams } from '../../src/core/subscriptions.js';
+import { invalidParams } from '../../src/core/errors.js';
+import { SubscriptionService, describeParams, type SubscriptionCursors } from '../../src/core/subscriptions.js';
 import { resend } from '../../src/sources.js';
 
 const catalog = new Catalog(
   resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' }).sources,
 );
 
-function setup({ verifyResult = { ok: true } as VerificationResult, publicHost = true } = {}) {
+function setup({ verifyResult = { ok: true } as VerificationResult, publicHost = true, cursors }: { verifyResult?: VerificationResult; publicHost?: boolean; cursors?: SubscriptionCursors } = {}) {
   const store = new MemoryStore();
   const verifications: string[] = [];
   let now = new Date('2026-10-05T12:00:00.000Z');
@@ -31,6 +32,7 @@ function setup({ verifyResult = { ok: true } as VerificationResult, publicHost =
       verifications.push(options.url.href);
       return verifyResult;
     },
+    cursors,
     now: () => now,
   });
   return { service, store, verifications, advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
@@ -111,6 +113,66 @@ describe('SubscriptionService.subscribe', () => {
       delivery: { active: true, lastError: null },
       createdAt: '2026-10-05T12:00:00.000Z',
     });
+  });
+});
+
+describe('SubscriptionService: cursors and replay (SEP-3415)', () => {
+  const fakeCursors = ({ truncated = false } = {}) => {
+    const replays: Array<[string, string]> = [];
+    const cursors: SubscriptionCursors = {
+      watermark: (name) => `now:${name}`,
+      check: (_name, _args, cursor) => {
+        if (cursor === 'bad') throw invalidParams('cursor is not a cursor this bridge returned', { field: 'cursor' });
+        return { truncated };
+      },
+      replay: (subscription, cursor) => void replays.push([subscription.id, cursor]),
+    };
+    return { cursors, replays };
+  };
+  const elsewhere = { mode: 'webhook', url: 'https://other.example.com/hook', secret: generateWebhookSecret() };
+
+  it('answers a watermark without a cursor, and replays a new subscription made with one, answering its cursor', async () => {
+    const { cursors, replays } = fakeCursors();
+    const { service } = setup({ cursors });
+    expect(await service.subscribe('owner', params())).toMatchObject({ cursor: 'now:resend.email.received', truncated: false });
+    expect(replays).toEqual([]);
+
+    const resumed = await service.subscribe('owner', params({ delivery: elsewhere, cursor: 'c_saved' }));
+    expect(resumed).toMatchObject({ cursor: 'c_saved', truncated: false });
+    expect(replays).toEqual([[resumed.id, 'c_saved']]);
+  });
+
+  it("treats a live subscription's cursor as a no-op on refresh, unless its deliveries are failing", async () => {
+    const { cursors, replays } = fakeCursors();
+    const { service, store } = setup({ cursors });
+    const p = params();
+    const { id } = await service.subscribe('owner', p);
+    expect(await service.subscribe('owner', { ...p, cursor: 'c_saved' })).toMatchObject({ cursor: 'now:resend.email.received', truncated: false });
+    expect(replays).toEqual([]);
+
+    // Failing: a fresh watermark could skip events Event Gateway is still retrying, so the client's stands.
+    await store.put({ ...store.get(id)!, delivery: { active: false, lastError: 'http_5xx', failedSince: '2026-10-05T12:00:00.000Z' } });
+    expect(await service.subscribe('owner', { ...p, cursor: 'c_saved' })).toMatchObject({ cursor: 'c_saved', truncated: false });
+    expect(replays).toEqual([]);
+  });
+
+  it('replays an expired subscription made again with a cursor', async () => {
+    const { cursors, replays } = fakeCursors();
+    const { service, advance } = setup({ cursors });
+    const p = params({ ttlMs: 60_000 });
+    const { id } = await service.subscribe('owner', p);
+    advance(120_000);
+    await service.subscribe('owner', { ...p, cursor: 'c_saved' });
+    expect(replays).toEqual([[id, 'c_saved']]);
+  });
+
+  it("reports a truncated replay, and rejects a cursor that isn't the bridge's before creating anything", async () => {
+    const { cursors } = fakeCursors({ truncated: true });
+    const { service, store } = setup({ cursors });
+    expect(await service.subscribe('owner', params({ cursor: 'c_old' }))).toMatchObject({ cursor: 'c_old', truncated: true });
+    await expect(service.subscribe('owner', params({ delivery: elsewhere, cursor: 'bad' }))).rejects.toMatchObject({ code: -32602 });
+    await expect(service.subscribe('owner', params({ delivery: elsewhere, cursor: 42 }))).rejects.toMatchObject({ code: -32602 });
+    expect(store.list()).toHaveLength(1);
   });
 });
 
