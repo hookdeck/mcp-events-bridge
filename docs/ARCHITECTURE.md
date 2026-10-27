@@ -370,7 +370,8 @@ Built 27 Oct ([#50](https://github.com/hookdeck/mcp-events-bridge/issues/50)). W
   - A new subscription, or one that had expired, made with a cursor replays from it in the background (`src/core/replay.ts`). Poll pages through the history, and each matching event is published to that subscriber as the relay publishes a live one. The response echoes the client's cursor.
   - A refresh of a live subscription treats its cursor as a no-op, as SEP-3415 says, and answers a fresh watermark. While its deliveries are failing, the client's cursor stands instead, so persisting the answer never skips an event Event Gateway is still retrying.
   - `truncated` is true only for a cursor older than Event Gateway's retention.
-- **Repeats:** a live event can arrive during a replay, and a replay re-reads the minute before its cursor, so receivers dedupe by `eventId`, as for any delivery.
+- **Repeats:** a live event can arrive during a replay, and a replay re-reads the minute before its cursor, so receivers dedupe by `eventId`, as for any delivery. The subscription connection's `webhook-id` dedupe rule drops most repeats within the new subscription.
+- **In memory:** a replay runs in the bridge. If the bridge restarts part way, the rest isn't sent, and the client's next refresh is a no-op on its now live subscription. Resuming it would mean persisting the replay's position, for example in the connection's description.
 - **Verified live** (27 Oct, the e2e's step 6): a fill sent while nothing was subscribed reached a new subscription made with the last delivery's cursor; the delivered fill and another symbol's fill weren't replayed.
 - **ChatGPT:** OpenAI's guide says ChatGPT refreshes "using the same subscription identity and the last saved cursor". Pausing a ChatGPT task unsubscribes it (seen 27 Oct); whether resuming it subscribes again with the saved cursor is untested.
 
