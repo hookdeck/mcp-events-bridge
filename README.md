@@ -128,7 +128,7 @@ With Developer mode on (ChatGPT Plus or above), go to Plugins, choose Add > Crea
 
 ![A ChatGPT Work chat: asked to be told about all inbound emails, ChatGPT subscribes through the MCP Events bridge and shows an "Inbound email alerts" task that is Monitoring](docs/images/chatgpt-subscribe.png)
 
-When an event arrives, the task runs with it, as in the screenshot at the top. A chat that's already open may not show it until you reload the page, and it can take a minute or so to appear (seen on 27 Oct, with the callback answered within about 2 seconds). Pausing the task unsubscribes it from the bridge, and resuming it subscribes again from now, with a new callback URL and no cursor, so events that arrive while it's paused aren't delivered or replayed (seen on 27 Oct). They're still in Event Gateway, so ChatGPT can list them with `list_events`.
+When an event arrives, the task runs with it, as in the screenshot at the top. A chat that's open shows it on its own, about a minute after the event arrives, even though ChatGPT answers the delivery within about 2 seconds (seen on 28 Oct, in an open, focused tab); if it doesn't appear, reload the page. Pausing the task unsubscribes it from the bridge, and resuming it subscribes again from now, with a new callback URL and no cursor, so events that arrive while it's paused aren't delivered or replayed (seen on 27 Oct). They're still in Event Gateway, so ChatGPT can list them with `list_events`.
 
 ChatGPT keeps the list of events it can subscribe to from when you added the plugin. After you upgrade the bridge or add a source, refresh the plugin in Plugins, or ChatGPT can't subscribe to the new or renamed events (it may still list them, since that call goes to the bridge). Then ask it to subscribe again.
 
