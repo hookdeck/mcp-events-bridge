@@ -154,7 +154,7 @@ export function watchUrl(flag: string | undefined, environment: NodeJS.ProcessEn
   return `${base}/mcp`;
 }
 
-/** `Authorization: Bearer <secret>` for an MCP URL without the secret in it (`.../mcp`). */
+/** `Authorization: Bearer <BRIDGE_MCP_SECRET>` for an MCP URL without the secret in it (`.../mcp`). */
 export function watchHeaders(url: string, secret: string | undefined): Record<string, string> {
   return secret && /\/mcp\/?$/.test(new URL(url).pathname) ? { Authorization: `Bearer ${secret}` } : {};
 }
@@ -162,5 +162,5 @@ export function watchHeaders(url: string, secret: string | undefined): Record<st
 /** The URL without its secret path segment, for messages. */
 export function redactUrl(url: string): string {
   // The secret is URL-safe (base64url, or percent-encoded), so stop at anything else.
-  return url.replace(/\/mcp\/[A-Za-z0-9_.~%-]+/g, '/mcp/<secret>');
+  return url.replace(/\/mcp\/[A-Za-z0-9_.~%-]+/g, '/mcp/<BRIDGE_MCP_SECRET>');
 }

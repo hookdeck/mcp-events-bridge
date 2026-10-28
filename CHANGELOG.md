@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **The secret placeholder is `<BRIDGE_MCP_SECRET>`** in logs, `watch` messages, help text and docs (`/mcp/<BRIDGE_MCP_SECRET>`), as in the bridge's 401 message. It was `<secret>`, which a third-party scanner read as a hidden instruction to an agent.
 - **Docs:** `GITHUB_TOKEN` can be the GitHub CLI's token (`gh auth token`, scope `repo`) as well as a fine-grained token with the Webhooks permission.
 - **Wording:** the Resend and GitHub event descriptions in `events/list`, and `watch --help`, say "includes" rather than "carries".
 

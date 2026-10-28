@@ -125,7 +125,7 @@ describe('bridge server', () => {
     for (const authorization of ['Bearer wrong', `Basic ${MCP_SECRET}`, MCP_SECRET, `Bearer ${MCP_SECRET} extra`]) {
       expect((await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { authorization } })).status).toBe(401);
     }
-    expect(redactPath(`/mcp/${MCP_SECRET}`)).toBe('/mcp/<secret>');
+    expect(redactPath(`/mcp/${MCP_SECRET}`)).toBe('/mcp/<BRIDGE_MCP_SECRET>');
   });
 
   it('takes the secret as Authorization: Bearer at /mcp', async () => {
