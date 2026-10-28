@@ -6,7 +6,8 @@ Replace the placeholders, and drop any section with nothing to say. The release'
 ## Summary
 
 <Two or three sentences: what this release means for someone running the bridge, in the
-second person. For a patch, what was wrong and that it's fixed.>
+second person. Open with a full sentence that says what changes for them, in plain words
+(see "The wording" in the skill). For a patch, what was wrong and that it's fixed.>
 
 ## Upgrading from <PREV_VERSION>
 

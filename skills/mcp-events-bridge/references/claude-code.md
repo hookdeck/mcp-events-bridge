@@ -15,7 +15,7 @@ claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Aut
 
 For a local bridge, use the endpoint `serve` prints (`http://127.0.0.1:8080/mcp`).
 
-The header carries `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
+The header contains `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
 
 - **`--scope local`** (the default) and **`--scope user`** keep it in your Claude Code config, outside the repository.
 - **`--scope project`** writes `.mcp.json` in the repository, which is usually committed. Don't put the secret there: reference an environment variable instead, which Claude Code expands in `.mcp.json`:

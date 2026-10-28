@@ -248,7 +248,7 @@ These options work for every `source()`, whatever its type:
 - **`events`:** the sender's event names (offered as `{id}.{name}`, e.g. `fills.order.filled`), as a list or with a description each. Keep a description under about 400 characters: ChatGPT has been reported to leave out events with longer ones, and `setup` and `serve` warn about them. With more than one, `eventType` says where the sender names the event, `{ header }` or `{ field }` (a dot path into the body), and each event's `value` is the sender's name for it (default: the event name). Requests for other values are ignored.
 - **`eventId`:** the sender's id for an event, from `{ header }` or `{ field }`. It becomes the MCP event's `eventId` (and its `webhook-id`), and Event Gateway drops repeats within an hour. Default: a hash of the JSON body (the first 32 hex characters of its SHA-256), so a sender's retry with the same body is dropped as a repeat, and two different events with identical bodies count as one. Set it if your sender has an id.
 - **`occurredAt`:** a body field with an ISO 8601 or Unix time. Default: when Event Gateway received the request (for a live delivery, when Event Gateway built the event from it, moments later).
-- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is skipped, and stays in Event Gateway), and the event at most 256 KiB. An integer beyond 2^53 (an int64 id) is rounded for now, since Event Gateway parses bodies as JavaScript numbers.
+- **Data:** the JSON body as sent, or only the top-level fields in `fields: [...]`. Bodies must be JSON (anything else is skipped, and stays in Event Gateway), and the event at most 256 KiB.
 - **`filters`:** top-level body fields subscribers can filter on, by exact match of value and type: `{ "quantity": 100 }` matches the number 100, not the string `"100"`.
 
 ### Adding a source from the command line
@@ -325,7 +325,7 @@ bridge-hookdeck-notifications    source: Event Gateway's issue notifications
 - **`bridge-<source id>`** (here `bridge-resend`) is the source's Event Gateway source, the URL its webhooks are registered with. Setup also writes its transformation, `bridge-<source id>-envelope`, which turns each request into an MCP Event; every subscription to the source's events uses it.
 - **`mcp-sub-<id>`** is one subscription: a connection on the source with the transformation, a filter for the event name and the subscription's arguments, dedupe on `webhook-id` and retries, and a destination at the subscriber's callback URL that signs every attempt with the subscriber's secret. The bridge creates it when an agent subscribes, and deletes it when the subscription ends.
 - **`bridge-hookdeck-notifications`** receives Event Gateway's issue notifications and forwards them to each deployment, so the bridge hears about failing callbacks and reports them to subscribers.
-- **`bridge-replay`** (created by the first replay) is a Publish API source: while a subscription made with a cursor catches up, a connection from it, `bridge-replay-<subscription id>`, carries the replayed events to the subscription's destination, and the bridge deletes it when they're delivered.
+- **`bridge-replay`** (created by the first replay) is a Publish API source: while a subscription made with a cursor catches up, a connection from it, `bridge-replay-<subscription id>`, delivers the replayed events to the subscription's destination, and the bridge deletes it when they're delivered.
 
 Locally (CLI inbound), `setup` also logs the Hookdeck CLI in to the bridge's project in `.hookdeck/config.toml` (gitignore it: it holds a key), so `hookdeck` commands run in the bridge's directory use that project rather than your global login.
 
@@ -404,7 +404,7 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 - **No public URL needed:** each poll reads the source's requests from Event Gateway, so it works from a laptop, with a deployed or a local bridge.
 - **Start from now:** a first call without a cursor returns no events, only a cursor. For events that already happened, use `list_events`.
 - **At least once:** events can repeat, so dedupe by `eventId`. `truncated: true` means events were skipped (`maxAgeMs`, or older than Event Gateway keeps).
-- **Replay:** every delivery and every subscribe response carries a `cursor`, a position in Event Gateway's history of the source's requests. Subscribe again with the latest one, after an unsubscribe, an expiry or downtime, and the bridge delivers what you missed, alongside live events, up to Event Gateway's retention (3 days on the Developer plan). Refreshing a live subscription with it changes nothing. Poll mode uses the same cursors.
+- **Replay:** every delivery and every subscribe response includes a `cursor`, a position in Event Gateway's history of the source's requests. Subscribe again with the latest one, after an unsubscribe, an expiry or downtime, and the bridge delivers what you missed, alongside live events, up to Event Gateway's retention (3 days on the Developer plan). Refreshing a live subscription with it changes nothing. Poll mode uses the same cursors.
 - **Latency:** an event reaches a poller about 2 seconds after Event Gateway receives it, sometimes up to 15. Polls share one listing of Event Gateway's requests, at most every 2 seconds, so the API's rate limit (240 requests a minute per key) is shared, however many agents poll, as long as each polls at the `nextPollMs` it's given (`wait_for_event` does). When the limit runs low, `nextPollMs` grows to 30 seconds.
 
 ### In the background: `watch`
@@ -475,7 +475,6 @@ Three TypeScript MCP client libraries have experimental MCP Events support, and 
 - **A pass-through callback URL verifies nothing.** Anyone who learns one can post to the agent's port through it, so the agent must check every delivery's signature (standard libraries do). A callback URL with a secret accepts only deliveries signed with it.
 - **Event content is data, not instructions.** An email or issue can say anything. Filters narrow what triggers an agent: GitHub's `sender` is the authenticated user, but an email's `from` can be forged, so don't rely on it alone.
 - **Webhook and poll delivery.** Push (`events/stream`) may come later if clients need it. Local agents receive webhooks through the Hookdeck CLI (above). Poll mode misses a request that takes more than 60 seconds to appear in Event Gateway's request listing (it took up to 15 when measured).
-- **Integers beyond 2^53 are rounded,** since Event Gateway parses bodies as JavaScript numbers, until it keeps them exact.
 
 ## Troubleshooting
 

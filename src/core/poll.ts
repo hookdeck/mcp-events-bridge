@@ -11,7 +11,7 @@ import { HookdeckApiError, type HookdeckClient, type HookdeckRequest, type Respo
  * listing, with no event store in the bridge. See "Poll mode" in docs/ARCHITECTURE.md.
  *
  * Requests appear in the listing about 2 seconds after their created_at (up to 15 measured) and out of order, so a
- * cursor re-reads the last LOOKBACK_MS and carries the ids it has returned. Polls share one listing of the sources
+ * cursor re-reads the last LOOKBACK_MS and holds the ids it has returned. Polls share one listing of the sources
  * polled recently, fetched on demand (the bridge runs no timer), to stay inside the API's 240 requests a minute.
  */
 
@@ -53,7 +53,7 @@ export interface PollResult {
   nextPollMs: number;
 }
 
-/** What the cursor carries: everything a poll needs, so the bridge keeps nothing between polls. */
+/** What the cursor holds: everything a poll needs, so the bridge keeps nothing between polls. */
 interface CursorState {
   v: 1;
   /** The event name and a hash of the parsed arguments: a cursor answers for one subscription only. */
@@ -275,7 +275,7 @@ export class PollService {
   /**
    * A webhook cursor (SEP-3415's safe-to-persist watermark), in poll's format: a position `at` (Event Gateway's clock,
    * default now) less the look-back, so replaying from it re-reads the last minute rather than skipping an event still
-   * in flight. Events can repeat; clients dedupe by eventId. Deliveries carry the same format, from the transformation.
+   * in flight. Events can repeat; clients dedupe by eventId. Deliveries' cursors have the same format, from the transformation.
    */
   webhookCursor(name: string, args: Record<string, unknown>, options: { at?: number } = {}): string {
     const { entry, args: parsed } = this.parse({ name, arguments: args });
@@ -297,7 +297,7 @@ export class PollService {
     return this.scan(params);
   }
 
-  /** The cursor a replay's deliveries carry: poll's format, at the position the replay started from. */
+  /** The cursor in a replay's deliveries: poll's format, at the position the replay started from. */
   replayCursor(name: string, args: Record<string, unknown>, position: { f: number; w: number }): string {
     const { entry, args: parsed } = this.parse({ name, arguments: args });
     return encodeCursor({ v: 1, n: entry.name, a: argumentsHash(parsed), f: position.f, w: position.w, t: this.window.egNow(), ids: [] });

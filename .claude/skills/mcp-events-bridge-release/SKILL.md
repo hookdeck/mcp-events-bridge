@@ -62,7 +62,7 @@ While the version is `0.x`, a breaking change bumps MINOR and says so loudly (0.
 On a branch `chore/release-X.Y.Z`:
 
 1. `package.json` (and `package-lock.json`): `npm version X.Y.Z --no-git-tag-version`.
-2. `CHANGELOG.md`: rename `## Unreleased` to `## X.Y.Z (YYYY-MM-DD)`, with the release date. Check the entries against the change set: every user-visible change from the log is there, and nothing that isn't shipping. Keep the house style (bold lead-in per bullet, issue and PR links).
+2. `CHANGELOG.md`: rename `## Unreleased` to `## X.Y.Z (YYYY-MM-DD)`, with the release date. Check the entries against the change set: every user-visible change from the log is there, and nothing that isn't shipping. Keep the house style (bold lead-in per bullet, issue and PR links), and write them as **The wording** below says: the release notes are built from them.
 3. The Claude Code plugin runs the published CLI at a pinned version: set `X.Y.Z` in `plugins/mcp-events-bridge/.claude-plugin/plugin.json` (`version`) and in `plugins/mcp-events-bridge/bin/events-bridge` (`@hookdeck/mcp-events-bridge@X.Y.Z`). `test/plugin.test.ts` fails until they match `package.json`. The marketplace serves the plugin from `main`, so between merging the release PR and npm publishing it, a new install can't start `watch`: publish straight after merging.
 4. `docs/PLAN.md`: record the release where it lists versions.
 5. Title `chore: release X.Y.Z`. **Gate:** the maintainer approves, then merge.
@@ -93,6 +93,16 @@ Use [`references/release-notes-template.md`](references/release-notes-template.m
 - Then the release's `CHANGELOG.md` section, its `###` headings promoted to `##`, with repo-relative links made absolute (`https://github.com/hookdeck/mcp-events-bridge/blob/main/...`).
 - End with the compare link and the changelog link.
 - Omit empty sections. Follow the repo's writing rules in `AGENTS.md` (terminology, American English, no em dashes). No secrets.
+
+### The wording
+
+These apply to the notes and to the `CHANGELOG.md` entries they're built from.
+
+- **Open the Summary with a full sentence that says what changes for the person running the bridge,** in the second person. Not a short, blunt statement that leaves the point for later. For 0.8.0: "With 0.8.0, Hookdeck Event Gateway delivers each event to your subscribers directly from the service's source, rather than relaying it through the bridge, which now serves the event catalog and manages subscriptions."
+- **Describe usage: what people do, see and get.** The bridge is open source, so internals can be discussed, but the notes and changelog don't need them. Name an internal (an Event Gateway resource name, a mechanism) only when readers need it to act, for example `mcp-sub-<id>`, where a subscription's deliveries appear in their Event Gateway dashboard. The design goes in `docs/ARCHITECTURE.md`.
+- **Say exactly what happens, in plain words.** No jargon such as "out of the data path" (say "events no longer pass through the bridge"), and no "carry" (say includes, has, is signed with, forwards or delivers).
+- **Only the bridge's own changes.** A limitation of Hookdeck Event Gateway itself isn't the bridge's to list (for example how its API parses large integers).
+- **Don't overclaim.** "Their subscriptions keep working" rather than "subscribers notice nothing" when a migration has a short window, even one that's retried.
 
 ## Publish
 

@@ -137,11 +137,11 @@ export interface IssueTriggerInput {
  * (["!410", "!413"]) matches every other status, 2xx included, so successful
  * attempts get retried; entries are evaluated last match wins (stage 3).
  *
- * Retries carry the first signature, so they must finish inside the
- * receiver's 5-minute timestamp window. Three exponential retries from a
- * 20-second interval stay well inside it even if the factor is larger than
- * doubling (20 + 40 + 80 seconds if it doubles). The end-to-end run measures
- * the actual spacing.
+ * Event Gateway signs each attempt afresh (STANDARD_WEBHOOKS destination
+ * auth), so retries don't have to fit inside the receiver's 5-minute timestamp
+ * window. Three exponential retries from a 20-second interval give up within a
+ * few minutes; SEP-3415 suggests 3 to 5 attempts over 10 to 15 minutes. The
+ * end-to-end run measures the actual spacing.
  */
 export const SUBSCRIPTION_RETRY_RULE: Rule = {
   type: 'retry',
@@ -292,7 +292,7 @@ export class HookdeckClient {
 
   /**
    * Accepted requests to several sources, oldest first, with headers and body: poll mode's listing. One call covers
-   * every source (a repeated `source_id`); the meta carries Event Gateway's clock and the rate limit.
+   * every source (a repeated `source_id`); the meta has Event Gateway's clock and the rate limit.
    */
   async listAcceptedRequests(query: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }): Promise<{ page: Page<HookdeckRequest>; meta: ResponseMeta }> {
     const { body, meta } = await this.apiWithMeta<Page<HookdeckRequest>>('/requests', {

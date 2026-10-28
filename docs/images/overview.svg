@@ -59,7 +59,7 @@
   <path class="arrow" d="M200,250 C240,250 240,232 266,232" marker-end="url(#arrowhead)"/>
   <path class="arrow dashed" d="M200,300 C240,300 240,238 266,238" marker-end="url(#arrowhead)"/>
 
-  <!-- Bridge: the MCP server, out of the data path -->
+  <!-- Bridge: the MCP server; events do not pass through it -->
   <rect class="accent" x="470" y="40" width="220" height="80" rx="10" stroke-width="1.6"/>
   <text class="text" x="580" y="74" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
   <text class="muted" x="580" y="98" font-size="14" text-anchor="middle">catalog · subscriptions</text>

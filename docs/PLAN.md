@@ -47,7 +47,7 @@ Question: does the topic-source topology route, dedupe and report problems as de
 
 On the `spike-passthrough` source, add a second filtered connection and a dedupe rule on `headers.webhook-id`. Publish to each subscription, and the same request twice. Record: each connection gets only its own request; the duplicate becomes an ignored event; the `FILTERED` records on the other connection. Check filter behavior for later: `$in` on a string, array matching, case sensitivity.
 
-Then enable webhook notifications to a `spike-notifications` source, add a delivery issue trigger on the spike connections, let a delivery fail, and save a redacted `issue.opened` payload: its shape, how it's signed, and whether it carries the failing response status (needed to act on `410`).
+Then enable webhook notifications to a `spike-notifications` source, add a delivery issue trigger on the spike connections, let a delivery fail, and save a redacted `issue.opened` payload: its shape, how it's signed, and whether it includes the failing response status (needed to act on `410`).
 
 ## Stage 5: Hosted bridge (build)
 
@@ -126,14 +126,14 @@ Done when: the mock agent, given only a tunnel URL, receives an email; adding a 
 - Bring your own identity provider (auth tier 3).
 - Optional OpenAI Secure MCP Tunnel mode, for private networks.
 - `bridge doctor`, `setup --prune` and `--rotate-mcp-secret`.
-- Done early: the GitHub provider, with automatic and manual modes (see "Second source: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` (0.1.0 on 6 Oct, 0.2.0 and 0.2.1 on 8 Oct, 0.3.0 with poll mode and 0.4.0 with `watch` and the Claude Code plugin on 9 Oct, 0.5.0 with SEP-3415's error codes and a `410` rejecting only its delivery on 23 Oct, and 0.6.0 with sources, `source({ type })` for Event Gateway source types and the bearer header on 26 Oct, and 0.7.0 with webhook cursors and replay on 27 Oct), compiled to `dist/`; the README, restructured around it; and the generic webhook provider, for any HTTP sender with HMAC, Standard Webhooks, Basic auth or API key verification, with `providers add webhook <id>` to create its source before the secret exists (see "Generic provider: webhooks" in `ARCHITECTURE.md`).
+- Done early: the GitHub provider, with automatic and manual modes (see "Second source: GitHub" in `ARCHITECTURE.md`); the npm package `@hookdeck/mcp-events-bridge` (0.1.0 on 6 Oct, 0.2.0 and 0.2.1 on 8 Oct, 0.3.0 with poll mode and 0.4.0 with `watch` and the Claude Code plugin on 9 Oct, 0.5.0 with SEP-3415's error codes and a `410` rejecting only its delivery on 23 Oct, and 0.6.0 with sources, `source({ type })` for Event Gateway source types and the bearer header on 26 Oct, 0.7.0 with webhook cursors and replay on 27 Oct, and 0.8.0 with Event Gateway delivering each event from its source on 28 Oct), compiled to `dist/`; the README, restructured around it; and the generic webhook provider, for any HTTP sender with HMAC, Standard Webhooks, Basic auth or API key verification, with `providers add webhook <id>` to create its source before the secret exists (see "Generic provider: webhooks" in `ARCHITECTURE.md`).
 - A release workflow (added 8 Oct): publishing a GitHub Release publishes to npm from GitHub Actions, with npm trusted publishing and provenance (`.github/workflows/release.yml`), and a `test` workflow on pull requests and `main`. Maintainers follow the `mcp-events-bridge-release` skill.
 - Deploy docs and automation for Railway and Render.
 - A Smithery listing.
 
 ## Stage 8: Event Gateway delivers (build)
 
-Event Gateway delivers every MCP Event straight from the service's source, signing every attempt with the subscriber's secret, and the bridge leaves the data path. Design in `ARCHITECTURE.md`, "Delivery: Event Gateway delivers"; probes in `SPIKES.md`. Breaking, accepted while the bridge is in beta; shipped as 0.8.0, before the launch post. It replaces two items that were under "Later": Standard Webhooks destination signing then publishing once per topic (dropped), and delivering straight from the provider source.
+Event Gateway delivers every MCP Event straight from the service's source, signing every attempt with the subscriber's secret, so events no longer pass through the bridge. Design in `ARCHITECTURE.md`, "Delivery: Event Gateway delivers"; probes in `SPIKES.md`. Breaking, accepted while the bridge is in beta; shipped as 0.8.0, before the launch post. It replaces two items that were under "Later": Standard Webhooks destination signing then publishing once per topic (dropped), and delivering straight from the provider source.
 
 In order:
 

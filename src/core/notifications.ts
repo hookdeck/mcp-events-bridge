@@ -6,7 +6,7 @@ import type { SubscriptionStore } from './store.js';
 /*
  * What Event Gateway still sends the bridge: issue notifications, at /inbound/hookdeck. Events don't pass through the
  * bridge (Event Gateway delivers them from the service's source); a notification says a subscription's callback is
- * failing, and the bridge records it for `deliveryStatus`. Every request must carry a valid Hookdeck signature.
+ * failing, and the bridge records it for `deliveryStatus`. Every request must have a valid Hookdeck signature.
  */
 
 export interface InboundResponse {
