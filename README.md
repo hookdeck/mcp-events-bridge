@@ -363,7 +363,7 @@ Set only what the sources in your `bridge.config.ts` need. The names are the one
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission. Only `setup` uses it |
+| `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission, or the GitHub CLI's (`gh auth token`, scope `repo`). Only `setup` uses it |
 | `GITHUB_WEBHOOK_SECRET` | In manual mode | The secret on the webhooks you add (at least 16 characters). Needed wherever the bridge runs |
 
 #### `source()`

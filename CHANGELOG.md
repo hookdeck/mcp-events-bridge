@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Docs:** `GITHUB_TOKEN` can be the GitHub CLI's token (`gh auth token`, scope `repo`) as well as a fine-grained token with the Webhooks permission.
+- **Wording:** the Resend and GitHub event descriptions in `events/list`, and `watch --help`, say "includes" rather than "carries".
+
 ## 0.8.0 (2026-10-28)
 
 Event Gateway now delivers each event to subscribers directly from the service's source, instead of through the bridge. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).

@@ -85,7 +85,7 @@ export type EmailReceivedSummary = z.infer<typeof emailReceivedPayload>;
 export const emailReceived: SourceEvent<EmailReceivedArguments> = {
   name: 'email.received',
   description:
-    'An email arrived at a Resend receiving address. Carries metadata only (sender, recipients, subject); fetch the body with Resend\'s own tools. Filter by `from` to limit who can trigger the agent.',
+    'An email arrived at a Resend receiving address. Includes metadata only (sender, recipients, subject); fetch the body with Resend\'s own tools. Filter by `from` to limit who can trigger the agent.',
   providerEvent: 'email.received',
   inputSchema: z.toJSONSchema(emailReceivedArguments) as Record<string, unknown>,
   parseArguments: (args) => {

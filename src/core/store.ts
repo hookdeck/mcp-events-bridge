@@ -28,7 +28,7 @@ export interface SubscriptionInput {
   url: string;
   /** The subscriber's signing secret, on its destination, which signs every delivery with it. */
   secret: string;
-  /** While a replay runs, where it started: every delivery's cursor carries it until the replay is done. */
+  /** While a replay runs, where it started: every delivery's cursor has it until the replay is done. */
   replay: CursorPosition | null;
   delivery: SubscriptionDeliveryState;
   expiresAt: string;

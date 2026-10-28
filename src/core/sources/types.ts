@@ -79,7 +79,7 @@ export interface SourceDefinition<Options = Record<string, unknown>, Config = an
   displayName: string;
   /** Event Gateway source type, e.g. "RESEND". */
   sourceType: string;
-  /** The header carrying the service's event id, to find an event's request in Event Gateway (e.g. svix-id). */
+  /** The header with the service's event id, to find an event's request in Event Gateway (e.g. svix-id). */
   eventIdHeader?: string;
   // Each event has its own argument type.
   events: SourceEvent<any>[];

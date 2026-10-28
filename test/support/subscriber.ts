@@ -277,7 +277,7 @@ export class Subscriber {
 
     const body = JSON.parse(raw) as Record<string, unknown>;
 
-    // Control envelopes carry a top-level `type`.
+    // Control envelopes have a top-level `type`.
     if (typeof body.type === 'string') {
       if (body.type === 'verification') {
         this.verificationsAnswered.push(String(req.headers['webhook-id']));

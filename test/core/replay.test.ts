@@ -54,7 +54,7 @@ describe("webhook replay (Event Gateway delivers through a connection to the sub
     expect(calls).toEqual(['open des_1', 'settled web_replay 3', 'close web_replay']);
   });
 
-  it('waits out a rate limit (no events, the same cursor, the longest interval), then carries on', async () => {
+  it('waits out a rate limit (no events, the same cursor, the longest interval), then continues', async () => {
     const { replay, published, sleeps } = setup([page([], 'c0', { nextPollMs: MAX_POLL_INTERVAL_MS }), page(['a'], 'c1')]);
     expect(await replay.run('sub_1', 'c0')).toBe(1);
     expect(sleeps).toEqual([MAX_POLL_INTERVAL_MS]);
