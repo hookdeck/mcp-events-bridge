@@ -456,7 +456,7 @@ What an agent's receiver has to do (signatures, dedupe, missed deliveries) is in
 
 ### MCP client libraries: Vercel AI SDK, Mastra, TanStack AI
 
-Three TypeScript MCP client libraries have experimental MCP Events support, and each works with the bridge (tested 26 Oct 2026, before 0.8, with a deployed bridge's `/mcp` endpoint or a local one through a callback URL from the bridge):
+Three TypeScript MCP client libraries have experimental MCP Events support, and each works with the bridge (tested on 0.8.0 on 28 Oct 2026, with a local bridge through a pass-through callback URL, and on 0.7 with a deployed bridge's `/mcp` endpoint):
 
 | Library | Tested | Delivery |
 | --- | --- | --- |

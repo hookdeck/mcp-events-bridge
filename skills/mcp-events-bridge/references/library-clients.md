@@ -8,7 +8,7 @@ Three TypeScript MCP client libraries can subscribe to the bridge's events. Each
 | [Mastra](https://github.com/mastra-ai/mastra/pull/27330), `@mastra/mcp` | 2.5.0 | Poll or webhook | SEP-3415 |
 | [TanStack AI](https://github.com/TanStack/ai/pull/1816), `@tanstack/ai-mcp` | 1.0.0 | Webhook | SEP-3415 |
 
-**Tested:** each against a local bridge on 26 Oct 2026, before 0.8, with a small Node script: list the events, subscribe to `fills.order.filled` for one symbol, receive a signed fill, refresh (where the library has it), unsubscribe. In 0.8 a local bridge's callback URL for them is pass-through (below); that hasn't been retested with each library.
+**Tested:** each against a local 0.8.0 bridge on 28 Oct 2026, through a pass-through callback URL (below), with a small Node script: list the events, subscribe to `fills.order.filled` for one symbol, receive a signed fill (verified by the library), refresh (where the library has it), unsubscribe. Mastra in poll mode too. (Also against 0.7 on 26 Oct.)
 
 ## What they have in common
 
