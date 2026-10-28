@@ -217,7 +217,7 @@ type GithubArguments = z.infer<typeof githubArguments>;
 function githubEvent(type: string, description: string): SourceEvent<GithubArguments> {
   return {
     name: type,
-    description: `GitHub ${type}: ${description} Carries a summary (repository, action, sender, title, number, URL); read the full object with GitHub's own tools. Filter by repository, actions or sender.`,
+    description: `GitHub ${type}: ${description} Includes a summary (repository, action, sender, title, number, URL); read the full object with GitHub's own tools. Filter by repository, actions or sender.`,
     providerEvent: type,
     inputSchema: z.toJSONSchema(githubArguments) as Record<string, unknown>,
     parseArguments: (args) => {

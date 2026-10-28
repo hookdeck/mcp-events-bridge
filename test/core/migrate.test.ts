@@ -93,7 +93,7 @@ describe('migrating from 0.7', () => {
     expect(migrationNeeded(await planMigration(hookdeck, config))).toBe(false);
   });
 
-  it("leaves a subscription it can't re-create as it was, and carries on", async () => {
+  it("leaves a subscription it can't re-create as it was, and continues", async () => {
     const { gateway, hookdeck } = await project07();
     const live = [...gateway.connections.values()].find((c) => c.name === 'mcp-sub-sub_live')!;
     gateway.destinations.get(live.destinationId)!.config = { url: 'https://receiver.example.com/sub_live', auth_type: 'CUSTOM_SIGNATURE', auth: {} };

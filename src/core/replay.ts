@@ -5,10 +5,10 @@ import type { SubscriptionRecord } from './store.js';
  * Webhook replay (SEP-3415): a new subscription made with a cursor gets the events since it. They're found with poll
  * mode's listing of Event Gateway's stored requests (so the cursor is poll's), and Event Gateway delivers them: while
  * the replay runs, a connection from the bridge's Publish API source (`bridge-replay`) to the subscription's own
- * destination carries the envelopes the bridge builds with the source's runtime, and the destination signs every
+ * destination delivers the envelopes the bridge builds with the source's runtime, and the destination signs every
  * attempt with the subscriber's secret. Retrying the stored requests instead can't work: Event Gateway only retries a
  * request for the connections it was routed to when it arrived, and a new subscription's connection wasn't one
- * (verified 27 Oct). While it runs, the subscription carries a replay marker, and every delivery's cursor (replayed or
+ * (verified 27 Oct). While it runs, the subscription has a replay marker, and every delivery's cursor (replayed or
  * live, see transformation.ts) points where the replay started; once the replayed events have settled, the replay
  * connection is deleted and the marker cleared. An event can arrive twice (a live one during the replay, or one from
  * the minute before the cursor), so receivers dedupe by eventId.
@@ -29,7 +29,7 @@ export interface ReplayEnvelope {
 
 export interface WebhookReplayDeps {
   poll: Pick<PollService, 'poll'>;
-  /** The cursor replayed deliveries carry: where the replay started (the subscription's replay marker). */
+  /** The cursor in replayed deliveries: where the replay started (the subscription's replay marker). */
   cursor: (subscription: SubscriptionRecord) => string;
   /** Creates the replay connection to the subscription's destination; resolves with its id. */
   open: (subscription: SubscriptionRecord) => Promise<string>;
@@ -54,7 +54,7 @@ export class WebhookReplay {
     this.log = deps.log ?? (() => {});
   }
 
-  /** Replays in the background; a failure is logged, and the subscription carries on with live events. */
+  /** Replays in the background; a failure is logged, and the subscription continues with live events. */
   start(subscription: SubscriptionRecord, cursor: string): void {
     this.run(subscription.id, cursor)
       .catch((error: unknown) => this.log(`replay to ${subscription.id} stopped: ${(error as Error).message}`))

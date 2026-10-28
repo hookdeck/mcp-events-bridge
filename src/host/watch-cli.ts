@@ -33,7 +33,7 @@ Options:
   --url <MCP URL>         the bridge's MCP URL. Default with event names or --list: BRIDGE_MCP_URL,
                           else BRIDGE_PUBLIC_URL (or the local port) plus /mcp, read from the
                           environment or .env. For a URL ending /mcp, BRIDGE_MCP_SECRET is sent as
-                          Authorization: Bearer; a URL ending /mcp/<secret> carries it itself
+                          Authorization: Bearer; a URL ending /mcp/<secret> includes it itself
   --url-file <file>       a file holding the MCP URL, read when connecting, else BRIDGE_MCP_URL
                           (default with --store: <store>/mcp-url; .env isn't read)
   --secret-file <file>    a file holding the secret to send as Authorization: Bearer, read when
@@ -102,7 +102,7 @@ function secretSource(values: ListValues): () => string | undefined {
         const secret = fs.readFileSync(file, 'utf8').trim();
         if (secret) return secret;
       } catch {
-        // not written: the URL may carry the secret itself
+        // not written: the URL may include the secret itself
       }
     }
     return process.env.BRIDGE_MCP_SECRET || undefined;

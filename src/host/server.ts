@@ -115,7 +115,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const ignoreNotFound = (error: unknown) => {
     if (!(error instanceof HookdeckApiError && error.status === 404)) throw error;
   };
-  // A replay a restart interrupted: its connection goes, and so does the marker its deliveries' cursors carry.
+  // A replay a restart interrupted: its connection goes, and so does the marker its deliveries' cursors come from.
   if (!options.store) {
     for (const connection of await hookdeck.listAllConnections()) {
       if (connection.name.startsWith(REPLAY_CONNECTION_PREFIX)) await hookdeck.deleteConnection(connection.id).catch(ignoreNotFound);

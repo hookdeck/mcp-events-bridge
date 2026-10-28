@@ -73,7 +73,7 @@ describe('transformation: built from the source runtime, self-contained', () => 
     expect(Number(cursor.t) - Number(cursor.w)).toBe(60_000);
   });
 
-  it('carries the replay\'s start while a replay runs, and no cursor without subscription metadata', () => {
+  it('uses the replay\'s start as the cursor while a replay runs, and no cursor without subscription metadata', () => {
     const req = fixture('resend', 'email-received.json');
     const code = buildTransformation(sourceOf('resend'), catalog);
     const during = run(code, req, { name: 'mcp-sub-sub_1', description: JSON.stringify({ v: 2, ca: 'a', rp: { f: 1000, w: 2000 } }) });

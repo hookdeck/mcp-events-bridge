@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Tunnel, bin, install } from 'cloudflared';
 import { HookdeckClient } from '../src/core/hookdeck.js';
@@ -71,6 +72,8 @@ const env = (name: string) => {
 };
 
 const CLI_CONFIG = '.hookdeck/config.toml';
+/** Recorded in the event mappings (transformations) the bridge writes, as `serve` does. */
+const VERSION = (JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { version: string }).version;
 const REMOTE = process.env.E2E_BRIDGE_URL?.replace(/\/$/, '');
 const EXTENDED = process.env.E2E_EXTENDED === '1';
 const GITHUB = process.env.E2E_GITHUB === '1';
@@ -123,7 +126,7 @@ async function sendEmail(from: string, subject: string) {
 
 /**
  * What drives the checks: real emails through Resend (the default), or signed fills to the generic webhook provider
- * (E2E_SOURCE=webhook). Each event carries a tag (the email's subject, the fill's id) so a check can find it.
+ * (E2E_SOURCE=webhook). Each event has a tag (the email's subject, the fill's id) so a check can find it.
  */
 interface TestEvents {
   providerId: string;
@@ -268,7 +271,7 @@ async function main() {
     if (!health) return;
   } else {
     // A short grace period for unused callback URLs, so the local agent checks can see them deleted.
-    const bridge = await createBridgeServer(config, { hookdeck, callbackSettings: { graceMs: 90_000 }, log: (m) => console.log(`[bridge] ${m}`) });
+    const bridge = await createBridgeServer(config, { hookdeck, version: VERSION, callbackSettings: { graceMs: 90_000 }, log: (m) => console.log(`[bridge] ${m}`) });
     const { port } = await bridge.listen();
     bridgeUrl = `http://127.0.0.1:${port}`;
 
@@ -406,10 +409,10 @@ async function main() {
   const left = (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length;
   record('unsubscribe deletes the subscription connection', left === 0);
 
-  // 6. Replay (SEP-3415): every delivery carries a cursor, and an event sent while nothing was subscribed reaches a new
+  // 6. Replay (SEP-3415): every delivery includes a cursor, and an event sent while nothing was subscribed reaches a new
   // subscription made with the last one: Event Gateway retries the stored request for the new subscription's connection.
   const lastCursor = main.events.at(-1)?.cursor ?? null;
-  record('deliveries carry a cursor', main.events.length > 0 && main.events.every((e) => typeof e.cursor === 'string'), `${main.events.length} event(s)`);
+  record('deliveries include a cursor', main.events.length > 0 && main.events.every((e) => typeof e.cursor === 'string'), `${main.events.length} event(s)`);
   if (!lastCursor) return;
   const missed = events.tag('while unsubscribed');
   await events.send(missed);
@@ -582,9 +585,17 @@ async function githubPush(ctx: { hookdeck: HookdeckClient; subscriber: Subscribe
       ...(body !== undefined && { body: JSON.stringify(body) }),
     });
   const source = (await ctx.hookdeck.listSources({ name: ctx.sourceName })).models[0];
-  const hooks = (await (await api('/hooks')).json()) as Array<{ id: number; config?: { url?: string } }>;
+  const listed = await api('/hooks');
+  const hooks = (await listed.json()) as Array<{ id: number; config?: { url?: string } }>;
   const hook = Array.isArray(hooks) ? hooks.find((h) => h.config?.url === source?.url) : undefined;
-  record('GitHub webhook registered at the Event Gateway source', Boolean(source && hook), ctx.repo);
+  // A token that can't read webhooks (it needs the Webhooks permission, or the repo scope) says so, rather than
+  // looking like a missing webhook.
+  const why = !listed.ok
+    ? `GITHUB_TOKEN can't read ${ctx.repo}'s webhooks (HTTP ${listed.status}): it needs the Webhooks permission, or the repo scope (gh auth token)`
+    : !source
+      ? `no ${ctx.sourceName} source: run setup`
+      : `no webhook on ${ctx.repo} at the source URL: run setup`;
+  record('GitHub webhook registered at the Event Gateway source', Boolean(source && hook), source && hook ? ctx.repo : why);
   if (!source || !hook) return;
 
   const repo = (await (await api('')).json()) as { default_branch: string };
@@ -692,7 +703,7 @@ async function extended(ctx: {
     const retried = ids.filter((eventId, i) => ids.indexOf(eventId) !== i);
     record('a 410 from the callback is not retried', ids.length >= 1 && retried.length === 0, `${ids.length} attempt(s) for ${new Set(ids).size} event(s)`);
     const kept = (await hookdeck.listConnections({ name: subscriptionResourceName(id) })).models.length === 1;
-    // A refresh re-runs the challenge, so a quick tunnel that has dropped fails it: record that, and carry on to C.
+    // A refresh re-runs the challenge, so a quick tunnel that has dropped fails it: record that, and go on to C.
     const refreshed = kept ? await gone.refresh().catch((error: Error) => ({ error: error.message })) : undefined;
     const status = refreshed && 'error' in refreshed ? `refresh failed: ${refreshed.error}` : JSON.stringify(refreshed?.deliveryStatus ?? (kept ? null : 'deleted'));
     record('a 410 keeps the subscription, with no delivery error', kept && !!refreshed && !('error' in refreshed) && !refreshed.deliveryStatus?.lastError, status);
