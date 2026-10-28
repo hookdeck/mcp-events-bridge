@@ -18,6 +18,7 @@
 
 - **`mcp-events-bridge callback-url create|list`:** asks the bridge running on this machine for a callback URL (`--agent`, `--name`, `--port`, `--path`), reading the secret from an environment variable (`--secret-env <VAR>`) so it never appears in a command line. Without `--secret-env`, the URL is pass-through.
 - **`--migrate` on `setup` and `serve`,** to migrate data from an earlier version without asking, for hosts without a terminal.
+- **Each source's transformation records the bridge version that wrote it.** If a newer version wrote it (another bridge on that version sharing the project), `setup` and `serve` say so and go through the same migration step before replacing it; one an older version wrote is updated, with a log line (`updated the event mapping for source resend, written by 0.8.0, to 0.8.1`).
 - **[`docs/UPGRADING.md`](docs/UPGRADING.md),** for upgrading from 0.7.
 
 ### Fixed

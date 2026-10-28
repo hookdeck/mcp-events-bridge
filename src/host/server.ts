@@ -94,7 +94,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
 
   // Each subscription is a connection on its source, with the source's transformation (written here for this version
   // and config), a filter for its event and arguments, and the cursor's arguments hash.
-  const transformations = options.store ? new Map<string, string>() : await ensureTransformations(hookdeck, config.sources, catalog);
+  const transformations = options.store ? new Map<string, string>() : await ensureTransformations(hookdeck, config.sources, catalog, { version: options.version, log });
   const place = placeSubscriptions({ catalog, sourceIdFor: (id) => history.sourceIdFor(id), transformations });
   const store = options.store ?? new EventGatewayStore(hookdeck, place);
   const loaded = await store.load();

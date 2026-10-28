@@ -174,6 +174,11 @@ export class FakeEventGateway {
       return json(200, transformation);
     }
 
+    if (method === 'GET' && path === '/transformations') {
+      const name = url.searchParams.get('name');
+      return json(200, { models: [...this.transformations.values()].filter((t) => !name || t.name === name), pagination: {} });
+    }
+
     if (method === 'PUT' && path === '/notifications/webhooks') {
       this.webhookNotifications = JSON.parse(String(init?.body));
       return json(200, this.webhookNotifications);

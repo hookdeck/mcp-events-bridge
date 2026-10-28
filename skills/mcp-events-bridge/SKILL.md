@@ -117,7 +117,7 @@ Every event is named **`{source id}.{event}`**: the source `id` (by default its 
 | An agent doesn't get an event | Its filter or event type didn't match, or its callback is failing | Check the subscription's connection, `mcp-sub-<id>`, in the Event Gateway dashboard (`FILTERED`, or failed attempts), and its name and arguments |
 | An event arrives after a minute or two | `hookdeck listen` occasionally takes ~30s to connect; Event Gateway occasionally queues a CLI delivery | Wait; missed deliveries are retried by the bridge |
 | The same event twice | A retry, or a replay | Receivers dedupe by `webhook-id` |
-| `serve` exits: "... must be migrated before serve starts" | Data from 0.7, and no terminal to ask in | Run `setup` and answer `y`, or start `serve --migrate` |
+| `serve` exits: "... must be migrated before serve starts" | Data from 0.7, or event mappings a newer bridge version wrote (another bridge may share the project), and no terminal to ask in | Run `setup` and answer `y`, or start `serve --migrate` |
 | ``Config: `providers` in the config is now `sources` ...`` (or another name "removed in 0.8.0") | A name deprecated in 0.6.0 | Rename it as the message says |
 | `warning: <name> is a pass-through callback URL` | A subscription uses a callback URL created without a secret | Expected for Hermes Agent and the client libraries; their receivers verify each delivery |
 | Subscribing with a callback URL from the bridge fails with `CallbackEndpointError` | The URL holds a different secret from the one subscribing | Create a callback URL with the secret the agent subscribes with |

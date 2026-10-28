@@ -3,7 +3,9 @@ import { CallbackRegistry } from '../../src/core/callbacks.js';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
 import { EventGatewayStore } from '../../src/core/event-gateway-store.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
-import { describeMigration, migrate, migrationNeeded, planMigration } from '../../src/core/migrate.js';
+import { Catalog } from '../../src/core/catalog.js';
+import { compareVersions, describeMigration, migrate, migrationNeeded, migrationNotice, planMigration } from '../../src/core/migrate.js';
+import { ensureTransformations, transformationVersion } from '../../src/core/transformation.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { resend } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
@@ -55,7 +57,7 @@ describe('migrating from 0.7', () => {
     const { gateway, hookdeck, subscriber } = await project07();
     const logs: string[] = [];
     const report = await migrate({ hookdeck, config, plan: await planMigration(hookdeck, config), now: () => NOW, log: (m) => logs.push(m) });
-    expect(report).toEqual({ subscriptions: 1, removed: 2, failed: 0, callbacks: 1, topicSources: 1, inboundConnections: 1 });
+    expect(report).toEqual({ subscriptions: 1, removed: 2, failed: 0, callbacks: 1, topicSources: 1, inboundConnections: 1, transformations: 0 });
 
     const store = new EventGatewayStore(hookdeck, async () => {
       throw new Error('not used');
@@ -102,6 +104,31 @@ describe('migrating from 0.7', () => {
     expect(logs.some((l) => l.startsWith('could not migrate subscription sub_live: its destination has no secret or URL'))).toBe(true);
     // Its topic source stays while it's still on it.
     expect([...gateway.sources.values()].map((s) => s.name)).toContain('bridge-out-resend_email_received');
+  });
+
+  it('finds event mappings a newer version wrote, says so in plain terms, and replaces them when migrating', async () => {
+    const gateway = new FakeEventGateway();
+    const hookdeck = new HookdeckClient({ apiKey: 'k', fetch: gateway.fetch });
+    await ensureTransformations(hookdeck, config.sources, new Catalog(config.sources), { version: '0.8.1' });
+    expect(migrationNeeded(await planMigration(hookdeck, config, '0.8.1'))).toBe(false); // the same version
+    expect(migrationNeeded(await planMigration(hookdeck, config, '0.9.0'))).toBe(false); // an older one: an upgrade
+    const plan = await planMigration(hookdeck, config, '0.8.0');
+    expect(plan.transformations).toEqual([{ source: 'resend', version: '0.8.1' }]);
+    expect(migrationNeeded(plan)).toBe(true);
+    expect(migrationNotice(plan, '0.8.0')).toBe(
+      "This project's event mappings in Event Gateway were written by a newer version of the bridge (source resend, 0.8.1); this is 0.8.0. Another bridge on the newer version may share this project, and migrating replaces them with this version's.",
+    );
+    expect(await migrate({ hookdeck, config, plan, version: '0.8.0', now: () => NOW })).toMatchObject({ transformations: 1 });
+    expect(transformationVersion([...gateway.transformations.values()][0]!.code)).toBe('0.8.0');
+    expect(migrationNeeded(await planMigration(hookdeck, config, '0.8.0'))).toBe(false);
+  });
+
+  it('orders versions, with a pre-release before its release', () => {
+    expect(compareVersions('0.8.1', '0.8.0')).toBeGreaterThan(0);
+    expect(compareVersions('0.10.0', '0.9.9')).toBeGreaterThan(0);
+    expect(compareVersions('0.8.0-beta.1', '0.8.0')).toBeLessThan(0);
+    expect(compareVersions('0.8.0', '0.8.0')).toBe(0);
+    expect(compareVersions('unknown', '0.8.0')).toBe(0);
   });
 
   it('finds nothing to migrate in a new project', async () => {

@@ -58,6 +58,8 @@ export interface SetupDeps {
   config: ResolvedConfig;
   hookdeck: HookdeckClient;
   fetch: typeof fetch;
+  /** The bridge's version, recorded in the transformations it writes. */
+  version?: string;
   log?: (message: string) => void;
 }
 
@@ -238,7 +240,7 @@ export function mcpUrl(config: ResolvedConfig, secret: string): string {
 export async function runSetup(deps: SetupDeps): Promise<SetupReport> {
   const sources = [];
   for (const source of deps.config.sources) sources.push(await setupProvider(deps, source));
-  await ensureTransformations(deps.hookdeck, deps.config.sources, new Catalog(deps.config.sources));
+  await ensureTransformations(deps.hookdeck, deps.config.sources, new Catalog(deps.config.sources), { version: deps.version, log: deps.log });
   deps.log?.(`upserted ${deps.config.sources.length} transformation(s): ${deps.config.sources.map((s) => transformationName(s.id)).join(', ')}`);
   const { notifications, triggers } = await setupNotifications(deps);
   const generated = !deps.config.auth.mcpSecret;

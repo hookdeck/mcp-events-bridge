@@ -462,7 +462,7 @@ export class HookdeckClient {
   }
 
   listTransformations(query: { name?: string } = {}) {
-    return this.api<Page<{ id: string; name: string }>>('/transformations', { query: { name: query.name } });
+    return this.api<Page<{ id: string; name: string; code?: string }>>('/transformations', { query: { name: query.name } });
   }
 
   deleteTransformation(id: string) {

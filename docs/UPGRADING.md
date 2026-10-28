@@ -28,6 +28,8 @@ Run `mcp-events-bridge setup` to migrate it, or start serve with --migrate to mi
 
 `--migrate`, on `setup` or `serve`, migrates without asking. On a project with nothing to migrate it does nothing, so it's safe to leave on.
 
+The same check runs on every later upgrade. Each source's event mapping in Event Gateway (its transformation) records the bridge version that wrote it: an older version's is updated when the new one starts, and a newer version's, which means another bridge on that version may share the project, goes through the same question (or `--migrate`) before it's replaced.
+
 ### On Fly.io, or any host without a terminal
 
 Either:

@@ -6,7 +6,8 @@ import { HookdeckApiError, type Connection, type HookdeckClient } from './hookde
 import { providerConnectionName, providerSourceName, SUBSCRIPTION_PREFIX } from './names.js';
 import { placeSubscriptions } from './placement.js';
 import { healthyDelivery, type SubscriptionInput } from './store.js';
-import { ensureTransformations } from './transformation.js';
+import { ensureTransformations, transformationVersion } from './transformation.js';
+import { transformationName } from './names.js';
 
 /*
  * Migrating a project from 0.7 or earlier, where the bridge relayed every event: a subscription was a connection on a
@@ -34,6 +35,8 @@ export interface MigrationPlan {
   callbacks: Connection[];
   topicSources: Array<{ id: string; name: string }>;
   inboundConnections: Connection[];
+  /** Sources whose transformation a newer bridge version wrote: another bridge on that version may share the project. */
+  transformations: Array<{ source: string; version: string }>;
 }
 
 export interface MigrationReport {
@@ -45,16 +48,46 @@ export interface MigrationReport {
   callbacks: number;
   topicSources: number;
   inboundConnections: number;
+  transformations: number;
 }
 
 type MigrationHookdeck = Pick<
   HookdeckClient,
-  'listAllConnections' | 'listSources' | 'getDestination' | 'deleteConnection' | 'deleteDestination' | 'deleteSource' | 'upsertSource' | 'upsertConnection' | 'upsertTransformation'
+  'listAllConnections' | 'listSources' | 'getDestination' | 'deleteConnection' | 'deleteDestination' | 'deleteSource' | 'upsertSource' | 'upsertConnection' | 'upsertTransformation' | 'listTransformations'
 >;
 
-export async function planMigration(hookdeck: Pick<HookdeckClient, 'listAllConnections' | 'listSources'>, config: ResolvedConfig): Promise<MigrationPlan> {
+/** Orders two versions (`X.Y.Z`, with an optional pre-release); 0 when either isn't one. */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(v);
+    return m ? { n: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] } : undefined;
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return 0;
+  for (let i = 0; i < 3; i++) if (x.n[i] !== y.n[i]) return x.n[i]! - y.n[i]!;
+  if (x.pre === y.pre) return 0;
+  if (x.pre === undefined) return 1;
+  if (y.pre === undefined) return -1;
+  return x.pre < y.pre ? -1 : 1;
+}
+
+/** `version` is this bridge's: transformations a newer version wrote are part of the plan. */
+export async function planMigration(
+  hookdeck: Pick<HookdeckClient, 'listAllConnections' | 'listSources' | 'listTransformations'>,
+  config: ResolvedConfig,
+  version?: string,
+): Promise<MigrationPlan> {
   const connections = await hookdeck.listAllConnections();
   const sources = (await hookdeck.listSources({ limit: 255 })).models;
+  const transformations: MigrationPlan['transformations'] = [];
+  if (version) {
+    for (const source of config.sources) {
+      const name = transformationName(source.id);
+      const found = transformationVersion((await hookdeck.listTransformations({ name })).models.find((t) => t.name === name)?.code);
+      if (found && compareVersions(found, version) > 0) transformations.push({ source: source.id, version: found });
+    }
+  }
   return {
     subscriptions: connections.filter(isLegacySubscription),
     callbacks: connections.filter((c) => isLegacyCallback(c.description)),
@@ -63,11 +96,13 @@ export async function planMigration(hookdeck: Pick<HookdeckClient, 'listAllConne
     inboundConnections: connections.filter((c) =>
       config.sources.some((s) => c.name === providerConnectionName(s.id, config.deployment) && c.source?.name === providerSourceName(s.id)),
     ),
+    transformations,
   };
 }
 
-export const migrationNeeded = (plan: MigrationPlan) =>
-  plan.subscriptions.length + plan.callbacks.length + plan.topicSources.length + plan.inboundConnections.length > 0;
+const hasData07 = (plan: MigrationPlan) => plan.subscriptions.length + plan.callbacks.length + plan.topicSources.length + plan.inboundConnections.length > 0;
+
+export const migrationNeeded = (plan: MigrationPlan) => hasData07(plan) || plan.transformations.length > 0;
 
 /** What was found, in a user's terms: subscriptions and callback URLs, not Event Gateway resources. */
 export function describeMigration(plan: MigrationPlan): string {
@@ -79,11 +114,24 @@ export function describeMigration(plan: MigrationPlan): string {
   return parts.length ? `${parts.join(' and ')} from an earlier version` : 'Event Gateway resources from an earlier version';
 }
 
-export async function migrate(deps: { hookdeck: MigrationHookdeck; config: ResolvedConfig; plan: MigrationPlan; now?: () => Date; log?: (message: string) => void }): Promise<MigrationReport> {
+/** What setup and serve say they found, in a user's terms. */
+export function migrationNotice(plan: MigrationPlan, version: string): string {
+  const parts: string[] = [];
+  if (hasData07(plan)) parts.push(`The bridge's data model in Event Gateway changed in 0.8. This project has ${describeMigration(plan)}.`);
+  if (plan.transformations.length) {
+    const found = plan.transformations.map((t) => `source ${t.source}, ${t.version}`).join('; ');
+    parts.push(
+      `This project's event mappings in Event Gateway were written by a newer version of the bridge (${found}); this is ${version}. Another bridge on the newer version may share this project, and migrating replaces them with this version's.`,
+    );
+  }
+  return parts.join(' ');
+}
+
+export async function migrate(deps: { hookdeck: MigrationHookdeck; config: ResolvedConfig; plan: MigrationPlan; version?: string; now?: () => Date; log?: (message: string) => void }): Promise<MigrationReport> {
   const { hookdeck, config, plan } = deps;
   const log = deps.log ?? (() => {});
   const now = (deps.now ?? (() => new Date()))();
-  const report: MigrationReport = { subscriptions: 0, removed: 0, failed: 0, callbacks: 0, topicSources: 0, inboundConnections: 0 };
+  const report: MigrationReport = { subscriptions: 0, removed: 0, failed: 0, callbacks: 0, topicSources: 0, inboundConnections: 0, transformations: 0 };
 
   // 1. Callback URLs first, so they accept deliveries signed with the subscriber's secret alone.
   for (const connection of plan.callbacks) {
@@ -112,8 +160,14 @@ export async function migrate(deps: { hookdeck: MigrationHookdeck; config: Resol
 
   // 2. Subscriptions, on their service's source.
   const catalog = new Catalog(config.sources);
+  // Event mappings a newer version wrote are replaced with this version's.
+  if (plan.transformations.length && !plan.subscriptions.length) {
+    await ensureTransformations(hookdeck, config.sources, catalog, { version: deps.version });
+  }
+  report.transformations = plan.transformations.length;
+
   if (plan.subscriptions.length) {
-    const transformations = await ensureTransformations(hookdeck, config.sources, catalog);
+    const transformations = await ensureTransformations(hookdeck, config.sources, catalog, { version: deps.version });
     const sourceIds = new Map<string, string>();
     const sourceIdFor = async (id: string) => {
       if (!sourceIds.has(id)) {
@@ -186,7 +240,7 @@ export async function migrate(deps: { hookdeck: MigrationHookdeck; config: Resol
   }
 
   log(
-    `migrated ${report.subscriptions} subscription(s) and ${report.callbacks} callback URL(s)` +
+    `migrated ${report.subscriptions} subscription(s), ${report.callbacks} callback URL(s) and ${report.transformations} event mapping(s)` +
       (report.removed ? `; removed ${report.removed} expired or no longer offered` : '') +
       (report.failed ? `; ${report.failed} failed (see above)` : ''),
   );

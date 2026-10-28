@@ -7,7 +7,7 @@ import { Catalog, descriptionWarnings } from './core/catalog.js';
 import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedConfig, type ResolvedSource } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
-import { describeMigration, migrate, migrationNeeded, planMigration, UPGRADING_URL } from './core/migrate.js';
+import { migrate, migrationNeeded, migrationNotice, planMigration, UPGRADING_URL } from './core/migrate.js';
 import { providerSourceName } from './core/names.js';
 import { source, type SourceOptions, type WebhookVerification } from './core/sources/source.js';
 import { SOURCE_TYPES, type SourceTypeName } from './core/sources/source-types.generated.js';
@@ -76,7 +76,6 @@ Options:
   --write-config             add the entry to bridge.config.ts, creating it if needed (default: print it to paste)
   --config <file>            the config file (default bridge.config.ts)`;
 
-const MIGRATION_INTRO = "The bridge's data model in Event Gateway changed in 0.8.";
 
 /** Asks a yes/no question in a terminal; Enter means yes. */
 async function confirm(question: string): Promise<boolean> {
@@ -95,17 +94,21 @@ const interactive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
  * and otherwise not. Returns false if there's data left to migrate.
  */
 async function offerMigration(config: ResolvedConfig, hookdeck: HookdeckClient, { auto, log }: { auto: boolean; log: (message: string) => void }): Promise<boolean> {
-  const plan = await planMigration(hookdeck, config);
+  const version = packageVersion();
+  const plan = await planMigration(hookdeck, config, version);
   if (!migrationNeeded(plan)) return true;
-  const found = `${MIGRATION_INTRO} This project has ${describeMigration(plan)}.`;
+  const found = migrationNotice(plan, version);
   if (!auto) {
-    if (!interactive()) return false;
+    if (!interactive()) {
+      log(found);
+      return false;
+    }
     console.log(`\n${found}\nSubscribers keep their subscriptions and callback URLs. More: ${UPGRADING_URL}`);
     if (!(await confirm('Migrate now?'))) return false;
   } else {
     log(`${found} Migrating (--migrate). More: ${UPGRADING_URL}`);
   }
-  await migrate({ hookdeck, config, plan, log });
+  await migrate({ hookdeck, config, plan, version, log });
   return true;
 }
 
@@ -113,7 +116,7 @@ async function setup(configFile: string | undefined, { migrate: auto }: { migrat
   const config = await loadConfig({ file: configFile });
   for (const warning of config.warnings) console.warn(`warning: ${warning}`);
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
-  const report = await runSetup({ config, hookdeck, fetch, log: (m) => console.log(`  ${m}`) });
+  const report = await runSetup({ config, hookdeck, fetch, version: packageVersion(), log: (m) => console.log(`  ${m}`) });
   const migrated = await offerMigration(config, hookdeck, { auto, log: (m) => console.log(`  ${m}`) });
 
   console.log(`\nDeployment "${config.deployment}", ${config.inbound} inbound`);
@@ -151,7 +154,7 @@ async function setup(configFile: string | undefined, { migrate: auto }: { migrat
     process.exitCode = 1;
   }
   if (!migrated) {
-    console.error(`\n${MIGRATION_INTRO} Data from an earlier version isn't migrated, and serve won't start until it is: run setup again, or setup --migrate. More: ${UPGRADING_URL}`);
+    console.error(`\nNot migrated, and serve won't start until it is: run setup again, or setup --migrate. More: ${UPGRADING_URL}`);
     process.exitCode = 1;
   }
 }
@@ -165,7 +168,7 @@ async function serve(configFile: string | undefined, { manageListen, migrate: au
   // Data from an earlier version: subscriptions there aren't served, and its inbound connections would send events here.
   if (!(await offerMigration(config, new HookdeckClient({ apiKey: config.hookdeck.apiKey }), { auto, log: (m) => console.log(`[bridge] ${m}`) }))) {
     console.error(
-      `[bridge] ${MIGRATION_INTRO} This project has data from an earlier version, which must be migrated before serve starts.\n` +
+      `[bridge] This project's data in Event Gateway must be migrated before serve starts.\n` +
         `Run \`mcp-events-bridge setup\` to migrate it, or start serve with --migrate to migrate it automatically. More: ${UPGRADING_URL}`,
     );
     process.exitCode = 1;
