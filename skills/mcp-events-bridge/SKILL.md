@@ -67,7 +67,7 @@ npx mcp-events-bridge serve
 ```
 
 - **Success:** `[bridge] hookdeck listen connected: ...` and `[bridge] MCP endpoint: http://127.0.0.1:8080/mcp with Authorization: Bearer <BRIDGE_MCP_SECRET>, or http://127.0.0.1:8080/mcp/<BRIDGE_MCP_SECRET>`. Keep it running; stop it with Ctrl-C (or `kill` its PID), which also stops its `hookdeck listen`.
-- It restarts `hookdeck listen` if it stops. Events don't pass through the bridge (Event Gateway delivers them), so a stopped bridge loses none; `listen` carries Event Gateway's issue notifications and local agents' deliveries.
+- It restarts `hookdeck listen` if it stops. Events don't pass through the bridge (Event Gateway delivers them), so a stopped bridge loses none; `listen` forwards Event Gateway's issue notifications and local agents' deliveries.
 
 ## 3. Add sources
 

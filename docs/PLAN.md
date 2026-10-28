@@ -47,7 +47,7 @@ Question: does the topic-source topology route, dedupe and report problems as de
 
 On the `spike-passthrough` source, add a second filtered connection and a dedupe rule on `headers.webhook-id`. Publish to each subscription, and the same request twice. Record: each connection gets only its own request; the duplicate becomes an ignored event; the `FILTERED` records on the other connection. Check filter behavior for later: `$in` on a string, array matching, case sensitivity.
 
-Then enable webhook notifications to a `spike-notifications` source, add a delivery issue trigger on the spike connections, let a delivery fail, and save a redacted `issue.opened` payload: its shape, how it's signed, and whether it carries the failing response status (needed to act on `410`).
+Then enable webhook notifications to a `spike-notifications` source, add a delivery issue trigger on the spike connections, let a delivery fail, and save a redacted `issue.opened` payload: its shape, how it's signed, and whether it includes the failing response status (needed to act on `410`).
 
 ## Stage 5: Hosted bridge (build)
 
@@ -133,7 +133,7 @@ Done when: the mock agent, given only a tunnel URL, receives an email; adding a 
 
 ## Stage 8: Event Gateway delivers (build)
 
-Event Gateway delivers every MCP Event straight from the service's source, signing every attempt with the subscriber's secret, and the bridge leaves the data path. Design in `ARCHITECTURE.md`, "Delivery: Event Gateway delivers"; probes in `SPIKES.md`. Breaking, accepted while the bridge is in beta; shipped as 0.8.0, before the launch post. It replaces two items that were under "Later": Standard Webhooks destination signing then publishing once per topic (dropped), and delivering straight from the provider source.
+Event Gateway delivers every MCP Event straight from the service's source, signing every attempt with the subscriber's secret, so events no longer pass through the bridge. Design in `ARCHITECTURE.md`, "Delivery: Event Gateway delivers"; probes in `SPIKES.md`. Breaking, accepted while the bridge is in beta; shipped as 0.8.0, before the launch post. It replaces two items that were under "Later": Standard Webhooks destination signing then publishing once per topic (dropped), and delivering straight from the provider source.
 
 In order:
 

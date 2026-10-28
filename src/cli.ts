@@ -129,7 +129,7 @@ async function setup(configFile: string | undefined, { migrate: auto }: { migrat
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
-    // `listen` only carries Event Gateway's issue notifications: events go from each source straight to subscribers.
+    // `listen` only forwards Event Gateway's issue notifications: events go from each source straight to subscribers.
     console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(config, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     // Log the CLI in now rather than at the first `serve`, so `hookdeck` commands run here use the bridge's project from the start.
     const cliConfigPath = process.env.BRIDGE_HOOKDECK_CLI_CONFIG ?? DEFAULT_CLI_CONFIG;

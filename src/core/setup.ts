@@ -38,7 +38,7 @@ export interface SetupReport {
   }>;
   notifications: { source: string; connection: string };
   triggers: string[];
-  /** `endpoint` takes the secret as `Authorization: Bearer`; `url` carries it in the path. */
+  /** `endpoint` takes the secret as `Authorization: Bearer`; `url` has it in the path. */
   mcp: { secret: string; generated: boolean; endpoint: string; url: string };
 }
 

@@ -8,7 +8,7 @@ export interface SignedHeaders {
 
 /**
  * Builds Standard Webhooks headers for a body. With more than one secret the
- * signature header carries one `v1,<sig>` entry per secret, space-separated,
+ * signature header has one `v1,<sig>` entry per secret, space-separated,
  * which is how secret rotation works (receivers accept any matching entry).
  */
 export function signStandardWebhook(

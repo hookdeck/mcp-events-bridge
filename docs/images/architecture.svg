@@ -33,7 +33,7 @@
   <rect class="bg" x="1" y="1" width="1198" height="598" rx="14"/>
 
   <g transform="translate(0,120)">
-    <!-- Bridge: the MCP server, out of the data path -->
+    <!-- Bridge: the MCP server; events do not pass through it -->
     <rect class="accent" x="505" y="-100" width="250" height="72" rx="10" stroke-width="1.6"/>
     <text class="text" x="630" y="-70" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
     <text class="muted" x="630" y="-47" font-size="13" text-anchor="middle">catalog · subscriptions · challenge</text>

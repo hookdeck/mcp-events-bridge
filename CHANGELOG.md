@@ -4,7 +4,7 @@
 
 ## 0.8.0 (2026-10-28)
 
-Event Gateway now delivers each event straight from the service's source, and the bridge leaves the data path. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).
+Event Gateway now delivers each event to subscribers directly from the service's source, instead of through the bridge. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).
 
 ### Breaking
 
@@ -25,20 +25,17 @@ Event Gateway now delivers each event straight from the service's source, and th
 
 ### Fixed
 
-- **Retries carry a fresh signature.** Event Gateway signs each attempt, so a delivery retried after more than 5 minutes passes a receiver's timestamp check, and retries no longer have to fit inside that window (SEP-3415 requires a fresh signature on each attempt).
-- **Replayed events are signed by Event Gateway on every attempt,** like live ones: while a replay runs, a temporary connection (`bridge-replay-<subscription id>`, from a `PUBLISH_API` source `bridge-replay`) delivers them to the subscription's own destination, and it's deleted when they settle. Deliveries during a replay, replayed or live, carry the replay's start as their cursor, so a client that saves the latest cursor never skips past events the replay hasn't sent yet.
+- **Each retry is signed afresh.** Event Gateway signs each attempt, so a delivery retried after more than 5 minutes passes a receiver's timestamp check, and retries no longer have to fit inside that window (SEP-3415 requires a fresh signature on each attempt).
+- **Replayed events are signed by Event Gateway on every attempt,** like live ones: while a replay runs, a temporary connection (`bridge-replay-<subscription id>`, from a `PUBLISH_API` source `bridge-replay`) delivers them to the subscription's own destination, and it's deleted when they settle. Deliveries during a replay, replayed or live, have the replay's start as their cursor, so a client that saves the latest cursor never skips past events the replay hasn't sent yet.
 - **Poll mode no longer depends on how Event Gateway routed a request** (it looked for events and `CLI_DISCONNECTED` on the inbound connection). It returns every matching request on the source, deduped by `eventId`.
 - **Docs:** what pausing and resuming a ChatGPT task does, tested on 0.7.0: resuming subscribes again from now, with a new callback URL and no cursor, so events sent while it was paused aren't replayed (`list_events` still finds them). A delivered event can take a minute or so to show in ChatGPT. The README's ChatGPT screenshots are now light mode, captured on 0.7.0.
 
-### Known limitations
-
-- **Integers beyond 2^53 are rounded in deliveries again.** Since 0.6.0 the relay kept such an integer exact, as a string of its digits; in 0.8 a transformation builds every event, and Event Gateway's transformations round it, as its API already did for poll mode, `get_event` and `list_events`, until Event Gateway keeps such integers exact.
 
 ## 0.7.0 (2026-10-27)
 
 ### Added
 
-- **Webhook cursors and replay** ([#50](https://github.com/hookdeck/mcp-events-bridge/issues/50), [#64](https://github.com/hookdeck/mcp-events-bridge/pull/64)). Every webhook delivery and subscribe response now carries a `cursor` (it was always `null`), in poll mode's format: a position in Event Gateway's history of the source's requests. Subscribing again with one, after an unsubscribe, an expiry or downtime, replays the events since it, alongside live ones (log: `replaying to <id> from the client's cursor`, then `replayed <n> event(s) to <id>`). A cursor older than Event Gateway's retention replays what's left, with `truncated: true`; a refresh of a live subscription treats its cursor as a no-op. OpenAI's guide says ChatGPT saves each subscription's cursor and sends it when it refreshes. `truncated` on subscribe is now true only for a cursor past retention (it was true for any cursor). Replayed events can repeat ones already delivered: receivers dedupe by `eventId`, as before.
+- **Webhook cursors and replay** ([#50](https://github.com/hookdeck/mcp-events-bridge/issues/50), [#64](https://github.com/hookdeck/mcp-events-bridge/pull/64)). Every webhook delivery and subscribe response now includes a `cursor` (it was always `null`), in poll mode's format: a position in Event Gateway's history of the source's requests. Subscribing again with one, after an unsubscribe, an expiry or downtime, replays the events since it, alongside live ones (log: `replaying to <id> from the client's cursor`, then `replayed <n> event(s) to <id>`). A cursor older than Event Gateway's retention replays what's left, with `truncated: true`; a refresh of a live subscription treats its cursor as a no-op. OpenAI's guide says ChatGPT saves each subscription's cursor and sends it when it refreshes. `truncated` on subscribe is now true only for a cursor past retention (it was true for any cursor). Replayed events can repeat ones already delivered: receivers dedupe by `eventId`, as before.
 
 ### Fixed
 
@@ -67,7 +64,7 @@ Event Gateway now delivers each event straight from the service's source, and th
 ### Fixed
 
 - **A tunnel URL's connection could outlive its source.** When the check for an agent's missed deliveries finished just after the bridge deleted that unused URL, it wrote the connection back, on the deleted source, and every later `serve` restarted `hookdeck listen` for it in a loop. The check no longer writes to a deleted URL, and `serve` deletes such a connection when it starts (`deleted tunnel URL agent-<agent>-<name>: its source was deleted`) ([#60](https://github.com/hookdeck/mcp-events-bridge/pull/60)).
-- **Integers beyond 2^53 in a service's payload were rounded.** An int64 such as 4323372036854775807 reached subscribers as 4323372036854776000, because the bridge parsed request bodies as JavaScript numbers. It now reaches a callback URL as a string of its digits (`"4323372036854775807"`); other numbers are unchanged. Events read from Event Gateway's API, which rounds it, still carry it rounded: poll mode and `watch`, `get_event`, `list_events`, and callbacks caught up after downtime ([#60](https://github.com/hookdeck/mcp-events-bridge/pull/60)).
+- **Integers beyond 2^53 in a service's payload were rounded.** An int64 such as 4323372036854775807 reached subscribers as 4323372036854776000, because the bridge parsed request bodies as JavaScript numbers. It now reaches a callback URL as a string of its digits (`"4323372036854775807"`); other numbers are unchanged. Events read from Event Gateway's API, which rounds it, still have it rounded: poll mode and `watch`, `get_event`, `list_events`, and callbacks caught up after downtime ([#60](https://github.com/hookdeck/mcp-events-bridge/pull/60)).
 
 ## 0.5.0 (2026-10-23)
 
@@ -155,7 +152,7 @@ Breaking, for clients that match on error code numbers, and for anyone relying o
 - **`setup` exits 1** when a webhook secret isn't set yet, after setting up everything else, and labels the MCP endpoint "MCP URL".
 - **Inbound bodies that aren't JSON** are answered `200` and ignored, so Event Gateway doesn't retry them.
 - **`BRIDGE_MCP_SECRET` must be URL-safe** (letters, digits, `-`, `_`, `.`, `~`): it's part of the MCP URL, so `setup` and `serve` refuse anything else. Secrets `setup` generates, in 0.1.0 too, always are.
-- **A local `setup` logs the Hookdeck CLI in** to the bridge's project in `.hookdeck/config.toml`, as `serve` already did, so `hookdeck` commands run in the bridge's directory use that project from the start. Without the CLI, it says so and carries on (`serve` still needs it).
+- **A local `setup` logs the Hookdeck CLI in** to the bridge's project in `.hookdeck/config.toml`, as `serve` already did, so `hookdeck` commands run in the bridge's directory use that project from the start. Without the CLI, it says so and continues (`serve` still needs it).
 - **`setup` prints a generated `BRIDGE_MCP_SECRET=` line on its own,** ready to paste into `.env`; the Fly.io hint is only shown for HTTP inbound.
 
 ### Fixed
