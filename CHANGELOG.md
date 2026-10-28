@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-0.8.0. Event Gateway now delivers each event straight from the service's source, and the bridge leaves the data path. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).
+## 0.8.0 (2026-10-28)
+
+Event Gateway now delivers each event straight from the service's source, and the bridge leaves the data path. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).
 
 ### Breaking
 
@@ -26,7 +28,7 @@
 - **Retries carry a fresh signature.** Event Gateway signs each attempt, so a delivery retried after more than 5 minutes passes a receiver's timestamp check, and retries no longer have to fit inside that window (SEP-3415 requires a fresh signature on each attempt).
 - **Replayed events are signed by Event Gateway on every attempt,** like live ones: while a replay runs, a temporary connection (`bridge-replay-<subscription id>`, from a `PUBLISH_API` source `bridge-replay`) delivers them to the subscription's own destination, and it's deleted when they settle. Deliveries during a replay, replayed or live, carry the replay's start as their cursor, so a client that saves the latest cursor never skips past events the replay hasn't sent yet.
 - **Poll mode no longer depends on how Event Gateway routed a request** (it looked for events and `CLI_DISCONNECTED` on the inbound connection). It returns every matching request on the source, deduped by `eventId`.
-- **Docs:** what pausing and resuming a ChatGPT task does, tested on 0.7.0: resuming subscribes again from now, with a new callback URL and no cursor, so events sent while it was paused aren't replayed (`list_events` still finds them). A delivered event can take a minute or so to show in ChatGPT.
+- **Docs:** what pausing and resuming a ChatGPT task does, tested on 0.7.0: resuming subscribes again from now, with a new callback URL and no cursor, so events sent while it was paused aren't replayed (`list_events` still finds them). A delivered event can take a minute or so to show in ChatGPT. The README's ChatGPT screenshots are now light mode, captured on 0.7.0.
 
 ### Known limitations
 
