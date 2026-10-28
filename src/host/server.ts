@@ -33,7 +33,7 @@ function tooLarge(req: http.IncomingMessage, res: http.ServerResponse) {
  *   POST /inbound/hookdeck        Event Gateway issue notifications (events go from each source straight to
  *                                 subscribers, so this is all Event Gateway sends the bridge)
  *   /mcp                          the MCP endpoint, with Authorization: Bearer <BRIDGE_MCP_SECRET>
- *   /mcp/<secret>                 the same, with the secret in the URL instead, for clients that can't send a
+ *   /mcp/<BRIDGE_MCP_SECRET>                 the same, with the secret in the URL instead, for clients that can't send a
  *                                 header (ChatGPT); off with auth.secretUrl: false. Either way, one principal: the owner
  *   GET /healthz
  *
@@ -79,7 +79,7 @@ const secretMatches = (given: string, expected: string) => {
 export const bearerToken = (header: string | undefined) => /^Bearer\s+(\S+)\s*$/i.exec(header ?? '')?.[1] ?? null;
 
 /** Paths for logs, with the MCP secret replaced. */
-export const redactPath = (pathname: string) => pathname.replace(/^\/mcp\/[^/]+/, '/mcp/<secret>');
+export const redactPath = (pathname: string) => pathname.replace(/^\/mcp\/[^/]+/, '/mcp/<BRIDGE_MCP_SECRET>');
 
 export async function createBridgeServer(config: ResolvedConfig, options: BridgeServerOptions = {}): Promise<BridgeServer> {
   const log = options.log ?? ((message: string) => console.log(`[bridge] ${message}`));

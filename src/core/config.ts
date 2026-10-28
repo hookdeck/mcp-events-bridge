@@ -83,8 +83,8 @@ export interface BridgeConfig {
   /** Where events come from: `resend()`, `github()`, `source({ type, ... })`, or your own `defineSource()`. */
   sources?: SourceInstance[];
   /**
-   * The MCP endpoint takes BRIDGE_MCP_SECRET as `Authorization: Bearer <secret>` at /mcp, and in the URL
-   * (/mcp/<secret>) for clients that can't send a header, such as ChatGPT. `secretUrl: false` turns the URL form off.
+   * The MCP endpoint takes BRIDGE_MCP_SECRET as `Authorization: Bearer <BRIDGE_MCP_SECRET>` at /mcp, and in the URL
+   * (/mcp/<BRIDGE_MCP_SECRET>) for clients that can't send a header, such as ChatGPT. `secretUrl: false` turns the URL form off.
    * Default: BRIDGE_MCP_SECRET_URL, else true.
    */
   auth?: { mode?: 'secret-url'; mcpSecret?: MaybeEnv<string>; secretUrl?: boolean };
