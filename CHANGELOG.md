@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway.
+
 ## 0.8.0 (2026-10-28)
 
 Event Gateway now delivers each event to subscribers directly from the service's source, instead of through the bridge. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).
