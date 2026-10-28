@@ -44,15 +44,13 @@ function setup(requests: FakeRequest[], { saved }: { saved?: Record<string, stri
     retryRequest: async (id: string, connections?: string[]) => (calls.push(`retry request ${id} for ${connections?.join(',')}`), { request: {}, events: [] }),
     retryEvent: async (id: string) => (calls.push(`retry event ${id}`), {}),
   } as unknown as RecoveryHookdeck;
-  const retried: string[] = [];
   const recovery = new InboundRecovery({
     hookdeck,
     targets: [{ source: 'bridge-resend', connection: 'bridge-resend-dev' }],
     state: { load: () => saved ?? {}, save: (w) => (stored = { ...w }) },
-    onRetried: (id) => retried.push(id),
     now: () => now,
   });
-  return { recovery, calls, retried, stored: () => stored, advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
+  return { recovery, calls, stored: () => stored, advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
 }
 
 describe('InboundRecovery', () => {
@@ -81,14 +79,6 @@ describe('InboundRecovery', () => {
     ]);
   });
 
-  it('tells the relay which requests it retried, so their delivery counts as a retry', async () => {
-    const { recovery, retried } = setup([
-      { id: 'req_missed', ignored: [{ cause: 'CLI_DISCONNECTED' }] },
-      { id: 'req_dropped', events: [{ id: 'evt_dropped', status: 'FAILED', response_status: null }] },
-    ]);
-    await recovery.run();
-    expect(retried.sort()).toEqual(['req_dropped', 'req_missed']);
-  });
 
   it('retries an event the CLI never delivered, but not one the bridge answered, one delivered, or one in flight', async () => {
     const { recovery, calls } = setup([

@@ -5,7 +5,7 @@ import { callbackEndpointError, forbidden, internalError, invalidParams, notFoun
 import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
 import type { CallbackRegistry } from './callbacks.js';
-import { SubscriptionTooLargeError, healthyDelivery, type SubscriptionRecord, type SubscriptionStore } from './store.js';
+import { SubscriptionTooLargeError, healthyDelivery, type CursorPosition, type SubscriptionRecord, type SubscriptionStore } from './store.js';
 
 /*
  * MCP Events webhook subscriptions: subscribe (and refresh), unsubscribe,
@@ -31,9 +31,12 @@ export interface SubscribeResult {
 export interface SubscriptionCursors {
   /** A safe-to-persist watermark for this event and arguments, as of now. */
   watermark(name: string, args: Record<string, unknown>): string;
-  /** Checks a client's cursor, throwing invalid params if it isn't one this bridge returned for this event and arguments. */
-  check(name: string, args: Record<string, unknown>, cursor: string): { truncated: boolean };
-  /** Delivers the events since `cursor` to a new subscription, in the background. */
+  /**
+   * Checks a client's cursor, throwing invalid params if it isn't one this bridge returned for this event and
+   * arguments. Returns where it points, and whether a replay from it is truncated (older than Event Gateway keeps).
+   */
+  check(name: string, args: Record<string, unknown>, cursor: string): { truncated: boolean; position: CursorPosition };
+  /** Delivers the events since `cursor` to a new subscription, in the background, then clears its replay marker. */
   replay(subscription: SubscriptionRecord, cursor: string): void;
 }
 
@@ -43,8 +46,12 @@ export interface SubscriptionServiceDeps {
   catalog: Catalog;
   transport: CallbackTransport;
   verify?: (transport: CallbackTransport, options: VerifyEndpointOptions) => Promise<VerificationResult>;
-  /** Callback URLs the bridge created for local agents: the challenge is also signed with the callback's own secret. */
-  callbacks?: Pick<CallbackRegistry, 'signingSecret' | 'find'>;
+  /**
+   * Callback URLs the bridge created for local agents. One with a secret is challenged like any URL (its source
+   * answers). A pass-through one, whose receiver verifies each delivery itself, is verified out-of-band: the bridge
+   * created it, which SEP-3415 allows in place of the challenge.
+   */
+  callbacks?: Pick<CallbackRegistry, 'find'>;
   /** Without it, subscribe answers `cursor: null` and doesn't replay. */
   cursors?: SubscriptionCursors;
   now?: () => Date;
@@ -151,19 +158,15 @@ export class SubscriptionService {
     const id = deriveSubscriptionId(principal, href, key.name, rawArgs);
     const now = this.now();
 
-    // Endpoint verification, cached per (principal, url). A bridge callback URL is always verified: the edge answers
-    // cheaply, and a callback deleted and recreated must not be skipped on the strength of an old result.
+    // Endpoint verification, cached per (principal, url). A bridge callback URL with a secret is always challenged: its
+    // source answers cheaply, and one deleted and recreated must not be skipped on the strength of an old result. A
+    // pass-through one is verified out-of-band (see `callbacks`).
     const vKey = verificationKey(principal, href);
-    const isCallback = Boolean(this.deps.callbacks?.find(href));
-    if (isCallback || (this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
-      const callbackSecret = await this.deps.callbacks?.signingSecret(href);
-      const result = await this.verify(transport, {
-        url,
-        secret,
-        ...(callbackSecret && { extraSecrets: [callbackSecret] }),
-        subscriptionId: id,
-        timeoutMs: settings.verificationTimeoutMs,
-      });
+    const callback = this.deps.callbacks?.find(href);
+    if (callback?.passThrough) {
+      this.log(`warning: ${callback.name} is a pass-through callback URL: Event Gateway doesn't verify deliveries to it, so its receiver must check each signature`);
+    } else if (callback || (this.verifiedUntil.get(vKey) ?? 0) <= now.getTime()) {
+      const result = await this.verify(transport, { url, secret, subscriptionId: id, timeoutMs: settings.verificationTimeoutMs });
       if (!result.ok) {
         this.log(`verification failed for ${id}: ${result.reason}`);
         throw callbackEndpointError(result.reason);
@@ -173,23 +176,24 @@ export class SubscriptionService {
     }
 
     const expiresAt = new Date(now.getTime() + grantTtlMs(params.ttlMs, settings));
+    const live = (record: SubscriptionRecord | undefined) => record !== undefined && Date.parse(record.expiresAt) > now.getTime();
     // Read and written in the store's queue, so a concurrent write (a delivery-failure notification) can't be lost or undo this.
     const prior: { record?: SubscriptionRecord } = {};
     try {
       await store.update(id, (existing) => {
         prior.record = existing;
-        const rotated = existing && existing.secret !== secret;
         return {
           id,
           principal,
           name: key.name,
           arguments: args,
           url: href,
+          // A new secret replaces the old at once: the destination signs with one key (SEP-3415's dual-signing grace
+          // window needs Event Gateway to take a second, expiring key).
           secret,
-          previousSecret: rotated ? existing.secret : (existing?.previousSecret ?? null),
-          previousSecretExpiresAt: rotated
-            ? new Date(now.getTime() + settings.secretRotationGraceMs).toISOString()
-            : (existing?.previousSecretExpiresAt ?? null),
+          // A new subscription made with a cursor replays from it, and every delivery carries where the replay started
+          // until it's done; a live one keeps whatever replay it has.
+          replay: cursorCheck && this.deps.cursors && !live(existing) ? cursorCheck.position : live(existing) ? existing!.replay : null,
           // A refresh is the subscriber's liveness signal: delivery is active again.
           delivery: healthyDelivery(),
           expiresAt: expiresAt.toISOString(),
@@ -239,8 +243,8 @@ export class SubscriptionService {
   ): { cursor: string | null; truncated: boolean } {
     const cursors = this.deps.cursors;
     if (!cursors) return { cursor: null, truncated: clientCursor !== null }; // no replay: a client's cursor can't be resumed
-    const live = existing !== undefined && Date.parse(existing.expiresAt) > now.getTime();
-    if (clientCursor !== null && !live) {
+    const isLive = existing !== undefined && Date.parse(existing.expiresAt) > now.getTime();
+    if (clientCursor !== null && !isLive) {
       const record = this.deps.store.get(id);
       if (record) {
         this.log(`replaying to ${id} from the client's cursor${check?.truncated ? ', truncated (older than Event Gateway keeps)' : ''}`);
@@ -272,7 +276,7 @@ export class SubscriptionService {
     return {};
   }
 
-  /** Drops cached verification for a URL and the paths under it, from every principal, e.g. when a bridge tunnel URL is deleted. */
+  /** Drops cached verification for a URL and the paths under it, from every principal, e.g. when a bridge callback URL is deleted. */
   forgetVerification(url: string) {
     for (const key of [...this.verifiedUntil.keys()]) {
       const verified = (JSON.parse(key) as [string, string])[1];

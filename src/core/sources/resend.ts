@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { normalizeAddress, type InboundRequest, type SourceDefinition, type SourceEvent } from './types.js';
+import { normalizeAddress, type EventRuntime, type SourceDefinition, type SourceEvent } from './types.js';
 
 /*
  * Resend. Field paths settled from a real delivery in stage 2
  * (test/fixtures/resend/email-received.json). Event Gateway's RESEND source
- * verifies the Svix signature, so the bridge only sees verified requests.
+ * verifies the Svix signature, so only verified requests reach the runtime.
  */
 
 export type ResendOptions = {
@@ -13,20 +13,52 @@ export type ResendOptions = {
 
 const RESEND_API = 'https://api.resend.com';
 
-const emailReceivedBody = z.object({
-  type: z.literal('email.received'),
-  created_at: z.string(),
-  data: z.object({
-    email_id: z.string(),
-    created_at: z.string(),
-    from: z.string(),
-    to: z.array(z.string()),
-    cc: z.array(z.string()).optional().default([]),
-    subject: z.string().optional().default(''),
-    message_id: z.string().optional(),
-    attachments: z.array(z.unknown()).optional().default([]),
-  }),
-});
+/** Resend's runtime: self-contained, since it also runs inside Event Gateway (see SourceRuntime). */
+export function resendRuntime(): Record<string, EventRuntime> {
+  const SUBJECT_LIMIT = 500;
+  const address = (value: unknown) => {
+    if (typeof value !== 'string') throw new Error('Resend email has a non-string address');
+    const angle = /<([^<>]+)>\s*$/.exec(value);
+    return (angle ? angle[1]! : value).trim().toLowerCase();
+  };
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+  const dataOf = (body: unknown) => {
+    const data = (body as { data?: unknown } | null)?.data;
+    if (typeof data !== 'object' || data === null) throw new Error('Resend email.received has no data');
+    return data as Record<string, unknown>;
+  };
+  return {
+    'email.received': {
+      matches: (req) => (req.body as { type?: unknown } | null)?.type === 'email.received',
+      eventId: (req) => {
+        const id = req.headers['svix-id'];
+        if (!id) throw new Error('Resend delivery has no svix-id header');
+        return id;
+      },
+      occurredAt: (req) => {
+        const at = Date.parse(String(dataOf(req.body).created_at));
+        if (Number.isNaN(at)) throw new Error('Resend email.received has no created_at');
+        return new Date(at).toISOString();
+      },
+      summarize: (req) => {
+        const data = dataOf(req.body);
+        const to = strings(data.to);
+        const subject = typeof data.subject === 'string' ? data.subject : '';
+        return {
+          emailId: String(data.email_id),
+          from: String(data.from),
+          fromAddress: address(data.from),
+          to,
+          toAddresses: to.map(address),
+          cc: strings(data.cc),
+          subject: subject.length > SUBJECT_LIMIT ? `${subject.slice(0, SUBJECT_LIMIT)}…` : subject,
+          messageId: typeof data.message_id === 'string' ? data.message_id : null,
+          attachmentCount: Array.isArray(data.attachments) ? data.attachments.length : 0,
+        };
+      },
+    },
+  };
+}
 
 const emailReceivedArguments = z
   .object({
@@ -50,34 +82,11 @@ const emailReceivedPayload = z.object({
 export type EmailReceivedArguments = z.infer<typeof emailReceivedArguments>;
 export type EmailReceivedSummary = z.infer<typeof emailReceivedPayload>;
 
-const SUBJECT_LIMIT = 500;
-
-export const emailReceived: SourceEvent<EmailReceivedArguments, EmailReceivedSummary> = {
+export const emailReceived: SourceEvent<EmailReceivedArguments> = {
   name: 'email.received',
   description:
     'An email arrived at a Resend receiving address. Carries metadata only (sender, recipients, subject); fetch the body with Resend\'s own tools. Filter by `from` to limit who can trigger the agent.',
   providerEvent: 'email.received',
-  matches: (req) => (req.body as { type?: unknown } | null)?.type === 'email.received',
-  eventId: (req) => {
-    const id = req.headers['svix-id'];
-    if (!id) throw new Error('Resend delivery has no svix-id header');
-    return id;
-  },
-  occurredAt: (req) => new Date(emailReceivedBody.parse(req.body).data.created_at).toISOString(),
-  summarize: (req: InboundRequest) => {
-    const { data } = emailReceivedBody.parse(req.body);
-    return {
-      emailId: data.email_id,
-      from: data.from,
-      fromAddress: normalizeAddress(data.from),
-      to: data.to,
-      toAddresses: data.to.map(normalizeAddress),
-      cc: data.cc,
-      subject: data.subject.length > SUBJECT_LIMIT ? `${data.subject.slice(0, SUBJECT_LIMIT)}…` : data.subject,
-      messageId: data.message_id ?? null,
-      attachmentCount: data.attachments.length,
-    };
-  },
   inputSchema: z.toJSONSchema(emailReceivedArguments) as Record<string, unknown>,
   parseArguments: (args) => {
     const parsed = emailReceivedArguments.parse(args ?? {});
@@ -86,8 +95,11 @@ export const emailReceived: SourceEvent<EmailReceivedArguments, EmailReceivedSum
       ...(parsed.to !== undefined && { to: normalizeAddress(parsed.to) }),
     };
   },
-  accepts: (args, summary) =>
-    (args.from === undefined || summary.fromAddress === args.from) && (args.to === undefined || summary.toAddresses.includes(args.to)),
+  // `toAddresses` is an array: a one-item array filter matches arrays that contain the address.
+  filter: (args) => ({
+    ...(args.from !== undefined && { fromAddress: args.from }),
+    ...(args.to !== undefined && { toAddresses: [args.to] }),
+  }),
   payloadSchema: z.toJSONSchema(emailReceivedPayload) as Record<string, unknown>,
 };
 
@@ -106,9 +118,9 @@ export const resendProvider: SourceDefinition<ResendOptions> = {
   type: 'resend',
   displayName: 'Resend',
   sourceType: 'RESEND',
-  inboundDedupeFields: ['headers.svix-id'],
   eventIdHeader: 'svix-id',
   events: [emailReceived],
+  runtime: resendRuntime,
 
   async register({ sourceUrl, providerEvents, options, fetch: fetchFn }) {
     const created = await resendApi(fetchFn, options.apiKey, '/webhooks', {

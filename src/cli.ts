@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { Catalog, descriptionWarnings } from './core/catalog.js';
-import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedSource } from './core/config.js';
+import { assertCredentials, ConfigError, defineConfig, env, resolveConfig, type ResolvedConfig, type ResolvedSource } from './core/config.js';
 import { HookdeckClient } from './core/hookdeck.js';
 import { checkInbound, listenArgs } from './core/inbound-plan.js';
+import { migrate, migrationNeeded, migrationNotice, planMigration, UPGRADING_URL } from './core/migrate.js';
 import { providerSourceName } from './core/names.js';
 import { source, type SourceOptions, type WebhookVerification } from './core/sources/source.js';
 import { SOURCE_TYPES, type SourceTypeName } from './core/sources/source-types.generated.js';
 import { ensureSource, mcpEndpoint, mcpUrl, missingCredentialsError, runSetup, SECRET_PROPAGATION_NOTE } from './core/setup.js';
+import { callbackUrlCommand } from './host/callback-url-cli.js';
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
@@ -18,19 +21,21 @@ import { createBridgeServer } from './host/server.js';
 import { watchCommand, watchesCommand } from './host/watch-cli.js';
 
 /*
- * mcp-events-bridge setup | serve | sources add <id> | watch | watches | doctor
+ * mcp-events-bridge setup | serve | sources add <id> | watch | watches | callback-url | doctor
  *
  * `doctor` comes in stage 7.
  */
 
-const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen]
+const USAGE = `Usage: mcp-events-bridge <command> [--config <file>] [--no-listen] [--migrate]
 
 Commands:
-  setup   Create or update the Event Gateway resources, and the webhooks of the sources in bridge.config.ts
-  serve   Run the bridge: inbound relay, MCP endpoint and expiry sweeper. With CLI inbound it checks
-          the Event Gateway setup, runs \`hookdeck listen\` for every configured source (--no-listen
-          to run it yourself) and for local agents' tunnel URLs, and recovers events missed while
-          \`listen\` was down
+  setup   Create or update the Event Gateway resources, and the webhooks of the sources in bridge.config.ts.
+          Offers to migrate data from an earlier version (--migrate to do it without asking)
+  serve   Run the bridge: MCP endpoint, subscriptions (Event Gateway delivers each event from its source)
+          and expiry sweeper. With CLI inbound it checks the Event Gateway setup, runs \`hookdeck listen\`
+          for Event Gateway's issue notifications (--no-listen to run it yourself) and for local agents'
+          callback URLs, and retries what they missed while \`listen\` was down. Data from an earlier
+          version must be migrated first: it asks in a terminal, and --migrate does it without asking
   sources add <id> [--type <type>] [options]
           Add a source you register with the sender yourself (a service's source type, such as
           stripe, or webhook for any HTTP sender): create its Event Gateway source and print the
@@ -41,13 +46,15 @@ Commands:
           watch list, follow it as it changes and resume where it left off. \`watch --help\`
   watches add|remove|list
           Edit a watch list. \`watches --help\`
+  callback-url create|list --agent <name> [options]
+          Ask the bridge on this machine for a callback URL that forwards to a local agent's port, with
+          the agent's secret read from an environment variable. \`callback-url --help\`
   doctor  Check the deployment (not built yet)`;
 
 const SOURCES_ADD_USAGE = `Usage: mcp-events-bridge sources add <id> [--type <type>] [options]
 
 Creates the Event Gateway source bridge-<id> (or reuses it) and prints its URL, so you can register it
-with the sender before you have its secret. Delivery stays held until the secret is set and setup runs.
-(\`providers add webhook <id>\`, the old name, still works.)
+with the sender before you have its secret. Serve refuses to start until the secret is set and setup runs.
 
 Options:
   --type <type>              an Event Gateway source type, such as stripe, slack or shopify, verified with that
@@ -69,26 +76,61 @@ Options:
   --write-config             add the entry to bridge.config.ts, creating it if needed (default: print it to paste)
   --config <file>            the config file (default bridge.config.ts)`;
 
-async function setup(configFile: string | undefined) {
+
+/** Asks a yes/no question in a terminal; Enter means yes. */
+async function confirm(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^(y|yes)?$/i.test((await rl.question(`${question} [Y/n] `)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+const interactive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+/**
+ * Migrates data from an earlier version, if there is any: with `auto` (--migrate) at once, in a terminal after asking,
+ * and otherwise not. Returns false if there's data left to migrate.
+ */
+async function offerMigration(config: ResolvedConfig, hookdeck: HookdeckClient, { auto, log }: { auto: boolean; log: (message: string) => void }): Promise<boolean> {
+  const version = packageVersion();
+  const plan = await planMigration(hookdeck, config, version);
+  if (!migrationNeeded(plan)) return true;
+  const found = migrationNotice(plan, version);
+  if (!auto) {
+    if (!interactive()) {
+      log(found);
+      return false;
+    }
+    console.log(`\n${found}\nSubscribers keep their subscriptions and callback URLs. More: ${UPGRADING_URL}`);
+    if (!(await confirm('Migrate now?'))) return false;
+  } else {
+    log(`${found} Migrating (--migrate). More: ${UPGRADING_URL}`);
+  }
+  await migrate({ hookdeck, config, plan, version, log });
+  return true;
+}
+
+async function setup(configFile: string | undefined, { migrate: auto }: { migrate: boolean }) {
   const config = await loadConfig({ file: configFile });
   for (const warning of config.warnings) console.warn(`warning: ${warning}`);
   const hookdeck = new HookdeckClient({ apiKey: config.hookdeck.apiKey });
-  const report = await runSetup({ config, hookdeck, fetch, log: (m) => console.log(`  ${m}`) });
+  const report = await runSetup({ config, hookdeck, fetch, version: packageVersion(), log: (m) => console.log(`  ${m}`) });
+  const migrated = await offerMigration(config, hookdeck, { auto, log: (m) => console.log(`  ${m}`) });
 
   console.log(`\nDeployment "${config.deployment}", ${config.inbound} inbound`);
   for (const p of report.sources) {
-    const connection = p.waitingFor ? `connection not created until ${p.waitingFor.join(', ')} is set` : `connection ${p.connection}`;
-    console.log(`  source ${p.id}: ${p.sourceUrl}, ${connection}, webhook ${p.webhook}`);
+    const state = p.waitingFor ? `waiting for ${p.waitingFor.join(', ')}` : `transformation ${p.transformation}`;
+    console.log(`  source ${p.id}: ${p.sourceUrl}, ${state}, webhook ${p.webhook}`);
     if (p.hint) console.log(p.hint.split('\n').map((line) => `    ${line}`).join('\n'));
   }
   for (const warning of descriptionWarnings(new Catalog(config.sources))) console.warn(`  warning: ${warning}`);
   console.log(`  notifications: ${report.notifications.source} -> ${report.notifications.connection}`);
   console.log(`  issue triggers: ${report.triggers.join(', ')}`);
   if (config.inbound === 'cli') {
-    // Without providers still waiting for a secret: their source has no connection yet, and `listen` would create a default one.
-    const waiting = new Set(report.sources.filter((p) => p.waitingFor?.length).map((p) => p.id));
-    const ready = { ...config, sources: config.sources.filter((p) => !waiting.has(p.id)) };
-    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(ready, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
+    // `listen` only carries Event Gateway's issue notifications: events go from each source straight to subscribers.
+    console.log(`\n\`serve\` runs the Hookdeck CLI for you:\n  hookdeck ${listenArgs(config, config.port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     // Log the CLI in now rather than at the first `serve`, so `hookdeck` commands run here use the bridge's project from the start.
     const cliConfigPath = process.env.BRIDGE_HOOKDECK_CLI_CONFIG ?? DEFAULT_CLI_CONFIG;
     try {
@@ -111,13 +153,27 @@ async function setup(configFile: string | undefined) {
     console.error(`\n${incomplete}`);
     process.exitCode = 1;
   }
+  if (!migrated) {
+    console.error(`\nNot migrated, and serve won't start until it is: run setup again, or setup --migrate. More: ${UPGRADING_URL}`);
+    process.exitCode = 1;
+  }
 }
 
-async function serve(configFile: string | undefined, { manageListen }: { manageListen: boolean }) {
+async function serve(configFile: string | undefined, { manageListen, migrate: auto }: { manageListen: boolean; migrate: boolean }) {
   const config = await loadConfig({ file: configFile });
   for (const warning of config.warnings) console.warn(`[bridge] warning: ${warning}`);
-  // Fail closed: an instance waiting for its secret has no inbound connection and must not be served.
+  // Fail closed: a source waiting for its secret can't verify what it receives, so nothing is served until it's set.
   assertCredentials(config);
+
+  // Data from an earlier version: subscriptions there aren't served, and its inbound connections would send events here.
+  if (!(await offerMigration(config, new HookdeckClient({ apiKey: config.hookdeck.apiKey }), { auto, log: (m) => console.log(`[bridge] ${m}`) }))) {
+    console.error(
+      `[bridge] This project's data in Event Gateway must be migrated before serve starts.\n` +
+        `Run \`mcp-events-bridge setup\` to migrate it, or start serve with --migrate to migrate it automatically. More: ${UPGRADING_URL}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   // Check Event Gateway first: a CLI-inbound deployment must not start `hookdeck listen` against missing
   // connections, or the CLI creates default ones and events go astray.
@@ -161,7 +217,7 @@ async function serve(configFile: string | undefined, { manageListen }: { manageL
         console.error('[bridge] hookdeck listen did not connect within 30s');
         return stop(1);
       }
-      console.log('[bridge] hookdeck listen connected: forwarding source events and issue notifications, and recovering any missed while it was down');
+      console.log('[bridge] hookdeck listen connected: forwarding Event Gateway issue notifications, and recovering any missed while it was down');
     } else {
       console.log(`[bridge] --no-listen: forward events yourself with: hookdeck ${listenArgs(config, port, DEFAULT_CLI_CONFIG).slice(0, 3).join(' ')}`);
     }
@@ -180,8 +236,8 @@ function loadDotEnv() {
   }
 }
 
-/** `sources add <id> [--type <type>]`, and `providers add webhook <id>`, its old name. */
-async function sourcesCommand(argv: string[], { legacy }: { legacy: boolean }) {
+/** `sources add <id> [--type <type>]`. */
+async function sourcesCommand(argv: string[]) {
   const { positionals, values } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -205,19 +261,9 @@ async function sourcesCommand(argv: string[], { legacy }: { legacy: boolean }) {
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
-  let subcommand: string | undefined;
-  let id: string | undefined;
-  let type = values.type.toLowerCase();
-  if (legacy) {
-    // providers add webhook <id>
-    const [sub, kind, legacyId] = positionals;
-    if (sub !== 'add' || kind !== 'webhook') throw new ConfigError('`providers` is now `sources`: use `sources add <id> --type webhook`');
-    console.warn('warning: `providers add webhook <id>` is now `sources add <id> --type webhook` (it still works for now)');
-    [subcommand, id, type] = [sub, legacyId, 'webhook'];
-  } else {
-    [subcommand, id] = positionals;
-    if (subcommand !== 'add') throw new ConfigError(`unknown command \`sources ${subcommand ?? ''}\`. Supported: sources add <id> [--type <type>]`);
-  }
+  const [subcommand, id] = positionals;
+  const type = values.type.toLowerCase();
+  if (subcommand !== 'add') throw new ConfigError(`unknown command \`sources ${subcommand ?? ''}\`. Supported: sources add <id> [--type <type>]`);
   if (values.help || !id) return console.log(SOURCES_ADD_USAGE);
   if (type !== 'webhook' && !Object.hasOwn(SOURCE_TYPES, type)) {
     throw new ConfigError(
@@ -301,8 +347,8 @@ async function sourcesCommand(argv: string[], { legacy }: { legacy: boolean }) {
   console.log(`Register this URL with the sender:\n  ${created.url}`);
   console.log(
     missing.length
-      ? `Delivery is held until ${missing.join(', ')} is set: Event Gateway keeps requests that arrive meanwhile, and none reach the bridge.`
-      : `Its credentials are set; run setup to connect it.`,
+      ? `serve refuses to start until ${missing.join(', ')} is set: Event Gateway keeps requests that arrive meanwhile. Then run setup.`
+      : `Its credentials are set; run setup to apply them.`,
   );
 
   // 2. .env: append the variables the entry references, empty, if the file doesn't mention them.
@@ -345,13 +391,15 @@ function packageVersion(): string {
 
 async function main() {
   const argv = process.argv.slice(2);
-  if (argv[0] === 'sources' || argv[0] === 'providers') {
+  if (argv[0] === 'providers') throw new ConfigError('`providers` is now `sources` (renamed in 0.6.0, and the old name removed in 0.8.0): use `sources add <id> --type webhook`');
+  if (argv[0] === 'sources') {
     loadDotEnv();
-    return sourcesCommand(argv.slice(1), { legacy: argv[0] === 'providers' });
+    return sourcesCommand(argv.slice(1));
   }
-  if (argv[0] === 'watch' || argv[0] === 'watches') {
+  if (argv[0] === 'watch' || argv[0] === 'watches' || argv[0] === 'callback-url') {
+    const command = argv[0] === 'watch' ? watchCommand : argv[0] === 'watches' ? watchesCommand : callbackUrlCommand;
     try {
-      return await (argv[0] === 'watch' ? watchCommand : watchesCommand)(argv.slice(1), packageVersion(), loadDotEnv);
+      return await command(argv.slice(1), packageVersion(), loadDotEnv);
     } catch (error) {
       console.error(`[${argv[0]}] ${(error as Error).message}`);
       process.exitCode = 1;
@@ -363,6 +411,7 @@ async function main() {
     options: {
       config: { type: 'string' },
       'no-listen': { type: 'boolean', default: false },
+      migrate: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -372,9 +421,9 @@ async function main() {
   loadDotEnv();
   switch (positionals[0]) {
     case 'setup':
-      return setup(values.config);
+      return setup(values.config, { migrate: values.migrate });
     case 'serve':
-      return serve(values.config, { manageListen: !values['no-listen'] });
+      return serve(values.config, { manageListen: !values['no-listen'], migrate: values.migrate });
     default:
       console.error(USAGE);
       process.exitCode = 1;

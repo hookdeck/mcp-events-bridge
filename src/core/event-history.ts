@@ -34,17 +34,12 @@ export class EventHistory {
   /** Maps a stored request to its MCP event, or undefined if it isn't a verified, enabled event. */
   toEvent(providerId: string, request: HookdeckRequest): PastEvent | undefined {
     if (!request.verified || request.rejection_cause || !request.data) return undefined;
-    const headers: Record<string, string> = {
-      ...Object.fromEntries(Object.entries(request.data.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)])),
-      // What Event Gateway adds when it delivers a request, so providers map stored requests as they map deliveries.
-      'x-hookdeck-requestid': request.id,
-      'x-hookdeck-verified': String(request.verified === true),
-    };
+    const headers = Object.fromEntries(Object.entries(request.data.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
     const req = { headers, body: request.data.body, receivedAt: request.created_at };
-    const entry = this.deps.catalog.forProvider(providerId).find((e) => e.event.matches(req));
+    const entry = this.deps.catalog.forProvider(providerId).find((e) => e.runtime.matches(req));
     if (!entry) return undefined;
     try {
-      return { eventId: entry.event.eventId(req), name: entry.name, timestamp: entry.event.occurredAt(req), data: entry.event.summarize(req) };
+      return { eventId: entry.runtime.eventId(req), name: entry.name, timestamp: entry.runtime.occurredAt(req), data: entry.runtime.summarize(req) };
     } catch {
       return undefined;
     }

@@ -70,8 +70,7 @@ export function defineSource<Options extends Record<string, unknown>>(definition
 
 export interface BridgeConfig {
   /**
-   * Names this bridge's Event Gateway resources (its inbound connections, notifications connection and issue
-   * triggers) and its CLI devices, so bridges sharing a Hookdeck project stay apart. Default: BRIDGE_DEPLOYMENT,
+   * Names this bridge's Event Gateway resources (its notifications connection and issue triggers) and its CLI devices, so bridges sharing a Hookdeck project stay apart. Default: BRIDGE_DEPLOYMENT,
    * else `local` with CLI inbound (a bridge on your machine) and `public` with HTTP inbound (a public URL).
    */
   deployment?: string;
@@ -83,8 +82,6 @@ export interface BridgeConfig {
   hookdeck?: { apiKey?: MaybeEnv<string>; signingSecret?: MaybeEnv<string> };
   /** Where events come from: `resend()`, `github()`, `source({ type, ... })`, or your own `defineSource()`. */
   sources?: SourceInstance[];
-  /** @deprecated Renamed to `sources` in 0.6.0; still read, with a warning. */
-  providers?: SourceInstance[];
   /**
    * The MCP endpoint takes BRIDGE_MCP_SECRET as `Authorization: Bearer <secret>` at /mcp, and in the URL
    * (/mcp/<secret>) for clients that can't send a header, such as ChatGPT. `secretUrl: false` turns the URL form off.
@@ -166,12 +163,9 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
     return value;
   };
 
-  if (config.sources && config.providers) throw new ConfigError('Set `sources` only: `providers` is its old name');
-  const sources = config.sources ?? config.providers ?? [];
-  const warnings = [
-    ...(config.providers && !config.sources ? ['`providers` in the config is now `sources`: rename it (it still works for now)'] : []),
-    ...sources.flatMap((s) => s.warnings ?? []),
-  ];
+  if ('providers' in config) throw new ConfigError('`providers` in the config is now `sources` (renamed in 0.6.0, and the old name removed in 0.8.0): rename it');
+  const sources = config.sources ?? [];
+  const warnings = sources.flatMap((s) => s.warnings ?? []);
   const ids = sources.map((p) => p.id);
   // Ids name Event Gateway resources and the inbound route, /inbound/<id>; `hookdeck` is the notifications route.
   const badId = ids.find((id) => !/^[A-Za-z0-9_-]+$/.test(id) || id === 'hookdeck');
@@ -222,8 +216,8 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
 
 /**
  * Fails closed when a source instance's credentials aren't set (for example a generic webhook's secret, which
- * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` instead
- * holds that instance's delivery until they're set.
+ * usually comes after its URL is registered with the sender). `serve` calls it before starting; `setup` creates the
+ * source and reports what's still to set.
  */
 export function assertCredentials(config: ResolvedConfig): void {
   const missing = config.sources.flatMap((p) => (p.definition.missingCredentials?.(p.options) ?? []).map((name) => `${name} (source ${p.id})`));

@@ -1,12 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { emailReceived, resendProvider as resend } from '../../../src/core/sources/resend.js';
+import { matchesFilter } from '../../../src/core/filter.js';
+import { emailReceived as meta, resendProvider as resend, resendRuntime } from '../../../src/core/sources/resend.js';
 import { normalizeAddress, type InboundRequest } from '../../../src/core/sources/types.js';
 
 const fixture = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'fixtures', 'resend', 'email-received.json'), 'utf8'),
 ) as { headers: Record<string, string>; body: Record<string, unknown> };
+
+// The event as the bridge and its transformation use it: the runtime for the mapping, the filter for arguments.
+const emailReceived = {
+  ...meta,
+  ...resendRuntime()['email.received']!,
+  accepts: (args: Record<string, unknown>, summary: unknown) => matchesFilter(meta.filter(args), summary),
+};
 
 const request: InboundRequest = { headers: fixture.headers, body: fixture.body };
 const withData = (data: Record<string, unknown>): InboundRequest => ({

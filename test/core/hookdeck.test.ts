@@ -67,13 +67,13 @@ describe('HookdeckClient', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('retries idempotent calls on server errors, but not publishes', async () => {
+  it('retries idempotent calls on server errors, but not POSTs such as a retry', async () => {
     const upsert = client([[500, '{"code":"FATAL_ERROR"}'], [200, { id: 'web_1' }]]);
     await expect(upsert.hookdeck.upsertConnection({ name: 'c', source: { name: 's' }, destination: { name: 'd' } })).resolves.toMatchObject({ id: 'web_1' });
     expect(upsert.calls).toHaveLength(2);
-    const publish = client([[503, 'unavailable'], [200, {}]]);
-    await expect(publish.hookdeck.publish('src', {}, '{}')).rejects.toMatchObject({ status: 503 });
-    expect(publish.calls).toHaveLength(1);
+    const retry = client([[503, 'unavailable'], [200, {}]]);
+    await expect(retry.hookdeck.retryEvent('evt_1')).rejects.toMatchObject({ status: 503 });
+    expect(retry.calls).toHaveLength(1);
   });
 
   it('throws HookdeckApiError with the status once retries run out or on other errors', async () => {
@@ -84,34 +84,16 @@ describe('HookdeckClient', () => {
   });
 
   it('upserts connections with PUT and the given rules', async () => {
-    const { hookdeck, calls } = client([[200, { id: 'web_1', name: 'mcp-sub-email.received-sub_1' }]]);
+    const { hookdeck, calls } = client([[200, { id: 'web_1', name: 'mcp-sub-sub_1' }]]);
     await hookdeck.upsertConnection({
-      name: 'mcp-sub-email.received-sub_1',
-      source: { name: 'bridge-out-email.received', type: 'PUBLISH_API' },
-      destination: { name: 'mcp-sub-email.received-sub_1', type: 'HTTP', config: { url: 'https://receiver.example.com/hook' } },
-      rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': 'sub_1' } }, SUBSCRIPTION_RETRY_RULE],
+      name: 'mcp-sub-sub_1',
+      source_id: 'src_resend',
+      destination: { name: 'mcp-sub-sub_1', type: 'HTTP', config: { url: 'https://receiver.example.com/hook' } },
+      rules: [{ type: 'filter', body: { name: 'resend.email.received' } }, SUBSCRIPTION_RETRY_RULE],
     });
     expect(calls[0]!.method).toBe('PUT');
     expect(calls[0]!.url.pathname).toBe('/2026-09-01/connections');
     expect(JSON.parse(calls[0]!.body!).rules[1].response_status_codes).toEqual(['>=300', '!410', '!413']);
-  });
-
-  it('publishes through the Publish API with the source name, passing headers and body through', async () => {
-    const { hookdeck, calls } = client([[200, { status: 'SUCCESS', request_id: 'req_9' }]]);
-    const result = await hookdeck.publish('bridge-out-email.received', { 'webhook-id': 'msg_1', 'content-type': 'application/json' }, '{"a":1}');
-    expect(result).toEqual({ requestId: 'req_9' });
-    expect(calls[0]!.url.href).toBe('https://hkdk.events/v1/publish');
-    expect(calls[0]!.headers).toMatchObject({
-      'webhook-id': 'msg_1',
-      'X-Hookdeck-Source-Name': 'bridge-out-email.received',
-      Authorization: 'Bearer test-key',
-    });
-    expect(calls[0]!.body).toBe('{"a":1}');
-  });
-
-  it('throws when a publish fails, so the relay can return 5xx', async () => {
-    const { hookdeck } = client([[503, 'unavailable']]);
-    await expect(hookdeck.publish('bridge-out-email.received', {}, '{}')).rejects.toMatchObject({ status: 503 });
   });
 
   it('resolves issues and upserts issue triggers by name', async () => {

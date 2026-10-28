@@ -83,17 +83,17 @@ type Node = { type: string; start: number; end: number; loc: { start: { line: nu
 const lineIndent = (source: string, index: number) => /^[ \t]*/.exec(source.slice(source.lastIndexOf('\n', index - 1) + 1))![0];
 const indentLines = (text: string, indent: string) => text.split('\n').join(`\n${indent}`);
 
-/** The `sources` array, or `providers`, its old name, in a config object's AST. */
+/** The `sources` array in a config object's AST. */
 const sourcesProperty = (properties: Node[]) =>
-  properties.find((p: Node) => p.type === 'ObjectProperty' && !p.computed && ['sources', 'providers'].includes(p.key?.name ?? p.key?.value)) as Node | undefined;
+  properties.find((p: Node) => p.type === 'ObjectProperty' && !p.computed && (p.key?.name ?? p.key?.value) === 'sources') as Node | undefined;
 
-/** A source({ id: '<id>' }) or webhook({ id: '<id>' }) call among the array's elements, if there is one. */
+/** A source({ id: '<id>' }) call among the array's elements, if there is one. */
 const hasSource = (array: Node, id: string) =>
   array.elements.some(
     (el: Node | null) =>
       el?.type === 'CallExpression' &&
       el.callee?.type === 'Identifier' &&
-      (el.callee.name === 'source' || el.callee.name === 'webhook') &&
+      el.callee.name === 'source' &&
       el.arguments[0]?.type === 'ObjectExpression' &&
       el.arguments[0].properties.some(
         (p: Node) => p.type === 'ObjectProperty' && (p.key?.name === 'id' || p.key?.value === 'id') && p.value?.type === 'StringLiteral' && p.value.value === id,

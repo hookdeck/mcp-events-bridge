@@ -1,5 +1,6 @@
 import type { ResolvedSource } from './config.js';
-import type { SourceEvent } from './sources/types.js';
+import type { EventRuntime, SourceEvent } from './sources/types.js';
+import { instantiateRuntime } from './transformation.js';
 
 /**
  * The events the bridge offers: every enabled event of every configured provider instance, named
@@ -29,8 +30,10 @@ export interface CatalogEntry {
   /** The MCP event name: `{instance id}.{event.name}`. */
   name: string;
   providerId: string;
-  // Events have varying argument and summary types.
-  event: SourceEvent<any, any>;
+  // Events have varying argument types.
+  event: SourceEvent<any>;
+  /** How the event is built from a request: the source runtime's entry for it, as the transformation runs it. */
+  runtime: EventRuntime;
 }
 
 export class Catalog {
@@ -38,12 +41,15 @@ export class Catalog {
 
   constructor(providers: ResolvedSource[]) {
     for (const provider of providers) {
+      const runtimes = instantiateRuntime(provider.definition);
       for (const event of provider.definition.events) {
         if (!provider.events.includes(event.name)) continue;
         const name = mcpEventName(provider.id, event.name);
         // Ids are unique and have no dots, so a name splits at its first dot and can't repeat: an assertion.
         if (this.byName.has(name)) throw new Error(`Two sources offer "${name}"`);
-        this.byName.set(name, { name, providerId: provider.id, event });
+        const runtime = runtimes[event.name];
+        if (!runtime) throw new Error(`Source ${provider.id}: its runtime has no entry for the event "${event.name}"`);
+        this.byName.set(name, { name, providerId: provider.id, event, runtime });
       }
     }
   }

@@ -58,7 +58,7 @@ describe('resolveConfig', () => {
   });
 
   it('resolves env() references nested in source options, and leaves other values alone', () => {
-    const custom = defineSource({ type: 'custom', displayName: 'Custom', sourceType: 'WEBHOOK', events: [] });
+    const custom = defineSource({ type: 'custom', displayName: 'Custom', sourceType: 'WEBHOOK', events: [], runtime: () => ({}) });
     const when = new Date(0);
     const instance = custom({ auth: { secret: env('CUSTOM_SECRET'), user: 'u' }, list: [env('CUSTOM_SECRET')], when } as Record<string, unknown>);
     const resolved = resolveConfig(config({ sources: [instance] }), { ...base, CUSTOM_SECRET: 'shh' });

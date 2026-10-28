@@ -1,12 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 530" width="1200" height="530" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" width="1200" height="600" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title id="title">MCP Events bridge architecture</title>
-  <desc id="desc">Services such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway sources, which verify and keep them and forward them to the MCP Events bridge. Agents such as ChatGPT, Hermes Agent (through the Hookdeck CLI) and others subscribe to the bridge over MCP. The bridge maps, matches and signs each event and publishes it to an Event Gateway topic source, which delivers it to each agent's callback URL through one connection per subscription, with filter, dedupe and retry. Claude Code polls the bridge over MCP instead.</desc>
+  <desc id="desc">Services such as Resend, GitHub and others send webhooks to Hookdeck Event Gateway sources, which verify and keep them. Agents such as ChatGPT, Hermes Agent (through the Hookdeck CLI) and others subscribe to the MCP Events bridge over MCP, and the bridge creates one Event Gateway connection per subscription on the service's source. Each connection turns a webhook into an MCP Event, filters it by the subscription's arguments, dedupes and retries, and its destination delivers it to the agent's callback URL, signing every attempt with the subscriber's secret. Event Gateway's issue notifications tell the bridge about failing callbacks. Claude Code polls the bridge over MCP instead.</desc>
   <style>
     .bg { fill: #ffffff; stroke: #d0d7de; }
     .panel { fill: #f6f8fa; stroke: #d0d7de; }
     .box { fill: #ffffff; stroke: #8c959f; }
     .accent { fill: #eef1ff; stroke: #5b6bf0; }
     .dashed { stroke-dasharray: 6 5; }
+    .dotted { stroke-dasharray: 2 4; }
     .text { fill: #1f2328; }
     .muted { fill: #59636e; }
     .label { fill: #59636e; font-size: 13px; }
@@ -29,9 +30,18 @@
     </marker>
   </defs>
 
-  <rect class="bg" x="1" y="1" width="1198" height="528" rx="14"/>
+  <rect class="bg" x="1" y="1" width="1198" height="598" rx="14"/>
 
-  <g transform="translate(0,50)">
+  <g transform="translate(0,120)">
+    <!-- Bridge: the MCP server, out of the data path -->
+    <rect class="accent" x="505" y="-100" width="250" height="72" rx="10" stroke-width="1.6"/>
+    <text class="text" x="630" y="-70" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
+    <text class="muted" x="630" y="-47" font-size="13" text-anchor="middle">catalog · subscriptions · challenge</text>
+    <path class="arrow dashed" d="M630,-26 V96" marker-end="url(#arrowhead)"/>
+    <text class="label" x="642" y="12">creates a connection per subscription</text>
+    <path class="arrow dotted" d="M560,38 V-24" marker-end="url(#arrowhead)"/>
+    <text class="label" x="548" y="12" text-anchor="end">issue notifications</text>
+
     <!-- Services -->
     <text class="muted" x="40" y="62" font-size="13" font-weight="600" letter-spacing="0.5">SERVICES</text>
     <rect class="box" x="30" y="100" width="170" height="50" rx="8"/>
@@ -42,47 +52,46 @@
     <text class="text" x="115" y="306" font-size="14" text-anchor="middle">Stripe, Shopify, Linear…</text>
     <text class="muted" x="115" y="326" font-size="13" text-anchor="middle">other services</text>
 
-    <!-- Event Gateway: inbound -->
-    <rect class="panel" x="240" y="40" width="230" height="340" rx="12"/>
-    <text class="text" x="355" y="66" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
-    <text class="muted" x="355" y="86" font-size="13" text-anchor="middle">verify · store · retry</text>
+    <!-- Event Gateway -->
+    <rect class="panel" x="240" y="40" width="775" height="340" rx="12"/>
+    <text class="text" x="627" y="366" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
+
     <rect class="box" x="260" y="100" width="190" height="50" rx="8"/>
     <text class="text" x="355" y="130" font-size="15" text-anchor="middle">Resend source</text>
     <rect class="box" x="260" y="190" width="190" height="50" rx="8"/>
     <text class="text" x="355" y="220" font-size="15" text-anchor="middle">GitHub source</text>
     <rect class="box dashed" x="260" y="285" width="190" height="52" rx="8"/>
-    <text class="text" x="355" y="316" font-size="15" text-anchor="middle">a source per service</text>
+    <text class="text" x="355" y="309" font-size="15" text-anchor="middle">a source per service</text>
+    <text class="muted" x="355" y="327" font-size="12" text-anchor="middle">verify · keep every request</text>
 
     <path class="arrow" d="M200,125 H258" marker-end="url(#arrowhead)"/>
     <path class="arrow" d="M200,215 H258" marker-end="url(#arrowhead)"/>
     <path class="arrow dashed" d="M200,311 H258" marker-end="url(#arrowhead)"/>
 
-    <!-- Bridge -->
-    <rect class="accent" x="535" y="185" width="190" height="80" rx="10" stroke-width="1.6"/>
-    <text class="text" x="630" y="217" font-size="17" font-weight="600" text-anchor="middle">MCP Events bridge</text>
-    <text class="muted" x="630" y="241" font-size="14" text-anchor="middle">map · match · sign</text>
+    <!-- A connection per subscription: a stack -->
+    <rect class="box" x="532" y="112" width="240" height="225" rx="8"/>
+    <rect class="box" x="526" y="106" width="240" height="225" rx="8"/>
+    <rect class="box" x="520" y="100" width="240" height="225" rx="8"/>
+    <text class="text" x="640" y="132" font-size="15" font-weight="600" text-anchor="middle">connection per subscription</text>
+    <text class="muted" x="640" y="152" font-size="12" text-anchor="middle">on its service's source</text>
+    <text class="text" x="640" y="192" font-size="14" text-anchor="middle">transform → MCP Event</text>
+    <text class="text" x="640" y="222" font-size="14" text-anchor="middle">filter by its arguments</text>
+    <text class="text" x="640" y="252" font-size="14" text-anchor="middle">dedupe · retry</text>
+    <text class="muted" x="640" y="290" font-size="12" text-anchor="middle">the transformation is generated</text>
+    <text class="muted" x="640" y="306" font-size="12" text-anchor="middle">by the bridge, one per source</text>
 
-    <path class="arrow" d="M450,125 C495,125 495,212 533,212" marker-end="url(#arrowhead)"/>
-    <path class="arrow" d="M450,215 C490,215 495,225 533,225" marker-end="url(#arrowhead)"/>
-    <path class="arrow dashed" d="M450,311 C495,311 495,238 533,238" marker-end="url(#arrowhead)"/>
+    <path class="arrow" d="M450,125 C485,125 485,180 518,180" marker-end="url(#arrowhead)"/>
+    <path class="arrow" d="M450,215 C485,215 485,212 518,212" marker-end="url(#arrowhead)"/>
+    <path class="arrow dashed" d="M450,311 C485,311 485,244 518,244" marker-end="url(#arrowhead)"/>
 
-    <!-- Event Gateway: outbound -->
-    <rect class="panel" x="805" y="40" width="210" height="340" rx="12"/>
-    <text class="text" x="910" y="66" font-size="15" font-weight="600" text-anchor="middle">Hookdeck Event Gateway</text>
-    <text class="muted" x="910" y="86" font-size="13" text-anchor="middle">deliver · retry · record</text>
-    <rect class="box" x="825" y="150" width="170" height="56" rx="8"/>
-    <text class="text" x="910" y="174" font-size="15" text-anchor="middle">topic source</text>
-    <text class="muted" x="910" y="194" font-size="13" text-anchor="middle">per MCP event</text>
-    <rect class="box" x="825" y="250" width="170" height="70" rx="8"/>
-    <text class="text" x="910" y="275" font-size="15" text-anchor="middle">connection per</text>
-    <text class="text" x="910" y="294" font-size="15" text-anchor="middle">subscription</text>
-    <text class="muted" x="910" y="312" font-size="12" text-anchor="middle">filter · dedupe · retry</text>
-    <path class="arrow" d="M910,206 V248" marker-end="url(#arrowhead)"/>
-
-    <path class="arrow" d="M725,225 C765,225 785,178 823,178" marker-end="url(#arrowhead)"/>
-    <text class="label" x="737" y="252" font-size="12">Publish API,</text>
-    <text class="label" x="737" y="267" font-size="12">signed per</text>
-    <text class="label" x="737" y="282" font-size="12">subscriber</text>
+    <!-- Destination per subscription -->
+    <rect class="box" x="810" y="150" width="180" height="140" rx="8"/>
+    <text class="text" x="900" y="180" font-size="15" font-weight="600" text-anchor="middle">destination</text>
+    <text class="muted" x="900" y="198" font-size="12" text-anchor="middle">per subscription</text>
+    <text class="text" x="900" y="232" font-size="14" text-anchor="middle">the callback URL</text>
+    <text class="muted" x="900" y="256" font-size="12" text-anchor="middle">signs every attempt with</text>
+    <text class="muted" x="900" y="272" font-size="12" text-anchor="middle">the subscriber's secret</text>
+    <path class="arrow" d="M772,220 H808" marker-end="url(#arrowhead)"/>
 
     <!-- Agents: subscribe over MCP, receive deliveries. A stack, front to back, each card a little narrower and
          overlapping the top of the one behind it -->
@@ -99,16 +108,16 @@
     <text class="muted" x="1110" y="229" font-size="12" text-anchor="middle">via Hookdeck CLI</text>
     <rect class="box" x="1045" y="140" width="130" height="50" rx="8"/>
     <text class="text" x="1110" y="170" font-size="15" text-anchor="middle">ChatGPT</text>
-    <path class="arrow" d="M995,266 C1020,266 1020,165 1043,165" marker-end="url(#arrowhead)"/>
-    <path class="arrow" d="M995,280 C1022,280 1022,215 1047,215" marker-end="url(#arrowhead)"/>
-    <path class="arrow dashed" d="M995,296 C1024,296 1026,308 1055,308" marker-end="url(#arrowhead)"/>
+    <path class="arrow" d="M990,200 C1018,200 1018,165 1043,165" marker-end="url(#arrowhead)"/>
+    <path class="arrow" d="M990,220 C1020,220 1022,215 1047,215" marker-end="url(#arrowhead)"/>
+    <path class="arrow dashed" d="M990,240 C1022,240 1026,308 1055,308" marker-end="url(#arrowhead)"/>
 
-    <!-- MCP subscribe loop: agent hosts back to the bridge -->
-    <path class="arrow" d="M1110,38 V-12 Q1110,-20 1102,-20 H638 Q630,-20 630,-12 V183" marker-end="url(#arrowhead)"/>
-    <text class="label" x="870" y="-28" text-anchor="middle">MCP: events/list, events/subscribe, get_event, …</text>
+    <!-- MCP subscribe loop: agent hosts to the bridge -->
+    <path class="arrow" d="M1110,38 V-57 Q1110,-65 1102,-65 H757" marker-end="url(#arrowhead)"/>
+    <text class="label" x="935" y="-75" text-anchor="middle">MCP: events/subscribe, events/poll, get_event, …</text>
 
     <!-- Footer -->
-    <text class="muted" x="600" y="420" font-size="13" text-anchor="middle">Agents subscribe over MCP, and Event Gateway delivers each event to their callback URL; Claude Code polls instead.</text>
-    <text class="muted" x="600" y="440" font-size="13" text-anchor="middle">The bridge is stateless: subscriptions are Event Gateway connections. Dashed: other services and agents.</text>
+    <text class="muted" x="600" y="420" font-size="13" text-anchor="middle">Agents subscribe over MCP; the bridge creates a connection per subscription, and Event Gateway delivers each event to the callback URL.</text>
+    <text class="muted" x="600" y="440" font-size="13" text-anchor="middle">Events don't pass through the bridge, and it's stateless: subscriptions are Event Gateway connections. Dashed: other services and agents.</text>
   </g>
 </svg>

@@ -36,12 +36,10 @@ class FakeListing {
   now = T0;
   requests: FakeRequest[] = [];
   calls: Array<{ sources: string[]; from: number }> = [];
-  ignoredLookups = 0;
   /** Listing calls attempted, including rate-limited ones. */
   attempts = 0;
   rateLimit: { limit: number; remaining: number } | undefined = undefined;
   rateLimited = false;
-  ignoredRateLimited = false;
   private n = 0;
 
   add(r: Partial<FakeRequest> & { createdAt: number }) {
@@ -84,18 +82,11 @@ class FakeListing {
         meta: { date: Math.floor(this.now / 1000) * 1000, ...(this.rateLimit && { rateLimit: this.rateLimit }) },
       };
     },
-    listIgnoredEventsForRequest: async (id: string) => {
-      this.ignoredLookups++;
-      if (this.ignoredRateLimited) throw new HookdeckApiError('GET', `/requests/${id}/ignored_events`, 429, '{}');
-      const r = this.requests.find((x) => x.id === id)!;
-      const cause = { duplicate: 'DUPLICATE', filtered: 'FILTERED', 'cli-disconnected': 'CLI_DISCONNECTED', event: 'NONE' }[r.kind];
-      return { models: [{ id: `ign_${id}`, request_id: id, webhook_id: 'web_1', cause, created_at: '' }] };
-    },
   };
 }
 
-function setup(options: { providers?: string[]; clockSkewMs?: number } = {}) {
-  const config = resolveConfig(defineConfig({ providers: (options.providers ?? ['fills']).map(fills) }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+function setup(options: { sources?: string[]; clockSkewMs?: number } = {}) {
+  const config = resolveConfig(defineConfig({ sources: (options.sources ?? ['fills']).map(fills) }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
   const catalog = new Catalog(config.sources);
   const listing = new FakeListing();
   const sources = { listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }) } as unknown as HookdeckClient;
@@ -128,7 +119,8 @@ describe('poll mode: cursor', () => {
       const original = kind === 'duplicate' ? [...expected][Math.floor(rand() * expected.size)] : undefined;
       const request = listing.add({ createdAt, visibleAt: createdAt + delay, processedAt, kind, ...(original && { deliveryId: original }) });
       if (kind === 'duplicate') duplicates++;
-      if (kind === 'event' || kind === 'cli-disconnected') expected.add(request.deliveryId);
+      // Whatever Event Gateway did with it (a subscription's filter, a dedupe), a request is an event poll can return.
+      if (kind !== 'duplicate') expected.add(request.deliveryId);
     }
 
     const returned: string[] = [];
@@ -141,7 +133,7 @@ describe('poll mode: cursor', () => {
     }
 
     expect(new Set(returned)).toEqual(expected);
-    // Repeats only from duplicates still unrouted after the look-back (the same eventId; clients dedupe by it).
+    // Repeats only from duplicates arriving after the original left the cursor's ids (the same eventId; clients dedupe by it).
     expect(returned.length - expected.size).toBeLessThanOrEqual(duplicates);
     // Shared listing: about one call per 2-second interval, not one per poll.
     expect(listing.calls.length).toBeLessThan((720_000 / POLL_INTERVAL_MS) * 1.2);
@@ -162,26 +154,25 @@ describe('poll mode: cursor', () => {
     expect(next.events[0]).toMatchObject({ name: NAME, data: { symbol: 'AAPL' } });
   });
 
-  it('filters by arguments, and returns only requests the relay would have delivered', async () => {
+  it("filters by arguments, whatever Event Gateway did with each request, and returns a sender's redelivery once", async () => {
     const { listing, service } = setup();
     const start = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' } });
     for (const [deliveryId, symbol, kind] of [
       ['aapl', 'AAPL', 'event'],
       ['msft', 'MSFT', 'event'],
-      ['dupe', 'AAPL', 'duplicate'],
+      ['aapl', 'AAPL', 'duplicate'],
       ['filtered', 'AAPL', 'filtered'],
       ['laptop-asleep', 'AAPL', 'cli-disconnected'],
     ] as const) listing.add({ createdAt: T0 + 1000, deliveryId, symbol, kind });
     listing.now += 5000;
     const result = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' }, cursor: start.cursor });
-    expect(result.events.map((e) => e.eventId).sort()).toEqual(['aapl', 'laptop-asleep']);
+    expect(result.events.map((e) => e.eventId).sort()).toEqual(['aapl', 'filtered', 'laptop-asleep']);
   });
 
-  it('holds the watermark for a request listed before Event Gateway has routed it, for up to the look-back', async () => {
+  it("returns a request as soon as it's listed, whether or not Event Gateway has routed it yet", async () => {
     const { listing, service } = setup();
     const start = await service.poll({ name: NAME });
     listing.add({ createdAt: T0 + 1000, visibleAt: T0 + 2000, processedAt: T0 + 50_000, deliveryId: 'slow' });
-    // Still unprocessed after the look-back: returned (on a provider source it's in flight, or being retried).
     listing.add({ createdAt: T0 + 1000, visibleAt: T0 + 2000, processedAt: T0 + 70_000, deliveryId: 'too-slow' });
     let cursor = start.cursor;
     const seen: string[] = [];
@@ -194,8 +185,7 @@ describe('poll mode: cursor', () => {
     expect(seen).toEqual(['slow', 'too-slow']);
   });
 
-  it('returns requests the inbound recovery retries long after they arrived (a local bridge that was down)', async () => {
-    // Found live: while recovery retries a CLI_DISCONNECTED request, it shows no events and no ignored events.
+  it('returns requests that arrived while nobody was polling, however Event Gateway routes them later', async () => {
     const { listing, service } = setup();
     const start = await service.poll({ name: NAME });
     const missed = [1, 2, 3].map((i) => listing.add({ createdAt: T0 + 1000 * i, deliveryId: `missed-${i}`, kind: 'cli-disconnected' }));
@@ -275,7 +265,7 @@ describe('poll mode: cursor', () => {
 
 describe('poll mode: shared listing and back-off', () => {
   it('answers concurrent polls with one listing, and lists only sources polled recently', async () => {
-    const { listing, service } = setup({ providers: ['fills', 'orders'] });
+    const { listing, service } = setup({ sources: ['fills', 'orders'] });
     await Promise.all(Array.from({ length: 5 }, () => service.poll({ name: NAME })));
     expect(listing.calls).toHaveLength(1);
     expect(listing.calls[0]!.sources).toEqual(['src_bridge-fills']);
@@ -381,23 +371,6 @@ describe('poll mode: shared listing and back-off', () => {
     expect((await fresh.service.poll({ name: NAME, cursor: start.cursor })).events.map((e) => e.eventId)).toEqual(['after']);
   });
 
-  it("answers a 429 from the ignored-events lookup without failing the poll, and looks a request up once", async () => {
-    const { listing, service } = setup();
-    const cursors = await Promise.all([1, 2, 3].map(() => service.poll({ name: NAME }).then((r) => r.cursor)));
-    listing.add({ createdAt: T0 + 1000, deliveryId: 'asleep', kind: 'cli-disconnected' });
-    listing.now += 5000;
-    listing.ignoredRateLimited = true;
-    const limited = await service.poll({ name: NAME, cursor: cursors[0] });
-    expect(limited).toMatchObject({ events: [], cursor: cursors[0], hasMore: false, nextPollMs: MAX_POLL_INTERVAL_MS });
-
-    listing.ignoredRateLimited = false;
-    listing.now += MAX_POLL_INTERVAL_MS;
-    const lookups = listing.ignoredLookups;
-    const results = await Promise.all(cursors.map((cursor) => service.poll({ name: NAME, cursor })));
-    for (const r of results) expect(r.events.map((e) => e.eventId)).toEqual(['asleep']);
-    expect(listing.ignoredLookups - lookups).toBe(1);
-  });
-
   it('checks the cursor while rate limited', async () => {
     const start = await setup().service.poll({ name: NAME, arguments: { symbol: 'AAPL' } });
     // Another bridge process (a restart), rate limited, with no listing to answer from.
@@ -447,19 +420,19 @@ describe('poll mode: wait_for_event', () => {
 });
 
 describe('webhook cursors (SEP-3415 replay)', () => {
-  it("replays what came after a delivery's cursor, skipping the delivered request and other arguments' events", async () => {
+  it("replays from a cursor's watermark, re-reading the look-back (so the last delivery can repeat), and not other arguments' events", async () => {
     const { listing, service } = setup();
     listing.now = T0 + 120_000;
-    const delivered = listing.add({ createdAt: T0 + 100_000, deliveryId: 'delivered' });
-    // The cursor a live delivery of `delivered` carries.
-    const cursor = service.webhookCursor(NAME, { symbol: 'AAPL' }, { requestId: delivered.id, at: listing.now });
+    listing.add({ createdAt: T0 + 100_000, deliveryId: 'delivered' });
+    // The cursor a delivery made now carries (the transformation writes the same format).
+    const cursor = service.webhookCursor(NAME, { symbol: 'AAPL' }, { at: listing.now });
     listing.add({ createdAt: T0 + 200_000, deliveryId: 'missed' });
     listing.add({ createdAt: T0 + 210_000, symbol: 'MSFT', deliveryId: 'other-symbol' });
     listing.now = T0 + 300_000;
 
     const result = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' }, cursor });
-    expect(result.events.map((e) => e.eventId)).toEqual(['missed']);
-    expect(service.checkCursor(NAME, { symbol: 'AAPL' }, cursor)).toEqual({ truncated: false });
+    expect(result.events.map((e) => e.eventId)).toEqual(['delivered', 'missed']);
+    expect(service.checkCursor(NAME, { symbol: 'AAPL' }, cursor)).toEqual({ truncated: false, position: { f: T0 + 60_000, w: T0 + 60_000 } });
   });
 
   it('checks a cursor: the same event and arguments, one this bridge returned, and truncated past retention', () => {
@@ -468,6 +441,6 @@ describe('webhook cursors (SEP-3415 replay)', () => {
     expect(() => service.checkCursor(NAME, { symbol: 'MSFT' }, cursor)).toThrow(/another event name or arguments/);
     expect(() => service.checkCursor(NAME, { symbol: 'AAPL' }, 'not-a-cursor')).toThrow(/not a cursor this bridge returned/);
     listing.now = T0 + 4 * 24 * 60 * 60 * 1000; // Event Gateway keeps 3 days by default
-    expect(service.checkCursor(NAME, { symbol: 'AAPL' }, cursor)).toEqual({ truncated: true });
+    expect(service.checkCursor(NAME, { symbol: 'AAPL' }, cursor)).toMatchObject({ truncated: true });
   });
 });

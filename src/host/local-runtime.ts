@@ -9,11 +9,11 @@ import type { BridgeServer } from './server.js';
 /*
  * What a bridge on a laptop runs besides its HTTP listener:
  *
- * - inbound: `hookdeck listen` for its provider and notification sources, and
- *   recovery of provider events that arrived while it was down (after every
+ * - inbound: `hookdeck listen` for Event Gateway's issue notifications, and
+ *   recovery of notifications that arrived while it was down (after every
  *   (re)connect, and on a timer);
  * - local agents: one `hookdeck listen` per agent port covering the agent's
- *   tunnel URLs, restarted when URLs are created or deleted, and a retry of
+ *   callback URLs, restarted when URLs are created or deleted, and a retry of
  *   deliveries the agent missed after every (re)connect and on a timer.
  *
  * The timer covers reconnects the CLI makes inside a running process without
@@ -25,7 +25,7 @@ export interface LocalRuntimeOptions {
   cliConfigPath: string;
   /** Run `listen` and recovery for the bridge's own inbound (CLI inbound). */
   inbound: boolean;
-  /** Run `listen` and retries for local agents' tunnel URLs. */
+  /** Run `listen` and retries for local agents' callback URLs. */
   agents: boolean;
   /** The backstop timer. Default 5 minutes. */
   retryEveryMs?: number;
@@ -45,7 +45,7 @@ export interface LocalRuntime {
   inboundReady: Promise<boolean>;
   /** Supervisor keys of an agent's `listen` processes. */
   agentKeys(agent: string): string[];
-  /** Brings the agent `listen` processes in line with the tunnel URLs now (normally debounced). */
+  /** Brings the agent `listen` processes in line with the callback URLs now (normally debounced). */
   syncAgents(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -108,7 +108,6 @@ export function startLocalRuntime(bridge: BridgeServer, config: ResolvedConfig, 
       hookdeck: bridge.hookdeck,
       targets,
       state: fileState(options.recoveryStateFile ?? path.join(path.dirname(options.cliConfigPath), 'inbound-recovery.json')),
-      onRetried: (id) => bridge.recoveredRequests.add(id),
       log,
     });
     // Only while connected: a retry while `listen` is down is only ignored again. The next "Connected" runs it.
@@ -124,14 +123,14 @@ export function startLocalRuntime(bridge: BridgeServer, config: ResolvedConfig, 
     const keys = agentKeysNow.get(agent) ?? [];
     return keys.length > 0 && keys.every((k) => supervisor.isConnected(k));
   };
-  // Only while the agent's `listen` is connected: a re-send while it's down is only ignored again. The next "Connected"
+  // Only while the agent's `listen` is connected: a retry while it's down is only ignored again. The next "Connected"
   // (after a restart for a new URL, or a reconnect) runs it.
   const retry = (agent: string) => {
     if (!agentConnected(agent)) return;
     schedule(`retry ${agent}`, async () => {
       if (!agentConnected(agent)) return true;
       const report = await bridge.callbacks.retryMissed(agent);
-      if (report.resent) log(`re-sent ${report.resent} delivery(ies) agent ${agent} missed`);
+      if (report.retried) log(`retried ${report.retried} delivery(ies) agent ${agent} missed`);
       return report.upToDate;
     });
   };

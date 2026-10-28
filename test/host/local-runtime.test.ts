@@ -78,10 +78,10 @@ function setup({ reports = [] as Array<Partial<RetryReport>> } = {}) {
 }
 
 describe('startLocalRuntime', () => {
-  it("runs listen for the bridge's inbound sources, and recovers missed provider events when it connects", async () => {
+  it("runs listen for Event Gateway's issue notifications, and recovers missed ones when it connects", async () => {
     const { start, spawned, hookdeckCalls } = setup();
     const runtime = start({ inbound: true, agents: false });
-    expect(spawned[0]!.args.slice(0, 3)).toEqual(['listen', '8080', 'bridge-resend,bridge-hookdeck-notifications']);
+    expect(spawned[0]!.args.slice(0, 3)).toEqual(['listen', '8080', 'bridge-hookdeck-notifications']);
     expect(spawned[0]!.args).toContain('bridge-dev');
     spawned[0]!.connect();
     expect(await runtime.inboundReady).toBe(true);
@@ -89,8 +89,8 @@ describe('startLocalRuntime', () => {
     expect(hookdeckCalls).toContain('listAllConnections'); // the recovery run
   });
 
-  it("runs listen for each agent's tunnel URLs, and retries the agent's missed deliveries when it connects, until up to date", async () => {
-    const { start, spawned, retries, setPlan } = setup({ reports: [{ upToDate: false, resent: 1 }] });
+  it("runs listen for each agent's callback URLs, and retries the agent's missed deliveries when it connects, until up to date", async () => {
+    const { start, spawned, retries, setPlan } = setup({ reports: [{ upToDate: false, retried: 1 }] });
     const runtime = start({ inbound: false, agents: true });
     setPlan([{ agent: 'laptop', port: 4500, sources: ['agent-laptop-a'] }]);
     await runtime.syncAgents();

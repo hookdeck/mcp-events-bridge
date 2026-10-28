@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-json.js';
 import type { Catalog } from './catalog.js';
 import { internalError, invalidParams, notFound } from './errors.js';
+import { matchesFilter } from './filter.js';
 import type { EventHistory, PastEvent } from './event-history.js';
 import { HookdeckApiError, type HookdeckClient, type HookdeckRequest, type ResponseMeta } from './hookdeck.js';
 
@@ -64,7 +65,7 @@ interface CursorState {
   w: number;
   /** When the listing this cursor came from was taken. */
   t: number;
-  /** Requests at or after `w` already returned: [request id, created_at ms]. */
+  /** Events at or after `w` already returned: [event id, created_at ms]. (Request ids in cursors from 0.7 and earlier.) */
   ids: Array<[string, number]>;
 }
 
@@ -77,7 +78,7 @@ interface Listing {
   until?: number;
 }
 
-type ListingClient = Pick<HookdeckClient, 'listAcceptedRequests' | 'listIgnoredEventsForRequest'>;
+type ListingClient = Pick<HookdeckClient, 'listAcceptedRequests'>;
 
 export class RateLimitedError extends Error {}
 
@@ -228,7 +229,7 @@ function decodeCursor(cursor: string): CursorState {
   throw invalidParams('cursor is not a cursor this bridge returned', { field: 'cursor' });
 }
 
-const argumentsHash = (args: unknown) => createHash('sha256').update(canonicalJson(args)).digest('hex').slice(0, 16);
+export const argumentsHash = (args: unknown) => createHash('sha256').update(canonicalJson(args)).digest('hex').slice(0, 16);
 
 export interface PollServiceDeps {
   hookdeck: ListingClient;
@@ -242,11 +243,6 @@ export interface PollServiceDeps {
 
 export class PollService {
   readonly window: RequestWindow;
-  /**
-   * Whether an accepted request with no events was ignored only for a disconnected CLI (kept, as poll returns it).
-   * A promise, so concurrent polls reading the same listing look each request up once.
-   */
-  private readonly waitingOnCli = new Map<string, Promise<boolean>>();
 
   constructor(private readonly deps: PollServiceDeps) {
     this.window = deps.window ?? new RequestWindow({ hookdeck: deps.hookdeck, now: deps.now, lookbackMs: deps.lookbackMs });
@@ -279,25 +275,35 @@ export class PollService {
   /**
    * A webhook cursor (SEP-3415's safe-to-persist watermark), in poll's format: a position `at` (Event Gateway's clock,
    * default now) less the look-back, so replaying from it re-reads the last minute rather than skipping an event still
-   * in flight. `requestId` is a request already delivered, which a replay skips. Events can repeat; clients dedupe by eventId.
+   * in flight. Events can repeat; clients dedupe by eventId. Deliveries carry the same format, from the transformation.
    */
-  webhookCursor(name: string, args: Record<string, unknown>, options: { requestId?: string; at?: number } = {}): string {
+  webhookCursor(name: string, args: Record<string, unknown>, options: { at?: number } = {}): string {
     const { entry, args: parsed } = this.parse({ name, arguments: args });
     const at = options.at ?? this.window.egNow();
     const w = at - this.lookbackMs;
-    return encodeCursor({ v: 1, n: entry.name, a: argumentsHash(parsed), f: w, w, t: at, ids: options.requestId ? [[options.requestId, at]] : [] });
+    return encodeCursor({ v: 1, n: entry.name, a: argumentsHash(parsed), f: w, w, t: at, ids: [] });
   }
 
   /** Checks a cursor a client passed to events/subscribe: one this bridge returned, for the same event and arguments. */
-  checkCursor(name: string, args: Record<string, unknown>, cursor: string): { truncated: boolean } {
+  checkCursor(name: string, args: Record<string, unknown>, cursor: string): { truncated: boolean; position: { f: number; w: number } } {
     const { entry, args: parsed } = this.parse({ name, arguments: args });
     const state = decodeCursor(cursor);
-    if (state.n !== entry.name || state.a !== argumentsHash(parsed)) throw invalidParams('cursor is for another event name or arguments', { field: 'cursor' });
+    if (state.n !== entry.name || (state.a !== '' && state.a !== argumentsHash(parsed))) throw invalidParams('cursor is for another event name or arguments', { field: 'cursor' });
     // Older than Event Gateway keeps: the replay starts later than the cursor.
-    return { truncated: state.w < this.window.egNow() - (this.deps.retentionMs ?? DEFAULT_RETENTION_MS) };
+    return { truncated: state.w < this.window.egNow() - (this.deps.retentionMs ?? DEFAULT_RETENTION_MS), position: { f: state.f, w: state.w } };
   }
 
   async poll(params: Record<string, unknown>): Promise<PollResult> {
+    return this.scan(params);
+  }
+
+  /** The cursor a replay's deliveries carry: poll's format, at the position the replay started from. */
+  replayCursor(name: string, args: Record<string, unknown>, position: { f: number; w: number }): string {
+    const { entry, args: parsed } = this.parse({ name, arguments: args });
+    return encodeCursor({ v: 1, n: entry.name, a: argumentsHash(parsed), f: position.f, w: position.w, t: this.window.egNow(), ids: [] });
+  }
+
+  private async scan(params: Record<string, unknown>): Promise<PollResult> {
     const { entry, args, cursor, maxAgeMs, maxEvents } = this.parse(params);
     const hash = argumentsHash(args);
     const sourceId = await this.deps.history.sourceIdFor(entry.providerId);
@@ -313,7 +319,7 @@ export class PollService {
     }
 
     const state = decodeCursor(cursor);
-    if (state.n !== entry.name || state.a !== hash) throw invalidParams('cursor is for another event name or arguments', { field: 'cursor' });
+    if (state.n !== entry.name || (state.a !== '' && state.a !== hash)) throw invalidParams('cursor is for another event name or arguments', { field: 'cursor' });
 
     let window;
     try {
@@ -365,42 +371,27 @@ export class PollService {
     let hasMore = false;
     const holdAt = (at: number) => (hold = hold === undefined ? at : Math.min(hold, at));
 
+    // Every verified request is an event candidate (Event Gateway rejected the rest at the source); a repeat (a sender
+    // resending, or a request retried) has an event id already returned, and is skipped.
     for (const request of listing.requests) {
-      if (request.source_id !== sourceId || seen.has(request.id)) continue;
+      if (request.source_id !== sourceId) continue;
       const created = Date.parse(request.created_at);
       if (created < start) continue;
-      let kind;
-      try {
-        kind = await this.classify(request);
-      } catch (error) {
-        if (!(error instanceof RateLimitedError)) throw error;
-        this.window.fail(error);
-        return this.unchanged(cursor);
-      }
-      // Not routed yet: a request that just arrived, or one being retried (the bridge's inbound recovery retries
-      // requests a disconnected local bridge missed, and they show no events and no ignored events meanwhile, however
-      // old). Hold the watermark for a new one, so a duplicate can be recognized first; return an older one, since on
-      // a provider source it's in flight, and a duplicate returned this way repeats an eventId clients dedupe by.
-      if (kind === 'pending') {
-        if (created >= listing.t - this.lookbackMs) {
-          holdAt(created);
-          continue;
-        }
-        kind = 'event';
-      }
-      const event = kind === 'event' ? this.deps.history.toEvent(entry.providerId, request) : undefined;
-      if (kind === 'event' && !event && !request.data) {
-        if (created >= listing.t - this.lookbackMs) holdAt(created);
+      const event = this.deps.history.toEvent(entry.providerId, request);
+      if (!event) {
+        // Listed before its body could be read: hold the watermark for a new one, so the next poll reads it again.
+        if (!request.data && created >= listing.t - this.lookbackMs) holdAt(created);
         continue;
       }
-      if (!event || event.name !== entry.name || !entry.event.accepts(args, event.data)) continue;
+      if (seen.has(event.eventId)) continue;
+      if (event.name !== entry.name || !matchesFilter(entry.event.filter(args), event.data)) continue;
       if (events.length >= maxEvents) {
         hasMore = true;
         holdAt(created);
         break;
       }
       events.push(event);
-      seen.set(request.id, created);
+      seen.set(event.eventId, created);
     }
     if (listing.until !== undefined) {
       hasMore = true;
@@ -443,27 +434,6 @@ export class PollService {
     }
   }
 
-  /** Which accepted requests are events, as the relay would have delivered them. */
-  private async classify(request: HookdeckRequest): Promise<'event' | 'skip' | 'pending'> {
-    if ((request.events_count ?? 0) > 0 || (request.cli_events_count ?? 0) > 0) return 'event';
-    if (!(request.ignored_count ?? 0)) return 'pending'; // not processed yet
-    let waiting = this.waitingOnCli.get(request.id);
-    if (waiting === undefined) {
-      if (this.window.backingOff) throw new RateLimitedError('Event Gateway API rate limit reached');
-      if (this.waitingOnCli.size > 5000) this.waitingOnCli.clear();
-      waiting = this.deps.hookdeck.listIgnoredEventsForRequest(request.id, { retry: false }).then(
-        (ignored) => ignored.models.some((i) => i.cause === 'CLI_DISCONNECTED'),
-        (error: unknown) => {
-          this.waitingOnCli.delete(request.id);
-          if (error instanceof HookdeckApiError && error.status === 429) throw new RateLimitedError('Event Gateway API rate limit reached');
-          throw error;
-        },
-      );
-      this.waitingOnCli.set(request.id, waiting);
-    }
-    // DUPLICATE, FILTERED, TRANSFORMATION_FAILED and other causes were never delivered.
-    return (await waiting) ? 'event' : 'skip';
-  }
 
   private result(events: PastEvent[], state: CursorState, truncated: boolean, hasMore: boolean): PollResult {
     // hasMore: poll again at once, unless the rate limit is running low (a backlog drains at the backed-off pace).

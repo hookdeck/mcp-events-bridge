@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Catalog } from '../../src/core/catalog.js';
 import { DEFAULT_SUBSCRIPTION_SETTINGS, defineConfig, resolveConfig } from '../../src/core/config.js';
-import { EventGatewayStore } from '../../src/core/event-gateway-store.js';
+import { EventGatewayStore, type PlaceSubscription } from '../../src/core/event-gateway-store.js';
 import { HookdeckApiError, type HookdeckClient } from '../../src/core/hookdeck.js';
 import { generateWebhookSecret } from '../../src/core/secret.js';
 import { SubscriptionService } from '../../src/core/subscriptions.js';
@@ -19,9 +19,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function slowGateway({ missing = new Set<string>() } = {}) {
   const deleted: string[] = [];
   const hookdeck = {
-    async upsertConnection(input: { name: string; source: { name: string } }) {
+    async upsertConnection(input: { name: string; source_id: string }) {
       await sleep(20);
-      return { id: `web_${input.name}`, source: { id: `src_${input.source.name}` }, destination: { id: `des_${input.name}` } };
+      return { id: `web_${input.name}`, source: { id: input.source_id }, destination: { id: `des_${input.name}` } };
     },
     async deleteConnection(id: string) {
       await sleep(20);
@@ -42,6 +42,13 @@ function slowGateway({ missing = new Set<string>() } = {}) {
 const catalog = new Catalog(
   resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: 'x' })] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' }).sources,
 );
+
+const place: PlaceSubscription = async (name) => ({
+  sourceId: 'src_bridge-resend',
+  transformationId: 'trs_resend',
+  filter: { type: 'filter', body: { name } },
+  cursorArgs: 'hash',
+});
 
 function service(store: EventGatewayStore) {
   let now = new Date('2026-10-05T12:00:00.000Z');
@@ -64,7 +71,7 @@ const params = (secret: string, over: Record<string, unknown> = {}) => ({
 
 describe('EventGatewayStore under concurrent writes', () => {
   it("doesn't let a sweep delete a subscription refreshed while the sweep runs", async () => {
-    const store = new EventGatewayStore(slowGateway().hookdeck);
+    const store = new EventGatewayStore(slowGateway().hookdeck, place);
     const { subscriptions, advance } = service(store);
     const secret = generateWebhookSecret();
     await subscriptions.subscribe('owner', params(secret, { ttlMs: 1000 }));
@@ -81,7 +88,7 @@ describe('EventGatewayStore under concurrent writes', () => {
   });
 
   it("doesn't let a delivery-failure update undo a refresh that rotates the secret", async () => {
-    const store = new EventGatewayStore(slowGateway().hookdeck);
+    const store = new EventGatewayStore(slowGateway().hookdeck, place);
     const { subscriptions, advance } = service(store);
     const first = generateWebhookSecret();
     const second = generateWebhookSecret();
@@ -102,15 +109,15 @@ describe('EventGatewayStore under concurrent writes', () => {
   it('treats resources already deleted as deleted, so unsubscribe and sweeps can finish', async () => {
     const missing = new Set<string>();
     const { hookdeck } = slowGateway({ missing });
-    const store = new EventGatewayStore(hookdeck);
+    const store = new EventGatewayStore(hookdeck, place);
     const record = await store.put(input('sub_gone'));
     missing.add(record.connectionId); // deleted in the dashboard, say
     await expect(store.delete('sub_gone')).resolves.toBe(true);
     expect(store.get('sub_gone')).toBeUndefined();
   });
 
-  it('always leaves room to record a delivery failure', async () => {
-    const store = new EventGatewayStore(slowGateway().hookdeck);
+  it('always leaves room to record a delivery failure and a replay marker', async () => {
+    const store = new EventGatewayStore(slowGateway().hookdeck, place);
     // The largest arguments the store accepts...
     let length = 0;
     for (; length < 600; length += 5) {
@@ -120,7 +127,9 @@ describe('EventGatewayStore under concurrent writes', () => {
     const largest = input('sub_largest', 'x'.repeat(length - 5));
     await store.put(largest);
     // ...still fit once a failure is recorded.
-    await expect(store.put({ ...largest, delivery: { active: false, lastError: 'connection_refused', failedSince: largest.updatedAt } })).resolves.toBeDefined();
+    await expect(
+      store.put({ ...largest, delivery: { active: false, lastError: 'connection_refused', failedSince: largest.updatedAt }, replay: { f: Date.now(), w: Date.now() } }),
+    ).resolves.toBeDefined();
   });
 });
 
@@ -132,8 +141,7 @@ function input(id: string, from = ''): SubscriptionInput {
     arguments: from ? { from } : {},
     url: 'https://receiver.example.com/hook',
     secret: generateWebhookSecret(),
-    previousSecret: null,
-    previousSecretExpiresAt: null,
+    replay: null,
     delivery: healthyDelivery(),
     expiresAt: '2026-11-04T12:00:00.000Z',
     createdAt: '2026-10-05T12:00:00.000Z',

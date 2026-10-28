@@ -78,7 +78,7 @@ export interface Destination {
     path?: string;
     auth_type?: string | null;
     /** Masked (`{}`) unless fetched with `getDestination(id, { includeAuth: true })`. Lists never return it. */
-    auth?: { key?: string; signing_secret?: string } | null;
+    auth?: { key?: string; signing_secret?: string; webhook_secret_key?: string } | null;
   } | null;
 }
 
@@ -108,7 +108,10 @@ export interface UpsertConnectionInput {
    */
   source?: { name: string; type?: string; config?: Record<string, unknown> };
   source_id?: string;
-  destination: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK_API'; description?: string; config?: Record<string, unknown> };
+  /** An inline destination, created or updated by name; or bind an existing one with `destination_id`. */
+  destination?: { name: string; type?: 'HTTP' | 'CLI' | 'MOCK_API'; description?: string; config?: Record<string, unknown> };
+  /** A second connection can share a destination (verified 27 Oct); deleting the destination deletes its connections. */
+  destination_id?: string;
   rules?: Rule[];
 }
 
@@ -308,12 +311,16 @@ export class HookdeckClient {
     return { page: body, meta };
   }
 
-  /** Events, filtered by connection (`webhook_id`, verified live to filter) and creation time. */
-  listEvents(query: { webhook_id: string; created_at_gte?: string; status?: string; limit?: number; next?: string }) {
+  /**
+   * Events, filtered by connection (`webhook_id`, verified live to filter) and creation time. `headers` filters on the
+   * delivered request's headers (verified live 27 Oct with `webhook-id`).
+   */
+  listEvents(query: { webhook_id: string; created_at_gte?: string; status?: string; headers?: Record<string, unknown>; limit?: number; next?: string }) {
     return this.api<Page<HookdeckEvent>>('/events', {
       query: {
         webhook_id: query.webhook_id,
         status: query.status,
+        headers: query.headers ? JSON.stringify(query.headers) : undefined,
         'created_at[gte]': query.created_at_gte,
         limit: query.limit ?? 100,
         order_by: 'created_at',
@@ -349,7 +356,8 @@ export class HookdeckClient {
   /**
    * Retry a request, optionally limited to some connections. `webhook_ids` is
    * what `hookdeck gateway request retry --connection-ids` sends; it isn't in
-   * the public API reference. A request retry creates new event ids.
+   * the public API reference. A request retry creates new event ids, only for the connections the
+   * request was routed to when it arrived: not one created since (verified 27 Oct).
    */
   retryRequest(requestId: string, connectionIds?: string[]) {
     return this.api<{ request: HookdeckRequest; events: HookdeckEvent[] }>(`/requests/${encodeURIComponent(requestId)}/retry`, {
@@ -358,9 +366,27 @@ export class HookdeckClient {
     });
   }
 
-  /** Retry one event. Only for events settled as FAILED (see TERMINAL_EVENT_STATUSES). */
+  /** Retry one event: a new attempt, signed afresh. Works on a SUCCESSFUL event too (verified live 27 Oct). */
   retryEvent(eventId: string) {
     return this.api<HookdeckEvent>(`/events/${encodeURIComponent(eventId)}/retry`, { method: 'POST' });
+  }
+
+  // --- Publish API (replay) ---
+
+  /** Publish a request to a PUBLISH_API source by name. Headers and body pass through to its connections. */
+  async publish(sourceName: string, headers: Record<string, string>, body: string): Promise<{ requestId?: string }> {
+    const res = await this.fetch(this.publishUrl, {
+      method: 'POST',
+      headers: { ...headers, Authorization: `Bearer ${this.options.apiKey}`, 'X-Hookdeck-Source-Name': sourceName },
+      body,
+    });
+    const text = await res.text();
+    if (!res.ok) throw new HookdeckApiError('POST', new URL(this.publishUrl).pathname, res.status, text);
+    try {
+      return { requestId: (JSON.parse(text) as { request_id?: string }).request_id };
+    } catch {
+      return {};
+    }
   }
 
   // --- connections, sources, destinations ---
@@ -430,6 +456,19 @@ export class HookdeckClient {
     return this.api<unknown>(`/destinations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  /** Create or update a transformation by name. */
+  upsertTransformation(input: { name: string; code: string }) {
+    return this.api<{ id: string; name: string }>('/transformations', { method: 'PUT', body: input });
+  }
+
+  listTransformations(query: { name?: string } = {}) {
+    return this.api<Page<{ id: string; name: string; code?: string }>>('/transformations', { query: { name: query.name } });
+  }
+
+  deleteTransformation(id: string) {
+    return this.api<unknown>(`/transformations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   // --- issues and notifications ---
 
   getIssue(id: string) {
@@ -457,25 +496,4 @@ export class HookdeckClient {
     });
   }
 
-  // --- Publish API ---
-
-  /**
-   * Publish a request to a source by name. Headers and body pass through to
-   * destinations unchanged, on every attempt (stage 3). A PUBLISH_API source
-   * accepts only Publish API requests.
-   */
-  async publish(sourceName: string, headers: Record<string, string>, body: string): Promise<{ requestId?: string }> {
-    const res = await this.fetch(this.publishUrl, {
-      method: 'POST',
-      headers: { ...headers, Authorization: `Bearer ${this.options.apiKey}`, 'X-Hookdeck-Source-Name': sourceName },
-      body,
-    });
-    const text = await res.text();
-    if (!res.ok) throw new HookdeckApiError('POST', new URL(this.publishUrl).pathname, res.status, text);
-    try {
-      return { requestId: (JSON.parse(text) as { request_id?: string }).request_id };
-    } catch {
-      return {};
-    }
-  }
 }

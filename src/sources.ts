@@ -10,14 +10,12 @@ export const github = defineSource(githubProvider);
 /** Any other sender, by Event Gateway source type (`stripe`, `slack`, ...), or `webhook` for any HTTP sender, verified as you configure. */
 export {
   source,
-  webhook,
   type SourceCommonOptions,
   type SourceEventOptions,
   type SourceOptions,
   type TypedSourceOptions,
   type ValueSource,
   type WebhookEventOptions,
-  type WebhookOptions,
   type WebhookSourceOptions,
   type WebhookVerification,
 } from './core/sources/source.js';

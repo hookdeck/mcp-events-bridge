@@ -101,15 +101,6 @@ describe('sources add: config edit', () => {
     expect(await insertSource(code, 'fills', snippet)).toEqual({ status: 'exists' });
   });
 
-  it('edits a config that still says `providers`, and recognizes a webhook() entry as the same source', async () => {
-    const old = `import { defineConfig, env } from '@hookdeck/mcp-events-bridge';\nimport { webhook } from '@hookdeck/mcp-events-bridge/providers';\nexport default defineConfig({\n  providers: [webhook({ id: 'fills', verification: { type: 'api-key', header: 'x-key', key: env('K') }, events: ['a'] })],\n});\n`;
-    expect(await insertSource(old, 'fills', snippet)).toEqual({ status: 'exists' });
-    const added = await insertSource(old, 'stripe', sourceSnippet({ type: 'stripe', id: 'stripe', secret: env('STRIPE_WEBHOOK_SECRET'), events: ['invoice.paid'] }));
-    expect(added.status).toBe('inserted');
-    expect((added as { code: string }).code).toContain("import { source } from '@hookdeck/mcp-events-bridge/sources';");
-    expect((added as { code: string }).code).toContain("  providers: [webhook({ id: 'fills'");
-  });
-
   it('produces a config that loads, with the instance waiting for its secret', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-add-'));
     try {

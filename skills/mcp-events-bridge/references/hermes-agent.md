@@ -1,12 +1,14 @@
 # Hermes Agent with a local bridge
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.5 and later can subscribe to the bridge's events: each event starts an agent run, like any other Hermes webhook. With a local bridge, Hermes receives through a tunnel URL.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.5 and later can subscribe to the bridge's events: each event starts an agent run, like any other Hermes webhook. With a local bridge, Hermes receives through a pass-through callback URL from the bridge.
 
 **Status: experimental, in Hermes too** ("MCP Events (experimental)" in Hermes's MCP docs). Hermes implements webhook delivery only, from [hermes-agent#140121](https://github.com/NousResearch/hermes-agent/pull/140121).
 
-**Tested:** Hermes Agent v0.22.5 against a local bridge on 26 Oct 2026: a subscription approved in chat, a signed fill delivered and acted on, and unsubscribing.
+**Tested:** Hermes Agent v0.22.5 against a local 0.8.0 bridge on 27 Oct 2026, with a pass-through callback URL from `callback-url create`: a subscription approved in chat, a signed fill delivered, verified by Hermes and acted on, and unsubscribing. (Also against 0.7 on 26 Oct, through a tunnel URL.)
 
-The bridge is an ordinary MCP server in Hermes's `config.yaml`, with `events: true`, and `BRIDGE_MCP_SECRET` goes in an `Authorization: Bearer` header that reads the secret from Hermes's `.env`. Neither the model nor Hermes's subscription files see it. Hermes posts its callback URLs to the gateway's webhook listener (port 8644), which needs a public HTTPS address: the tunnel URL.
+The bridge is an ordinary MCP server in Hermes's `config.yaml`, with `events: true`, and `BRIDGE_MCP_SECRET` goes in an `Authorization: Bearer` header that reads the secret from Hermes's `.env`. Neither the model nor Hermes's subscription files see it. Hermes posts its callback URLs to the gateway's webhook listener (port 8644), which needs a public HTTPS address: a callback URL from the bridge.
+
+That URL is **pass-through**: Hermes gives each subscription its own secret, under one base URL, and an Event Gateway source holds only one secret. So Event Gateway doesn't verify deliveries to it; Hermes verifies each one with the subscription's secret. The bridge skips the subscribe challenge for it, since it created the URL for Hermes, and logs a warning when Hermes subscribes. Hermes's approach conforms to the MCP Events spec; the limitation is Event Gateway's.
 
 ## 1. Install Hermes v0.22.5 or later
 
@@ -32,21 +34,15 @@ If you already use Hermes, set `HERMES_HOME` to a new directory for these steps 
 
 Run a local bridge (`npx mcp-events-bridge serve`; see the [skill](../SKILL.md), steps 2 and 3) and leave it running.
 
-## 3. Create a tunnel URL for Hermes
+## 3. Create a callback URL for Hermes
 
-Hermes builds every callback URL from one public base URL plus `/webhooks/<route>`, so create one tunnel URL with path `/` for its webhook listener's port, 8644:
-
-Run it from the bridge's directory, so `BRIDGE_MCP_SECRET` comes from its `.env` (not typed into your shell history):
+Hermes builds every callback URL from one public base URL plus `/webhooks/<route>`, so create one callback URL, with no secret and path `/`, for its webhook listener's port, 8644. Run it from the bridge's directory, with the bridge running, so `BRIDGE_MCP_SECRET` comes from its `.env`:
 
 ```sh
-set -a; . ./.env; set +a
-npx -y @modelcontextprotocol/inspector --cli http://127.0.0.1:8080/mcp --transport http \
-  --header "Authorization: Bearer $BRIDGE_MCP_SECRET" \
-  --method tools/call --tool-name create_tunnel_url \
-  --tool-arg agent=hermes --tool-arg name=base --tool-arg port=8644 --tool-arg path=/
+npx mcp-events-bridge callback-url create --agent hermes --name base --port 8644 --path /
 ```
 
-**Success:** JSON with `"url": "https://hkdk.events/..."`. That's Hermes's public URL.
+**Success:** `base: https://hkdk.events/... -> http://localhost:8644/ (pass-through: your receiver verifies every delivery)`. That URL is Hermes's public URL.
 
 ## 4. Configure Hermes
 
@@ -77,7 +73,7 @@ platforms:
     enabled: true
     extra:
       port: 8644
-      public_url: "https://hkdk.events/..."           # the tunnel URL from step 3
+      public_url: "https://hkdk.events/..."           # the callback URL from step 3
 ```
 
 Hermes names the event tools after the server: `mcp_events_bridge_list_event_types`, `mcp_events_bridge_subscribe_event` and `mcp_events_bridge_unsubscribe_event`.
@@ -104,7 +100,7 @@ Then ask, for example:
 
 Use an event name from the bridge (`mcp_events_bridge_list_event_types` lists them, with their filters). Hermes shows a "Subscribe to MCP event ... from server 'events-bridge'?" panel with the instructions and arguments: choose **Allow once**.
 
-**Success:** Hermes reports `{"subscribed": {"name": ..., "refreshBefore": ...}}`, and `serve` logs `verified callback for owner -> https://hkdk.events/.../webhooks/mcp-events-bridge-<id>` and `subscribed sub_...`.
+**Success:** Hermes reports `{"subscribed": {"name": ..., "refreshBefore": ...}}`, and `serve` logs `warning: base is a pass-through callback URL: ...` (expected) and `subscribed sub_...`.
 
 ## 7. Verify
 
@@ -117,7 +113,7 @@ Trigger a real event for the subscription (for example, send an email to the Res
 
 `BRIDGE_MCP_SECRET` is in no file under `$HERMES_HOME` but `.env`.
 
-To stop, ask Hermes to unsubscribe (`mcp_events_bridge_unsubscribe_event` with the same event name and arguments; no approval needed). The bridge deletes the tunnel URL an hour after no subscription uses it.
+To stop, ask Hermes to unsubscribe (`mcp_events_bridge_unsubscribe_event` with the same event name and arguments; no approval needed). The bridge deletes the callback URL an hour after no subscription uses it.
 
 ## Keeping a subscription
 
@@ -131,10 +127,11 @@ Hermes asks for a 24-hour subscription. It refreshes subscriptions while a Herme
 | Hermes says the `events-bridge` server isn't connected; `agent.log` has `requires HTTP transport but mcp` | Install the `mcp` extra (step 1) |
 | Subscribing returns `The user did not approve this event subscription` | Subscribe in an interactive `hermes chat` and choose **Allow once**; one-shot chats decline |
 | Hermes can't connect to `events-bridge` though the `mcp` extra is installed | `BRIDGE_MCP_SECRET` in Hermes's `.env` must match the bridge's, and the header must read `Bearer ${BRIDGE_MCP_SECRET}` |
-| Subscribing says MCP events need `public_url` | Set `platforms.webhook.extra.public_url` to the tunnel URL (an `https://` URL) |
+| Subscribing says MCP events need `public_url` | Set `platforms.webhook.extra.public_url` to the callback URL (an `https://` URL) |
+| Subscribing fails with a callback error | The callback URL was created with a secret: create one without (step 3), and use it as `public_url` |
 | Subscribe fails with `Unknown event` | Use a name from `mcp_events_bridge_list_event_types`, such as `resend.email.received` |
 | Deliveries stop after a busy spell | Hermes limits each route to 30 requests a minute by default; raise `platforms.webhook.extra.rate_limit` |
-| The gateway can't bind port 8644 | Pick another port, in the tunnel URL (step 3), `WEBHOOK_PORT` and `platforms.webhook.extra.port` |
+| The gateway can't bind port 8644 | Pick another port, in the callback URL (step 3), `WEBHOOK_PORT` and `platforms.webhook.extra.port` |
 
 ## Before v0.22.5
 

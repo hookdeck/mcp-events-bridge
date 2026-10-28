@@ -1,5 +1,5 @@
-import { HookdeckApiError, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient } from './hookdeck.js';
-import { SUBSCRIPTION_PREFIX, subscriptionResourceName, topicSourceName } from './names.js';
+import { HookdeckApiError, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient, type Rule } from './hookdeck.js';
+import { SUBSCRIPTION_PREFIX, subscriptionResourceName } from './names.js';
 import {
   SubscriptionTooLargeError,
   healthyDelivery,
@@ -9,40 +9,27 @@ import {
 } from './store.js';
 
 /*
- * Event Gateway as the subscription store.
+ * Event Gateway as the subscription store, and as the delivery. Each subscription is one connection, `mcp-sub-<id>`,
+ * on its service's source (`bridge-<source id>`), to an HTTP destination at the callback URL:
  *
- * Each subscription is one connection, `mcp-sub-<id>`, from its topic's
- * PUBLISH_API source to an HTTP destination at the callback URL:
+ *   rules                    the source's transformation (it builds the MCP event), a filter for the event name and
+ *                            the subscription's arguments, dedupe on webhook-id, and retry.
+ *   destination              the callback URL; STANDARD_WEBHOOKS auth with the subscriber's secret, so Event Gateway
+ *                            signs every attempt. The sender's path isn't forwarded.
+ *   connection description   JSON metadata: principal, event name, arguments, expiry, timestamps, delivery state
+ *                            (omitted while healthy), and what the transformation needs for cursors: `ca`, the
+ *                            arguments hash, and `rp` while a replay runs. Versioned: {"v":2. Version 1 is a
+ *                            subscription from 0.7 or earlier, on a topic source, left for the migration.
  *
- *   connection description   readable JSON metadata: principal, event name,
- *                            arguments, expiry, timestamps, delivery state
- *                            (omitted while healthy). Versioned: it starts
- *                            with {"v":1, so a sealed format could be added
- *                            later (for example for multi-tenant hosting)
- *                            and told apart when reading.
- *   destination auth         the signing secret, as CUSTOM_SIGNATURE config:
- *                            Event Gateway's credential field, masked in the
- *                            dashboard and in every listing. When Event
- *                            Gateway can sign Standard Webhooks, the secret is
- *                            already where it's needed.
- *
- * Side effect: with CUSTOM_SIGNATURE, Event Gateway adds an HMAC of the body
- * under SECRET_CARRIER_HEADER to each delivery. Subscribers ignore it, and it
- * reveals nothing about the secret.
- *
- * The previous secret during a rotation has no slot, so it's kept in memory
- * for its grace window; a restart inside the window ends dual-signing early.
- *
- * Reads come from an in-memory index built by `load()` (one listing, plus one
- * destination read per subscription for its secret) and kept current by
- * `put()` and `delete()`. One bridge instance per deployment.
+ * Reads come from an in-memory index built by `load()` (one listing, plus one destination read per subscription for
+ * its secret) and kept current by `put()` and `delete()`. One bridge instance per deployment.
  */
 
+/** Event Gateway's limit on a connection's description. */
 const DESCRIPTION_LIMIT = 500;
-export const SECRET_CARRIER_HEADER = 'x-mcp-bridge-hmac';
 
 interface Metadata {
-  v: 1;
+  v: 2;
   principal: string;
   event: string;
   arguments: Record<string, unknown>;
@@ -50,14 +37,36 @@ interface Metadata {
   createdAt: string;
   updatedAt: string;
   delivery?: SubscriptionInput['delivery'];
+  /** The cursor's hash of the arguments (poll's format), for the transformation. */
+  ca: string;
+  /** While a replay runs, where it started (the cursor's floor and watermark). */
+  rp?: { f: number; w: number };
 }
+
+/** Where a subscription's connection goes, and what its rules hold: from the catalog and the source's transformation. */
+export interface SubscriptionPlacement {
+  /** The service source's id. */
+  sourceId: string;
+  /** The source's transformation id. */
+  transformationId: string;
+  /** The filter rule for the event and the subscription's arguments. */
+  filter: Rule;
+  /** The cursor's hash of the arguments. */
+  cursorArgs: string;
+}
+
+export type PlaceSubscription = (name: string, args: Record<string, unknown>) => Promise<SubscriptionPlacement>;
 
 const isHealthy = (d: SubscriptionInput['delivery']) => d.active && d.lastError === null && d.failedSince === null;
 
+/** Whether a connection is a subscription from 0.7 or earlier (version 1 metadata, on a topic source). */
+export function isLegacySubscription(connection: Connection): boolean {
+  return connection.name.startsWith(SUBSCRIPTION_PREFIX) && (connection.description ?? '').startsWith('{"v":1');
+}
+
 export class EventGatewayStore implements SubscriptionStore {
   private readonly records = new Map<string, SubscriptionRecord>();
-  private readonly previousSecrets = new Map<string, { secret: string; expiresAt: string }>();
-  /** Writes run one at a time: concurrent connection upserts creating the same new topic source can fail in Event Gateway. */
+  /** Writes run one at a time, so a refresh and a delivery-failure notification can't interleave. */
   private queue: Promise<unknown> = Promise.resolve();
 
   private serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -66,16 +75,24 @@ export class EventGatewayStore implements SubscriptionStore {
     return run;
   }
 
-  constructor(private readonly hookdeck: HookdeckClient) {}
+  constructor(
+    private readonly hookdeck: HookdeckClient,
+    private readonly place: PlaceSubscription,
+  ) {}
 
   async load() {
     this.records.clear();
     const unreadable: string[] = [];
+    let legacy = 0;
     for (const connection of await this.hookdeck.listAllConnections()) {
       if (!connection.name.startsWith(SUBSCRIPTION_PREFIX)) continue;
+      if (isLegacySubscription(connection)) {
+        legacy++;
+        continue;
+      }
       try {
         const destination = await this.hookdeck.getDestination(connection.destination.id, { includeAuth: true });
-        const secret = destination.config?.auth?.signing_secret;
+        const secret = destination.config?.auth?.webhook_secret_key;
         if (!secret) throw new Error('no signing secret');
         const record = this.decode(connection, secret);
         this.records.set(record.id, record);
@@ -83,23 +100,23 @@ export class EventGatewayStore implements SubscriptionStore {
         unreadable.push(connection.name);
       }
     }
-    return { loaded: this.records.size, unreadable };
+    return { loaded: this.records.size, unreadable, legacy };
   }
 
   get(id: string) {
-    return this.withPrevious(this.records.get(id));
+    return this.records.get(id);
   }
 
   list(filter: { name?: string } = {}) {
-    return [...this.records.values()].filter((r) => filter.name === undefined || r.name === filter.name).map((r) => this.withPrevious(r)!);
+    return [...this.records.values()].filter((r) => filter.name === undefined || r.name === filter.name);
   }
 
   findByConnection(connectionId: string) {
-    return this.withPrevious([...this.records.values()].find((r) => r.connectionId === connectionId));
+    return [...this.records.values()].find((r) => r.connectionId === connectionId);
   }
 
   listExpired(now: Date) {
-    return [...this.records.values()].filter((r) => Date.parse(r.expiresAt) <= now.getTime()).map((r) => this.withPrevious(r)!);
+    return [...this.records.values()].filter((r) => Date.parse(r.expiresAt) <= now.getTime());
   }
 
   put(input: SubscriptionInput): Promise<SubscriptionRecord> {
@@ -108,8 +125,8 @@ export class EventGatewayStore implements SubscriptionStore {
 
   update(id: string, change: (current: SubscriptionRecord | undefined) => SubscriptionInput | null): Promise<SubscriptionRecord | undefined> {
     return this.serialize(async () => {
-      const next = change(this.withPrevious(this.records.get(id)));
-      return next ? this.write(next) : this.withPrevious(this.records.get(id));
+      const next = change(this.records.get(id));
+      return next ? this.write(next) : this.records.get(id);
     });
   }
 
@@ -118,15 +135,19 @@ export class EventGatewayStore implements SubscriptionStore {
       const record = this.records.get(id);
       if (!record) return false;
       if (options.ifExpiredAt && Date.parse(record.expiresAt) > options.ifExpiredAt.getTime()) return false;
-      await this.remove(record);
+      // Already gone (deleted in the dashboard, or by an earlier attempt that failed part way) counts as deleted.
+      await this.hookdeck.deleteConnection(record.connectionId).catch(ignoreNotFound);
+      await this.hookdeck.deleteDestination(record.destinationId).catch(ignoreNotFound);
+      this.records.delete(record.id);
       return true;
     });
   }
 
   private async write(input: SubscriptionInput): Promise<SubscriptionRecord> {
     const name = subscriptionResourceName(input.id);
+    const placement = await this.place(input.name, input.arguments);
     const metadata: Metadata = {
-      v: 1,
+      v: 2,
       principal: input.principal,
       event: input.name,
       arguments: input.arguments,
@@ -134,58 +155,33 @@ export class EventGatewayStore implements SubscriptionStore {
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
       ...(!isHealthy(input.delivery) && { delivery: input.delivery }),
+      ca: placement.cursorArgs,
+      ...(input.replay && { rp: input.replay }),
     };
     const description = JSON.stringify(metadata);
-    // Checked with the largest delivery block a failure notification can add later, so recording one can't overflow.
-    const worstCase = JSON.stringify({ ...metadata, delivery: { active: false, lastError: 'connection_refused', failedSince: input.updatedAt } });
+    // Checked with the largest delivery block a failure notification can add later and a replay marker, so neither
+    // can overflow it.
+    const worstCase = JSON.stringify({
+      ...metadata,
+      delivery: { active: false, lastError: 'connection_refused', failedSince: input.updatedAt },
+      rp: { f: 9_999_999_999_999, w: 9_999_999_999_999 },
+    });
     if (worstCase.length > DESCRIPTION_LIMIT) throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
 
     const connection = await this.hookdeck.upsertConnection({
       name,
       description,
-      source: { name: topicSourceName(input.name), type: 'PUBLISH_API' },
+      source_id: placement.sourceId,
       destination: {
         name,
         type: 'HTTP',
-        config: { url: input.url, auth_type: 'CUSTOM_SIGNATURE', auth: { key: SECRET_CARRIER_HEADER, signing_secret: input.secret } },
+        config: { url: input.url, path_forwarding_disabled: true, auth_type: 'STANDARD_WEBHOOKS', auth: { webhook_secret_key: input.secret } },
       },
-      rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': input.id } }, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
+      rules: [{ type: 'transform', transformation_id: placement.transformationId }, placement.filter, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
     });
-
-    if (input.previousSecret && input.previousSecretExpiresAt) {
-      this.previousSecrets.set(input.id, { secret: input.previousSecret, expiresAt: input.previousSecretExpiresAt });
-    } else {
-      this.previousSecrets.delete(input.id);
-    }
-    const record: SubscriptionRecord = {
-      ...input,
-      previousSecret: null,
-      previousSecretExpiresAt: null,
-      connectionId: connection.id,
-      destinationId: connection.destination.id,
-      topicSourceId: connection.source.id,
-    };
+    const record: SubscriptionRecord = { ...input, connectionId: connection.id, destinationId: connection.destination.id, sourceId: connection.source.id };
     this.records.set(record.id, record);
-    return this.withPrevious(record)!;
-  }
-
-  private async remove(record: SubscriptionRecord) {
-    // Already gone (deleted in the dashboard, or by an earlier attempt that failed part way) counts as deleted.
-    await this.hookdeck.deleteConnection(record.connectionId).catch(ignoreNotFound);
-    await this.hookdeck.deleteDestination(record.destinationId).catch(ignoreNotFound);
-    this.records.delete(record.id);
-    this.previousSecrets.delete(record.id);
-    const topicStillUsed = [...this.records.values()].some((r) => r.topicSourceId === record.topicSourceId);
-    // A leftover topic source is harmless (the next subscription to the event reuses it), so this doesn't fail the delete.
-    if (!topicStillUsed) await this.hookdeck.deleteSource(record.topicSourceId).catch(() => {});
-  }
-
-  /** Adds the in-memory previous secret while its grace window is open. */
-  private withPrevious(record: SubscriptionRecord | undefined): SubscriptionRecord | undefined {
-    if (!record) return undefined;
-    const previous = this.previousSecrets.get(record.id);
-    if (!previous || Date.parse(previous.expiresAt) <= Date.now()) return record;
-    return { ...record, previousSecret: previous.secret, previousSecretExpiresAt: previous.expiresAt };
+    return record;
   }
 
   private decode(connection: Connection, secret: string): SubscriptionRecord {
@@ -193,9 +189,7 @@ export class EventGatewayStore implements SubscriptionStore {
     const raw = connection.description ?? '';
     if (!raw.startsWith('{')) throw new Error('unsupported description format');
     const metadata = JSON.parse(raw) as Metadata;
-    if (metadata.v !== 1 || typeof metadata.principal !== 'string' || typeof metadata.event !== 'string') {
-      throw new Error('invalid metadata');
-    }
+    if (metadata.v !== 2 || typeof metadata.principal !== 'string' || typeof metadata.event !== 'string') throw new Error('invalid metadata');
     const url = connection.destination.config?.url;
     if (!url) throw new Error('destination has no URL');
     return {
@@ -205,15 +199,14 @@ export class EventGatewayStore implements SubscriptionStore {
       arguments: metadata.arguments ?? {},
       url,
       secret,
-      previousSecret: null,
-      previousSecretExpiresAt: null,
+      replay: metadata.rp ?? null,
       delivery: metadata.delivery ?? healthyDelivery(),
       expiresAt: metadata.expiresAt,
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,
       connectionId: connection.id,
       destinationId: connection.destination.id,
-      topicSourceId: connection.source.id,
+      sourceId: connection.source.id,
     };
   }
 }

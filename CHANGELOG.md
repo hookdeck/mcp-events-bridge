@@ -2,9 +2,35 @@
 
 ## Unreleased
 
+0.8.0. Event Gateway now delivers each event straight from the service's source, and the bridge leaves the data path. Data from 0.7 is migrated once, after `setup` asks: see [Upgrading from 0.7](docs/UPGRADING.md).
+
+### Breaking
+
+- **Event Gateway delivers every event itself.** Each subscription is a connection on its service's source (`mcp-sub-<id>` on `bridge-<source id>`), with a transformation the bridge generates from the source's definition (`bridge-<source id>-envelope`, shared by the source's subscriptions), a filter for the event and its arguments, dedupe on `webhook-id`, and retries. Its destination signs every attempt with the subscriber's secret (Standard Webhooks). The relay, the topic sources (`bridge-out-*`) and the per-source inbound connections are gone, and the Publish API is used only for replay; only Event Gateway's issue notifications reach the bridge. Setup prints each source's transformation (`source resend: ..., transformation bridge-resend-envelope, webhook existing`), and the bridge no longer logs a line per event (`... 1/1 published`): each subscription's deliveries are under its connection in the Event Gateway dashboard.
+- **Data from 0.7 must be migrated.** `setup` finds it and asks before migrating ("The bridge's data model in Event Gateway changed in 0.8. This project has 2 subscriptions and 1 callback URL from an earlier version. ... Migrate now? [Y/n]"). `serve` asks in a terminal, and otherwise refuses to start until it's migrated. `--migrate` on either migrates without asking. Subscriptions keep their id, callback URL, secret, arguments and expiry; expired ones and ones for events no longer offered are removed; callback URLs from a 0.7 bridge become pass-through, keeping their URLs; the topic sources and this deployment's inbound connections are deleted. See [`docs/UPGRADING.md`](docs/UPGRADING.md).
+- **`create_tunnel_url` and `list_tunnel_urls` are now `create_callback_url` and `list_callback_urls`.** `create_callback_url` takes an optional `secret`, the one the client subscribes with: Event Gateway then answers the challenge and accepts only deliveries signed with it, and rotating means a new URL. Without a secret the URL is pass-through, for a client with a secret per subscription under one base URL (Hermes Agent, and the AI SDK, Mastra and TanStack AI libraries): the bridge verifies it out of band, since it created it, logs a warning at subscribe (`warning: <name> is a pass-through callback URL: ...`), and the receiver checks every signature. Results add `passThrough`. Missed deliveries to a callback URL are retried by retrying the subscription's own event, which Event Gateway signs afresh; the bridge no longer holds a secret of its own, re-sends or signs twice.
+- **The names deprecated in 0.6.0 are removed:** `providers` in the config, `webhook()`, `defineProvider` (and `ProviderDefinition`, `ProviderEvent`), the `/providers` import path, `providers add` and the `list_providers` tool. `providers` in the config and `providers add` fail with a message naming the replacement; the removed exports no longer import.
+- **Source definitions map events with a `runtime`,** one self-contained function that runs both in Event Gateway's transformation and in the bridge (poll mode, `get_event`, `list_events`), so the mapping has one copy. An event's `matches`, `eventId`, `occurredAt` and `summarize` move into it, `accepts(args, summary)` becomes `filter(args)` (an Event Gateway filter on `data`), and `inboundDedupeFields` is gone. This changes custom `defineSource` definitions only.
+- **A webhook source without `eventId`** uses the first 32 hex characters of a SHA-256 of the canonical JSON body as the event id (it was Event Gateway's request id, which a transformation can't see). **`source()` filters compare with the value's type,** as Event Gateway's do.
+- **Secret rotation is immediate.** A refresh with a new secret replaces the old one at once; signing with both for a grace window needs Event Gateway destinations to take a second key.
+
+### Added
+
+- **`mcp-events-bridge callback-url create|list`:** asks the bridge running on this machine for a callback URL (`--agent`, `--name`, `--port`, `--path`), reading the secret from an environment variable (`--secret-env <VAR>`) so it never appears in a command line. Without `--secret-env`, the URL is pass-through.
+- **`--migrate` on `setup` and `serve`,** to migrate data from an earlier version without asking, for hosts without a terminal.
+- **Each source's transformation records the bridge version that wrote it.** If a newer version wrote it (another bridge on that version sharing the project), `setup` and `serve` say so and go through the same migration step before replacing it; one an older version wrote is updated, with a log line (`updated the event mapping for source resend, written by 0.8.0, to 0.8.1`).
+- **[`docs/UPGRADING.md`](docs/UPGRADING.md),** for upgrading from 0.7.
+
 ### Fixed
 
+- **Retries carry a fresh signature.** Event Gateway signs each attempt, so a delivery retried after more than 5 minutes passes a receiver's timestamp check, and retries no longer have to fit inside that window (SEP-3415 requires a fresh signature on each attempt).
+- **Replayed events are signed by Event Gateway on every attempt,** like live ones: while a replay runs, a temporary connection (`bridge-replay-<subscription id>`, from a `PUBLISH_API` source `bridge-replay`) delivers them to the subscription's own destination, and it's deleted when they settle. Deliveries during a replay, replayed or live, carry the replay's start as their cursor, so a client that saves the latest cursor never skips past events the replay hasn't sent yet.
+- **Poll mode no longer depends on how Event Gateway routed a request** (it looked for events and `CLI_DISCONNECTED` on the inbound connection). It returns every matching request on the source, deduped by `eventId`.
 - **Docs:** what pausing and resuming a ChatGPT task does, tested on 0.7.0: resuming subscribes again from now, with a new callback URL and no cursor, so events sent while it was paused aren't replayed (`list_events` still finds them). A delivered event can take a minute or so to show in ChatGPT.
+
+### Known limitations
+
+- **Integers beyond 2^53 are rounded in deliveries again.** Since 0.6.0 the relay kept such an integer exact, as a string of its digits; in 0.8 a transformation builds every event, and Event Gateway's transformations round it, as its API already did for poll mode, `get_event` and `list_events`, until Event Gateway keeps such integers exact.
 
 ## 0.7.0 (2026-10-27)
 
