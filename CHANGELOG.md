@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
+
 ### Fixed
 
-- **Docs:** an open ChatGPT chat shows a delivered event on its own, about a minute after it arrives (seen on 28 Oct, in a focused tab); the README and the skill said it needed a reload.
+- **Docs:** an open ChatGPT chat shows a delivered event on its own, about a minute after it arrives (seen on 28 Oct, in a focused tab); the README and the skill said it needed a reload ([#75](https://github.com/hookdeck/mcp-events-bridge/pull/75)).
 
 ## 0.8.1 (2026-10-28)
 

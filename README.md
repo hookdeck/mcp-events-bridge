@@ -21,7 +21,7 @@ The bridge closes that gap:
 
 It's for developers who want agents ([ChatGPT, Claude Code, Hermes Agent and others](#supported-mcp-clients)) to react to events from the services they already use.
 
-**Status:** 0.8, a working demo built in stages. MCP Events is experimental, and this package may change with it. See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions. Upgrading from 0.7: see [`docs/UPGRADING.md`](docs/UPGRADING.md).
+**Status:** 0.8, an open-source project. MCP Events is experimental, and this package may change with it. We're building the same thing into Hookdeck Event Gateway, so [tell us what you need](https://github.com/hookdeck/mcp-events-bridge/issues). See [`docs/PLAN.md`](docs/PLAN.md) for what's done and what's next, and [`CHANGELOG.md`](CHANGELOG.md) for changes between versions. Upgrading from 0.7: see [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 ## How it works
 
