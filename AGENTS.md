@@ -14,7 +14,7 @@ You can't do these. Each is needed before the step that uses it.
 | --- | --- | --- |
 | The bridge | A dedicated Hookdeck project for this work (not a production project), its Project API key and signing secret | `HOOKDECK_API_KEY`, `HOOKDECK_SIGNING_SECRET` |
 | Resend source | A Resend account and an API key that can create webhooks. Inbound needs no domain: use any address on the account's `<id>.resend.app` receiving domain (Emails > Receiving > ... > Receiving address) | `RESEND_API_KEY` |
-| GitHub source (optional) | A fine-grained token with the Webhooks permission on the repositories, or a webhook secret for manual mode | `GITHUB_REPOS`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` |
+| GitHub source (optional) | A token that can manage the repositories' webhooks (a fine-grained token with Webhooks, plus Contents for the e2e's GitHub push; or the GitHub CLI's, `gh auth token`), or a webhook secret for manual mode | `GITHUB_REPOS`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` |
 | Webhook source (optional) | A secret for the README's `fills` example, which this repo's config enables and `E2E_SOURCE=webhook` uses (any random value) | `FILLS_WEBHOOK_SECRET` |
 | Stripe source (optional) | A Stripe endpoint's signing secret, or any `whsec_` value to test with requests you sign yourself | `STRIPE_WEBHOOK_SECRET` |
 | The e2e tests | A verified Resend sending domain, and a key that can send email; or, with `E2E_SOURCE=webhook`, the `fills` secret instead (no email sent) | `RESEND_INBOUND_ADDRESS`, `RESEND_TEST_FROM` (or `FILLS_WEBHOOK_SECRET`) |

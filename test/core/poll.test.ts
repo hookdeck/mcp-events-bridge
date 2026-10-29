@@ -424,7 +424,7 @@ describe('webhook cursors (SEP-3415 replay)', () => {
     const { listing, service } = setup();
     listing.now = T0 + 120_000;
     listing.add({ createdAt: T0 + 100_000, deliveryId: 'delivered' });
-    // The cursor a delivery made now carries (the transformation writes the same format).
+    // The cursor in a delivery made now (the transformation writes the same format).
     const cursor = service.webhookCursor(NAME, { symbol: 'AAPL' }, { at: listing.now });
     listing.add({ createdAt: T0 + 200_000, deliveryId: 'missed' });
     listing.add({ createdAt: T0 + 210_000, symbol: 'MSFT', deliveryId: 'other-symbol' });

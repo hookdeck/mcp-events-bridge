@@ -79,7 +79,7 @@ export function describeParams(params: Params): string {
   return JSON.stringify({ ...params, delivery: redacted });
 }
 
-/** A callback URL for logs: the query string can carry a token, so it's replaced. */
+/** A callback URL for logs: the query string can include a token, so it's replaced. */
 export function redactUrl(url: string): string {
   const query = url.indexOf('?');
   return query === -1 ? url : `${url.slice(0, query)}?<redacted>`;
@@ -191,7 +191,7 @@ export class SubscriptionService {
           // A new secret replaces the old at once: the destination signs with one key (SEP-3415's dual-signing grace
           // window needs Event Gateway to take a second, expiring key).
           secret,
-          // A new subscription made with a cursor replays from it, and every delivery carries where the replay started
+          // A new subscription made with a cursor replays from it, and every delivery has where the replay started
           // until it's done; a live one keeps whatever replay it has.
           replay: cursorCheck && this.deps.cursors && !live(existing) ? cursorCheck.position : live(existing) ? existing!.replay : null,
           // A refresh is the subscriber's liveness signal: delivery is active again.
@@ -227,7 +227,7 @@ export class SubscriptionService {
   /** Idempotent: unknown subscriptions return an empty result (OpenAI's guidance) rather than NotFound. */
   /**
    * The subscribe response's `cursor` and `truncated` (SEP-3415), and replay. A new subscription (or one that had
-   * expired) made with a cursor replays from it, and answers with that cursor until its deliveries carry later ones.
+   * expired) made with a cursor replays from it, and answers with that cursor until its deliveries have later ones.
    * A live subscription's cursor is a no-op. Otherwise the answer is a fresh watermark, except while a live
    * subscription's deliveries are failing: then the client's own cursor stands, so persisting the answer never skips
    * an event Event Gateway is still retrying.

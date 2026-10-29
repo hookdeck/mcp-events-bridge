@@ -29,7 +29,7 @@ export type WebhookVerification =
       type: 'hmac';
       algorithm: 'sha1' | 'sha256' | 'sha512';
       encoding: 'hex' | 'base64' | 'base64url';
-      /** The header carrying the signature, e.g. x-signature. */
+      /** The header with the signature, e.g. x-signature. */
       header: string;
       secret: Credential;
     }

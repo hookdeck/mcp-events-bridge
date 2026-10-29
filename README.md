@@ -339,8 +339,8 @@ Every deployment needs these, whichever sources it uses.
 | --- | --- | --- |
 | `HOOKDECK_API_KEY` | Yes | Project API key, for the Event Gateway API and the Publish API (which replay uses) |
 | `HOOKDECK_SIGNING_SECRET` | Yes | Verifies Event Gateway's signature on the notifications it sends the bridge |
-| `BRIDGE_MCP_SECRET` | To run `serve` | The MCP endpoint's secret: sent as `Authorization: Bearer <secret>` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can't send a header, such as ChatGPT. `setup` generates one |
-| `BRIDGE_MCP_SECRET_URL` | No | `false` turns the URL form (`/mcp/<secret>`) off, leaving the header; for a bridge no ChatGPT connects to. Default `true` |
+| `BRIDGE_MCP_SECRET` | To run `serve` | The MCP endpoint's secret: sent as `Authorization: Bearer <BRIDGE_MCP_SECRET>` to `/mcp`, or in the URL (`/mcp/<BRIDGE_MCP_SECRET>`) by clients that can't send a header, such as ChatGPT. `setup` generates one |
+| `BRIDGE_MCP_SECRET_URL` | No | `false` turns the URL form (`/mcp/<BRIDGE_MCP_SECRET>`) off, leaving the header; for a bridge no ChatGPT connects to. Default `true` |
 | `BRIDGE_INBOUND` | No | How Event Gateway's notifications reach the bridge: `cli` (through `hookdeck listen`; also what offers callback URLs to local agents) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
 | `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
 | `BRIDGE_PORT` | No | Listener port (default: `PORT`, else 8080) |
@@ -363,7 +363,7 @@ Set only what the sources in your `bridge.config.ts` need. The names are the one
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission. Only `setup` uses it |
+| `GITHUB_TOKEN` | In automatic mode | Fine-grained token with the Webhooks (read and write) permission, or the GitHub CLI's (`gh auth token`, scope `repo`). Only `setup` uses it |
 | `GITHUB_WEBHOOK_SECRET` | In manual mode | The secret on the webhooks you add (at least 16 characters). Needed wherever the bridge runs |
 
 #### `source()`
@@ -468,7 +468,7 @@ Three TypeScript MCP client libraries have experimental MCP Events support, and 
 
 ## Security and limitations
 
-- **The MCP secret is a credential.** `BRIDGE_MCP_SECRET` authenticates one owner, sent as `Authorization: Bearer` to `/mcp`, or in the URL (`/mcp/<secret>`) by clients that can only take a URL, such as ChatGPT. Prefer the header where the client supports it: a URL is easily logged or saved in a client's files, a header much less so. A bridge no ChatGPT connects to can turn the URL form off (`BRIDGE_MCP_SECRET_URL=false`). The secret is redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned, for ChatGPT without a secret in the URL.
+- **The MCP secret is a credential.** `BRIDGE_MCP_SECRET` authenticates one owner, sent as `Authorization: Bearer` to `/mcp`, or in the URL (`/mcp/<BRIDGE_MCP_SECRET>`) by clients that can only take a URL, such as ChatGPT. Prefer the header where the client supports it: a URL is easily logged or saved in a client's files, a header much less so. A bridge no ChatGPT connects to can turn the URL form off (`BRIDGE_MCP_SECRET_URL=false`). The secret is redacted from the bridge's logs and can be rotated by changing `BRIDGE_MCP_SECRET`. OAuth is planned, for ChatGPT without a secret in the URL.
 - **The Claude Code plugin keeps a copy of the endpoint and secret on disk.** Claude Code keeps them in secure storage, but plugin monitors can't read that, so a session-start hook writes them to `~/.claude/plugins/data/mcp-events-bridge-hookdeck/` (`mcp-url` and `mcp-secret`), readable only by you. Uninstalling the plugin deletes that directory.
 - **Every event is verified.** Event Gateway verifies each service's own signature, and sources have no unverified option. The bridge's own inbound route, for Event Gateway's notifications, accepts only requests Event Gateway signed.
 - **Each delivery is signed for its subscriber.** Event Gateway signs every attempt, retries included, with the subscriber's secret, which lives only in the subscription's Event Gateway destination. A refresh with a new secret replaces it at once: there's no window in which both are signed with (Event Gateway destinations take one key).

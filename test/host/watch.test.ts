@@ -138,7 +138,7 @@ describe('watch helpers', () => {
     expect(watchHeaders('https://b.example/mcp/', 's')).toEqual({ Authorization: 'Bearer s' });
     expect(watchHeaders('https://b.example/mcp/s', 's')).toEqual({});
     expect(watchHeaders('https://b.example/mcp', undefined)).toEqual({});
-    expect(redactUrl('https://b.example/mcp/abc123?x=1')).toBe('https://b.example/mcp/<secret>?x=1');
-    expect(redactUrl('Cannot POST /mcp/abc123 (from https://b.example/mcp/abc123)')).toBe('Cannot POST /mcp/<secret> (from https://b.example/mcp/<secret>)');
+    expect(redactUrl('https://b.example/mcp/abc123?x=1')).toBe('https://b.example/mcp/<BRIDGE_MCP_SECRET>?x=1');
+    expect(redactUrl('Cannot POST /mcp/abc123 (from https://b.example/mcp/abc123)')).toBe('Cannot POST /mcp/<BRIDGE_MCP_SECRET> (from https://b.example/mcp/<BRIDGE_MCP_SECRET>)');
   });
 });

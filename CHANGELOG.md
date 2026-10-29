@@ -4,7 +4,15 @@
 
 ### Changed
 
-- **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway.
+- **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
+
+## 0.8.1 (2026-10-28)
+
+### Fixed
+
+- **The secret placeholder is `<BRIDGE_MCP_SECRET>`** in logs, `watch` messages, help text and docs (`/mcp/<BRIDGE_MCP_SECRET>`), as in the bridge's 401 message. It was `<secret>`, which a third-party scanner read as a hidden instruction to an agent ([#73](https://github.com/hookdeck/mcp-events-bridge/pull/73)).
+- **Docs:** `GITHUB_TOKEN` can be the GitHub CLI's token (`gh auth token`, scope `repo`) as well as a fine-grained token with the Webhooks permission ([#72](https://github.com/hookdeck/mcp-events-bridge/pull/72)).
+- **Wording:** the Resend and GitHub event descriptions in `events/list`, and `watch --help`, say "includes" rather than "carries" ([#72](https://github.com/hookdeck/mcp-events-bridge/pull/72)).
 
 ## 0.8.0 (2026-10-28)
 
