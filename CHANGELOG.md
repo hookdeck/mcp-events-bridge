@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Docs:** an open ChatGPT chat shows a delivered event on its own, about a minute after it arrives (seen on 28 Oct, in a focused tab); the README and the skill said it needed a reload.
+
 ## 0.8.1 (2026-10-28)
 
 ### Fixed
