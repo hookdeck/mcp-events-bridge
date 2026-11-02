@@ -2,7 +2,7 @@
 
 **Question:** when the bridge's `events/list` (or `tools/list`) changes while it runs, does any MCP client fetch it again, and what signal makes it do so? In earlier testing ChatGPT kept the subscribable events from when the plugin was added until a manual plugin refresh ([`docs/SPIKES.md`](SPIKES.md#chatgpt-on-fly)).
 
-**Status (2 Nov 2026):** Claude Code and Hermes Agent v0.22.5 tested against a local bridge. ChatGPT not yet: its steps are [below](#chatgpt-deployed-bridge-on-flyio), and its rows say "pending".
+**Status (2 Nov 2026):** Claude Code and Hermes Agent v0.22.5 tested against a local bridge, and ChatGPT against the Fly deployment.
 
 Branch `test/list-changed`; not for release. Everything is behind environment variables, so a normal bridge is unchanged.
 
@@ -153,23 +153,59 @@ Run 4, with `BRIDGE_LIST_CHANGED_SESSION_ID=1` and a new gateway:
 
 Hermes's own log for run 4 has one line for the two notifications: `MCP server 'events-bridge': received tools/list_changed notification`.
 
-### ChatGPT (pending)
+### ChatGPT (Work chat, GPT-6.1 Sol, 2 Nov 2026)
 
-| Question | Phase A: stateless | Phase B: with `Mcp-Session-Id` |
-| --- | --- | --- |
-| Protocol version | pending | pending |
-| Opens a notification stream | pending | pending |
-| `events/list` after the notification | pending | pending |
-| `events/list` in a new chat | pending | pending |
-| `events/list` only after a manual refresh | pending | pending |
-| `tools/list` after the notification, in a new chat, after a manual refresh | pending | pending |
-| Can subscribe to a new event type before a refresh | pending | pending |
+Driven in Chrome against the Fly deployment (`BRIDGE_LIST_CHANGED_TEST=1`), with the plugin "MCP Events Bridge demo" (connected 6 Oct, Developer mode, no authentication, the secret URL). The bridge started at `debug.probe_1` and `debug_probe_1` (the deploy at 22:20 added both).
+
+| Question | Answer |
+| --- | --- |
+| Protocol version | **2026-07-28,** not a 2025-era session as assumed before: every request has `MCP-Protocol-Version: 2026-07-28` and the `_meta` keys. Two client identities: `openai-mcp/1.0.0` for "Refresh tools", `openai-mcp (Codex)/1.0.0` for tool calls in a chat |
+| Opens a notification stream | **No,** neither GET nor `subscriptions/listen`, although the bridge declared `listChanged` for tools and events in `server/discover`. Its `clientCapabilities` don't include the events extension |
+| `tools/list` or `events/list` after a notification | Never: with no stream, nothing reaches it (both bumps notified only Claude Code streams) |
+| In a new chat | **No.** A new chat's tool discovery and its Automations subscription schema were still the copy from before: five tools and eight events, no probe of any generation. Nothing was requested from the bridge |
+| After "Refresh tools" (Plugins > MCP Events Bridge demo > Manage app) | **Yes:** `server/discover`, `tools/list` and `events/list`, in that order, within 0.5 s. A new chat then had `debug_probe_2` (and called it) and `debug.probe_2` in its subscription schema |
+| After a later change, in a chat started after the refresh | **No:** after `bump events`, the same chat's subscription schema still ended at `debug.probe_2`, not `debug.probe_3` |
+| Live calls | Tool calls go to the bridge (`tools/call list_sources` returned the live sources), without a `tools/list` or `server/discover` first |
+
+What ChatGPT answered, by step:
+
+1. **Without tools:** no names: the plugin's tools are "deferred", and it would need tool discovery.
+2. **Tool discovery, no plugin calls:** `get_event`, `list_events`, `list_sources`, `poll_events`, `wait_for_event` (no `debug_probe_1`, which the bridge had offered since 22:20). "Tool discovery does not expose the subscription event catalogue."
+3. **`list_sources`** (live): the eight Resend and GitHub events.
+4. **After `bump both`, same chat:** the same five tools; `debug_probe_2` "was absent". Its Automations subscription schema had the eight events and no `debug.probe_2`, so it couldn't subscribe.
+5. **New chat:** the same five tools and eight events; neither probe available.
+6. **New chat after "Refresh tools":** six tools including `debug_probe_2`, which it called (`{"toolsGeneration":2,"eventsGeneration":2,"event":"debug.probe_2"}`), and nine events including `debug.probe_2`.
+7. **After `bump events`, same chat:** "debug.probe_3 is not available in the returned schema."
+
+The trace (Claude Code lines left out, except the notifications, to show where they went):
+
+```
+22:58:25.663 #29 IN  POST tools/call {"protocolVersion":"2026-07-28","name":"list_sources"} openai-mcp (Codex)/1.0.0 hdr=2026-07-28 ua=openai-mcp/1.0.0 (Codex)
+22:58:25.673 #29 OUT 200 9ms
+-- list-changed test: both bumped to debug.probe_2 and debug_probe_2; notified 13 of 13 stream(s)
+22:58:51.223 #1 NOTIFY notifications/tools/list_changed            (and 12 more, all Claude Code listen streams)
+23:01:07.886 #43 IN  POST server/discover {"protocolVersion":"2026-07-28"} openai-mcp/1.0.0 hdr=2026-07-28 ua=openai-mcp/1.0.0
+23:01:07.889 #43 OUT 200 3ms {"capabilities":{"events":{"listChanged":true},"extensions":{"io.modelcontextprotocol/events":{"listChanged":true}},"tools":{"listChanged":true}},"ttlMs":0}
+23:01:07.951 #44 IN  POST tools/list {"protocolVersion":"2026-07-28"} openai-mcp/1.0.0 hdr=2026-07-28 ua=openai-mcp/1.0.0
+23:01:07.956 #44 OUT 200 5ms {"tools":["get_event","list_events","list_sources","poll_events","wait_for_event","debug_probe_2"],"ttlMs":0}
+23:01:08.304 #45 IN  POST events/list {"protocolVersion":"2026-07-28"} openai-mcp/1.0.0 hdr=2026-07-28 ua=openai-mcp/1.0.0
+23:01:08.307 #45 OUT 200 3ms {"events":["resend.email.received","github.issues","github.issue_comment","github.pull_request","github.pull_request_review","github.push","github.release","github.workflow_run","debug.probe_2"]}
+23:02:08.843 #46 IN  POST tools/call {"protocolVersion":"2026-07-28","name":"debug_probe_2"} openai-mcp (Codex)/1.0.0 hdr=2026-07-28 ua=openai-mcp/1.0.0 (Codex)
+23:02:08.846 #46 OUT 200 3ms
+-- list-changed test: events bumped to debug.probe_3 and debug_probe_2; notified 0 of 13 stream(s)
+```
+
+The "Refresh tools" request's `clientInfo` is `{"name":"openai-mcp","version":"1.0.0"}` and its `clientCapabilities` are `{"experimental":{"openai/visibility":{"enabled":true}},"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}`.
+
+**Phase B (session id) doesn't apply:** `BRIDGE_LIST_CHANGED_SESSION_ID` only answers a 2025-era `initialize`, and 2026-07-28 has no sessions. It wasn't run.
+
+The same trace shows the Claude Code side: the 13 sessions with the plugin called `tools/list` again 60 to 220 ms after the notification (`#30` to `#42`, each answered with `debug_probe_2`), and this session's own deferred tool list swapped `debug_probe_1` for `debug_probe_2`.
 
 ## Manual steps
 
 ### ChatGPT (deployed bridge on Fly.io)
 
-The Fly app `mcp-events-bridge-dev` runs `test/list-changed` with `BRIDGE_LIST_CHANGED_TEST=1` (deployed 2 Nov with `fly deploy -e BRIDGE_LIST_CHANGED_TEST=1`). In a shell, with `BRIDGE_MCP_SECRET` set to the Fly app's secret:
+Run on 2 Nov in Chrome (phase A only; see the results). To repeat it: the Fly app `mcp-events-bridge-dev` runs `test/list-changed` with `BRIDGE_LIST_CHANGED_TEST=1` (deployed 2 Nov with `fly deploy -e BRIDGE_LIST_CHANGED_TEST=1`). In a shell, with `BRIDGE_MCP_SECRET` set to the Fly app's secret:
 
 ```sh
 B=https://mcp-events-bridge-dev.fly.dev
@@ -220,10 +256,20 @@ Covered above with one-shot chats; an interactive run checks the same in a long 
 4. Run `/mcp` and reconnect, and in a new session repeat step 2.
 5. Summarize the log as above.
 
-## Conclusion so far
+## Conclusion
 
-- **No client tested calls `events/list` because it was told to.** Claude Code has no MCP Events support. Hermes v0.22.5 drops `notifications/events/list_changed` and doesn't send `eventsListChanged`. ChatGPT is pending.
+| Client | Protocol | Stream | Picks up a new event type | Picks up a new tool |
+| --- | --- | --- | --- | --- |
+| ChatGPT | 2026-07-28 | None | Only after "Refresh tools" | Only after "Refresh tools" |
+| Hermes v0.22.5 | 2025-11-25 | GET, only with a session id | At once: `events/list` is called live each time | After the notification, if it has a stream; otherwise when its gateway reconnects |
+| Claude Code 2.1.316 | 2026-07-28 | `subscriptions/listen`, tools only | No MCP Events support | After the notification, within milliseconds |
+
+What a server can rely on today:
+
+- **No client tested calls `events/list` because it was told to.** None asks for `eventsListChanged`: Claude Code has no MCP Events support, Hermes v0.22.5 drops `notifications/events/list_changed`, and ChatGPT opens no stream at all. Declaring `listChanged: true` for events changes nothing for these clients.
+- **ChatGPT reads `tools/list` and `events/list` only when the plugin is added or "Refresh tools" is clicked,** and keeps that copy for every chat, new ones included. After any change to the bridge's event types (a new source, an upgrade that renames events) the user has to refresh the plugin; the README's advice stands, and now has evidence: a new chat is not enough.
 - **What works for event types today is clients that don't cache `events/list`.** Hermes calls it live on every `list_event_types` tool call, so it sees a new event type at once, with or without a notification.
 - **`tools/list_changed` works where a stream exists:** Claude Code (2026-07-28 `subscriptions/listen`) and Hermes (2025-era GET stream). Hermes opens that stream only if the server gives it a session id, and refreshes once any call in progress has finished.
 - **Stateless 2025-era serving, the MCP SDK's default, leaves Python SDK clients without a stream,** so they never hear a tools change either. Hermes's gateway keeps its connection across chats, so a new chat doesn't fix it; restarting the gateway does.
 - **Nothing in the MCP SDK sends events list changes yet:** a server has to serve `subscriptions/listen` itself, as this branch does.
+- **ChatGPT now speaks 2026-07-28** to the bridge, for "Refresh tools" and for tool calls, so the note that `events/*` are served on 2025-era sessions for ChatGPT no longer describes what ChatGPT does.

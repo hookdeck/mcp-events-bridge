@@ -644,7 +644,7 @@ Three kinds of source exist: `resend()` and `github()`, each on its Event Gatewa
 | 1. A source definition exists | Built in (`resend()`, `github()`, `source()`), or a custom `defineSource` in the deployment's own code | Built in: no. Custom: part of the deployment |
 | 2. Add an instance to `bridge.config.ts` | Options, events, and `env()` references for credentials | Yes: set the secrets and redeploy |
 | 3. `bridge setup` | Creates the source and its transformation, registers the service's webhook where it can | No, a one-off command (or part of the deploy) |
-| 4. Subscribe | Agents call `events/subscribe`; ChatGPT needs "Refresh tools" to see new events | No |
+| 4. Subscribe | Agents call `events/subscribe`; ChatGPT needs "Refresh tools" to see new events (a new chat isn't enough, and it opens no notification stream: [list-changed test](list-changed-test.md)) | No |
 
 Nothing else in the deployment changes per source. Subscription connections are created on demand, on the source.
 
@@ -795,7 +795,7 @@ Checked on 26 Oct 2026 against `b0efd11` (23 Oct), the SEP's latest commit. The 
 
 | # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Specification (37) | Extension defined for `2026-07-28`+; relies on per-request caps, `server/discover`, `subscriptions/listen` | Scope | Conforms | SDK 2.3.1 serves 2026-07-28; `server/discover` asserted in `test/host/bridge.test.ts:234` | Note: `events/*` are also served on legacy 2025-11-25 sessions (SEP 865 says the extension isn't defined there). Deliberate, for ChatGPT |
+| 1 | Specification (37) | Extension defined for `2026-07-28`+; relies on per-request caps, `server/discover`, `subscriptions/listen` | Scope | Conforms | SDK 2.3.1 serves 2026-07-28; `server/discover` asserted in `test/host/bridge.test.ts:234` | Note: `events/*` are also served on legacy 2025-11-25 sessions (SEP 865 says the extension isn't defined there). Kept for 2025-era clients such as Hermes v0.22.5; ChatGPT used 2026-07-28 on 2 Nov ([list-changed test](list-changed-test.md#chatgpt-work-chat-gpt-61-sol-2-nov-2026)) |
 | 2 | Specification (41) | Every result is a `Result` with `resultType: "complete"` | MUST (convention) | Conforms | SDK `stampResultType` stamps every method on the 2026-07-28 wire (`node_modules/@modelcontextprotocol/server/dist/src-*.mjs`, `encodeResult`); `src/core/poll.ts:450,455` sets it explicitly | |
 | 3 | Capability Negotiation (56–58) | Declared as `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover` | MUST (definition) | Conforms | `src/core/mcp.ts:33`; `test/host/bridge.test.ts:235` | |
 | 4 | Capability Negotiation (75) | `listChanged` optional, default false; `{}` = support without list-change | | Conforms | `src/core/mcp.ts:33` advertises `{}`; catalog is fixed per process (`src/core/catalog.ts:22-32`) | |
