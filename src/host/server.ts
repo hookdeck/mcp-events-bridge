@@ -18,6 +18,7 @@ import { ensureTransformations } from '../core/transformation.js';
 import type { SubscriptionStore } from '../core/store.js';
 import { SubscriptionService, type SubscriptionServiceDeps } from '../core/subscriptions.js';
 import { createNodeCallbackTransport } from './callback-transport.js';
+import { ListChangedTest, type Lists } from './list-changed.js';
 import { McpTrace } from './mcp-trace.js';
 
 /** The largest inbound request body read. Provider webhooks are far smaller; this bounds what an unsigned request can make the bridge buffer. */
@@ -52,6 +53,7 @@ function tooLarge(req: http.IncomingMessage, res: http.ServerResponse) {
  *   /mcp/<BRIDGE_MCP_SECRET>                 the same, with the secret in the URL instead, for clients that can't send a
  *                                 header (ChatGPT); off with auth.secretUrl: false. Either way, one principal: the owner
  *   GET /healthz
+ *   /debug/list-changed           the list-changed test's trigger, with the bearer token (BRIDGE_LIST_CHANGED_TEST=1 only)
  *
  * Bound to 127.0.0.1 for CLI inbound (development), all interfaces for http inbound.
  */
@@ -66,6 +68,8 @@ export interface BridgeServer {
   hookdeck: HookdeckClient;
   listen(): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
+  /** Set with the listChangedTest option. */
+  listChanged?: ListChangedTest;
 }
 
 export interface BridgeServerOptions {
@@ -84,6 +88,8 @@ export interface BridgeServerOptions {
   version?: string;
   /** Log every MCP request, response and stream (`mcp-trace` lines; see host/mcp-trace.ts). BRIDGE_MCP_TRACE=1. */
   trace?: boolean;
+  /** The list-changed test (host/list-changed.ts), with tracing. BRIDGE_LIST_CHANGED_TEST=1. */
+  listChangedTest?: boolean;
   log?: (message: string) => void;
 }
 
@@ -205,16 +211,27 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     });
 
   const localAgents = options.localAgents ?? config.inbound === 'cli';
+  const listChanged = options.listChangedTest ? new ListChangedTest({ log, serverInfo: { name: 'mcp-events-bridge', version: options.version ?? '0.0.0' } }) : undefined;
   const mcp = toNodeHandler(
     createMcpHandler((ctx) =>
-      buildMcpServer({ subscriptions, catalog, history, poll, sources, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
+      buildMcpServer({
+        subscriptions,
+        catalog,
+        history,
+        poll,
+        sources,
+        callbacks: localAgents ? callbacks : undefined,
+        principal: ctx.authInfo?.clientId,
+        version: options.version,
+        probes: listChanged?.snapshot(),
+      }),
     ),
   );
 
   const json = (res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { 'content-type': 'application/json', ...headers }).end(JSON.stringify(body));
   };
-  const trace = options.trace ? new McpTrace(log) : undefined;
+  const trace = options.trace || listChanged ? new McpTrace(log) : undefined;
   const serveMcp = async (req: http.IncomingMessage, res: http.ServerResponse, pathname: string) => {
     // The secret isn't kept on the request: the owner is the only principal.
     (req as http.IncomingMessage & { auth?: unknown }).auth = { token: '', clientId: OWNER, scopes: [] };
@@ -231,7 +248,13 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
         return json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
       }
     }
-    trace.request(req, res, redactPath(pathname), body);
+    const n = trace.request(req, res, redactPath(pathname), body);
+    if (listChanged) {
+      // The notification streams the MCP SDK doesn't serve: a 2025-era GET, and a listen with eventsListChanged.
+      if (req.method === 'GET' && String(req.headers.accept ?? '').includes('text/event-stream')) return listChanged.serveGet(req, res, n);
+      const message = body as Record<string, unknown> | undefined;
+      if (message && !Array.isArray(message) && message.method === 'subscriptions/listen') return listChanged.serveListen(req, res, n, message);
+    }
     return body === undefined ? mcp(req, res) : mcp(req, res, body);
   };
   const unauthorized = `Send Authorization: Bearer <BRIDGE_MCP_SECRET>${config.auth.secretUrl ? ', or use /mcp/<BRIDGE_MCP_SECRET>' : ''}`;
@@ -261,6 +284,16 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
         return json(res, response.status, response.body);
       }
 
+      if (listChanged && pathname === '/debug/list-changed') {
+        const token = bearerToken(req.headers.authorization);
+        if (!token || !secretMatches(token, mcpSecret)) return json(res, 401, { error: 'Send Authorization: Bearer <BRIDGE_MCP_SECRET>' });
+        if (req.method === 'GET') return json(res, 200, listChanged.state());
+        if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST' });
+        const lists = new URL(req.url ?? '/', 'http://localhost').searchParams.get('lists') ?? 'both';
+        if (!['events', 'tools', 'both'].includes(lists)) return json(res, 400, { error: 'lists is events, tools or both' });
+        return json(res, 200, listChanged.bump(lists as Lists));
+      }
+
       if (pathname === '/healthz') return json(res, 200, { ok: true, deployment: config.deployment, subscriptions: store.list().length });
       json(res, 404, { error: 'not found' });
     } catch (error) {
@@ -282,11 +315,13 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     store,
     callbacks,
     hookdeck,
+    listChanged,
     listen: () =>
       new Promise((resolve) => server.listen(config.port, host, () => resolve({ host, port: (server.address() as { port: number }).port }))),
     close: () =>
       new Promise((resolve) => {
         clearInterval(sweeper);
+        listChanged?.close();
         server.closeAllConnections();
         server.close(() => resolve());
       }),

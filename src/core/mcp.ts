@@ -14,6 +14,28 @@ import type { SubscriptionService } from './subscriptions.js';
  * hand, as in mcp-events-outpost-demo.
  */
 
+/**
+ * The list-changed test's probes (BRIDGE_LIST_CHANGED_TEST=1; see host/list-changed.ts and docs/list-changed-test.md):
+ * one event type and one tool whose names carry a generation, so a client's view of each list shows which version it
+ * has. With them, the bridge declares listChanged for events.
+ */
+export interface ListChangedProbes {
+  eventsGeneration: number;
+  toolsGeneration: number;
+}
+
+export const probeEventName = (generation: number) => `debug.probe_${generation}`;
+export const probeToolName = (generation: number) => `debug_probe_${generation}`;
+
+/** The probe's events/list descriptor. It never fires, and subscribing to it fails (it isn't in the catalog). */
+export const probeEvent = (generation: number) => ({
+  name: probeEventName(generation),
+  description: `Test event type for the list-changed test, generation ${generation}: added while the bridge was running. It never fires.`,
+  delivery: ['webhook', 'poll'],
+  inputSchema: { type: 'object', properties: {} },
+  payloadSchema: { type: 'object', properties: {} },
+});
+
 const WAIT_DEFAULT_MS = 45_000;
 const WAIT_MAX_MS = 50_000;
 export function buildMcpServer(deps: {
@@ -27,11 +49,15 @@ export function buildMcpServer(deps: {
   callbacks?: CallbackRegistry;
   principal?: string;
   version?: string;
+  /** The list-changed test's probes; off unless BRIDGE_LIST_CHANGED_TEST=1. */
+  probes?: ListChangedProbes;
 }): McpServer {
   const { subscriptions, catalog, history, principal } = deps;
   // Neither is in the SDK's ServerCapabilities type yet, hence the cast. `events` is what ChatGPT and pi-mcp-events
   // read; SEP-3415 moves it under `extensions`.
-  const capabilities = { events: {}, extensions: { 'io.modelcontextprotocol/events': {} } } as unknown as ServerCapabilities;
+  // listChanged only in the list-changed test, which sends notifications/events/list_changed (host/list-changed.ts).
+  const eventSettings = deps.probes ? { listChanged: true } : {};
+  const capabilities = { events: eventSettings, extensions: { 'io.modelcontextprotocol/events': eventSettings } } as unknown as ServerCapabilities;
   const server = new McpServer({ name: 'mcp-events-bridge', version: deps.version ?? '0.0.0' }, { capabilities });
 
   const json = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> });
@@ -182,8 +208,22 @@ export function buildMcpServer(deps: {
     );
   }
 
+  const probes = deps.probes;
+  if (probes) {
+    server.registerTool(
+      probeToolName(probes.toolsGeneration),
+      {
+        description: `Test tool for the list-changed test, generation ${probes.toolsGeneration}: added while the bridge was running. Returns the generations of the test tool and event type.`,
+        inputSchema: z.object({}),
+      },
+      async () => json({ toolsGeneration: probes.toolsGeneration, eventsGeneration: probes.eventsGeneration, event: probeEventName(probes.eventsGeneration) }),
+    );
+  }
+
   const anyParams = z.record(z.string(), z.unknown());
-  server.server.setRequestHandler('events/list', { params: anyParams.optional() }, async () => ({ events: catalog.list() }));
+  server.server.setRequestHandler('events/list', { params: anyParams.optional() }, async () => ({
+    events: probes ? [...catalog.list(), probeEvent(probes.eventsGeneration)] : catalog.list(),
+  }));
   server.server.setRequestHandler('events/subscribe', { params: anyParams }, async (params) => ({
     ...(await subscriptions.subscribe(principal, params)),
   }));
