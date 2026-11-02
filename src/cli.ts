@@ -191,7 +191,9 @@ async function serve(configFile: string | undefined, { manageListen, migrate: au
   // Test instrumentation, off by default: see docs/list-changed-test.md.
   const trace = process.env.BRIDGE_MCP_TRACE === '1';
   const listChangedTest = process.env.BRIDGE_LIST_CHANGED_TEST === '1';
-  const bridge = await createBridgeServer(config, { version: packageVersion(), trace, listChangedTest });
+  const listChangedSessionId = listChangedTest && process.env.BRIDGE_LIST_CHANGED_SESSION_ID === '1';
+  const bridge = await createBridgeServer(config, { version: packageVersion(), trace, listChangedTest, listChangedSessionId });
+  if (listChangedSessionId) console.log('[bridge] BRIDGE_LIST_CHANGED_SESSION_ID=1: answering 2025-era initialize with an Mcp-Session-Id');
   if (listChangedTest) {
     console.log('[bridge] BRIDGE_LIST_CHANGED_TEST=1: declaring listChanged, serving notification streams, and offering debug.probe_1 and debug_probe_1');
     console.log('[bridge]   change a list: curl -X POST -H "Authorization: Bearer $BRIDGE_MCP_SECRET" "<bridge>/debug/list-changed?lists=events|tools|both"');

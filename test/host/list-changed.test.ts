@@ -190,6 +190,30 @@ describe('list-changed test (BRIDGE_LIST_CHANGED_TEST)', () => {
     expect(lines.find((l) => l.dir === 'stream-close' && l.n === opened.n)).toMatchObject({ finished: false });
   });
 
+  it('gives a 2025-era client a session id only with listChangedSessionId, and still serves it statelessly', async () => {
+    const without = await startTestBridge({ listChangedTest: true });
+    const plain = await legacyInitialize(without.url);
+    await plain.text();
+    expect(plain.headers.get('mcp-session-id')).toBeNull();
+
+    const { url, traces } = await startTestBridge({ listChangedTest: true, listChangedSessionId: true });
+    const init = await legacyInitialize(url);
+    await init.text();
+    const sessionId = init.headers.get('mcp-session-id');
+    expect(sessionId).toMatch(/^lc-/);
+    // A later request echoes it; the SDK's stateless serving ignores it.
+    const list = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', 'mcp-session-id': sessionId! },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+    });
+    expect(list.status).toBe(200);
+    expect(await list.text()).toContain('debug_probe_1');
+    const lines = traces();
+    expect(lines.find((l) => l.dir === 'out' && l.sessionIdIssued)).toMatchObject({ sessionIdIssued: sessionId });
+    expect(lines.find((l) => l.dir === 'in' && l.rpc?.[0]?.method === 'tools/list')).toMatchObject({ sessionId });
+  });
+
   it('needs the bearer token to read or change the lists', async () => {
     const { port } = await startTestBridge({ listChangedTest: true });
     expect((await bump(port, 'both', 'wrong')).status).toBe(401);

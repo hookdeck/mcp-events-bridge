@@ -225,7 +225,17 @@ export class McpTrace {
         : undefined;
       const streamed = sse && isStream;
       // A stream's close says whether the bridge ended it (finished) or the client went away.
-      this.write({ dir: streamed ? 'stream-close' : 'out', n, status: res.statusCode, type: contentType, ms, results, ...(streamed && { finished: res.writableFinished }) });
+      const sessionIdIssued = res.getHeader('mcp-session-id');
+      this.write({
+        dir: streamed ? 'stream-close' : 'out',
+        n,
+        status: res.statusCode,
+        type: contentType,
+        ms,
+        results,
+        ...(sessionIdIssued !== undefined && { sessionIdIssued }),
+        ...(streamed && { finished: res.writableFinished }),
+      });
     });
     return n;
   }

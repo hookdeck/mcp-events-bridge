@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -90,6 +90,12 @@ export interface BridgeServerOptions {
   trace?: boolean;
   /** The list-changed test (host/list-changed.ts), with tracing. BRIDGE_LIST_CHANGED_TEST=1. */
   listChangedTest?: boolean;
+  /**
+   * With listChangedTest: answer a 2025-era initialize with an Mcp-Session-Id, since some clients (the Python MCP SDK)
+   * open the GET stream only when the server gave them one. POSTs stay stateless: the SDK ignores the id they echo.
+   * BRIDGE_LIST_CHANGED_SESSION_ID=1.
+   */
+  listChangedSessionId?: boolean;
   log?: (message: string) => void;
 }
 
@@ -254,6 +260,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
       if (req.method === 'GET' && String(req.headers.accept ?? '').includes('text/event-stream')) return listChanged.serveGet(req, res, n);
       const message = body as Record<string, unknown> | undefined;
       if (message && !Array.isArray(message) && message.method === 'subscriptions/listen') return listChanged.serveListen(req, res, n, message);
+      if (options.listChangedSessionId && message && !Array.isArray(message) && message.method === 'initialize') res.setHeader('mcp-session-id', `lc-${randomUUID()}`);
     }
     return body === undefined ? mcp(req, res) : mcp(req, res, body);
   };
