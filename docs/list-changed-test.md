@@ -30,6 +30,12 @@ Branch `test/list-changed`; not for release. Everything is behind environment va
 
 `scripts/trace-summary.ts` turns `mcp-trace` lines into one short line each; the excerpts below are its output. `scripts/list-changed-bridge.ts` runs the flagged bridge on this machine against a fake Event Gateway (no Hookdeck project), which is all a list test needs.
 
+**Terms.** These are three different ways a client can get a list again, and the tables keep them apart:
+
+- **After the notification:** in the same conversation, with nothing done by hand.
+- **New chat:** a new conversation with the same plugin or server, with nothing else done.
+- **Manual refresh:** a user action outside the conversation. In ChatGPT, refreshing the plugin in Plugins; in Claude Code, reconnecting with `/mcp`; in Hermes, restarting its gateway.
+
 The n in a probe's name says which version of a list a client has: if the bridge is at `debug_probe_3` and a client calls `debug_probe_2`, its tool list is stale.
 
 ## Results
