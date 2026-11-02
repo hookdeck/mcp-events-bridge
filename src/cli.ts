@@ -188,7 +188,10 @@ async function serve(configFile: string | undefined, { manageListen, migrate: au
     console.warn(`[bridge] warning: ${message}`);
   }
 
-  const bridge = await createBridgeServer(config, { version: packageVersion() });
+  // Test instrumentation, off by default: see docs/list-changed-test.md.
+  const trace = process.env.BRIDGE_MCP_TRACE === '1';
+  const bridge = await createBridgeServer(config, { version: packageVersion(), trace });
+  if (trace) console.log('[bridge] BRIDGE_MCP_TRACE=1: logging every MCP request (mcp-trace lines)');
   const { host, port } = await bridge.listen();
   console.log(`[bridge] listening on ${host}:${port} (${config.inbound} inbound, deployment "${config.deployment}")`);
 

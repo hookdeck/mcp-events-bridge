@@ -18,9 +18,25 @@ import { ensureTransformations } from '../core/transformation.js';
 import type { SubscriptionStore } from '../core/store.js';
 import { SubscriptionService, type SubscriptionServiceDeps } from '../core/subscriptions.js';
 import { createNodeCallbackTransport } from './callback-transport.js';
+import { McpTrace } from './mcp-trace.js';
 
 /** The largest inbound request body read. Provider webhooks are far smaller; this bounds what an unsigned request can make the bridge buffer. */
 const MAX_INBOUND_BYTES = 10 * 1024 * 1024;
+/** The largest MCP request body read when tracing, the same as the MCP SDK's own bound. */
+const MAX_MCP_BYTES = 4 * 1024 * 1024;
+
+/** A request's body, or null if it's larger than `max` bytes (checked against Content-Length first). */
+async function readBody(req: http.IncomingMessage, max: number): Promise<Buffer | null> {
+  if (Number(req.headers['content-length'] ?? 0) > max) return null;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > max) return null;
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
 
 function tooLarge(req: http.IncomingMessage, res: http.ServerResponse) {
   res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({ error: 'body too large' }));
@@ -66,6 +82,8 @@ export interface BridgeServerOptions {
   localAgents?: boolean;
   /** Reported as the MCP server's version (`serverInfo.version`). */
   version?: string;
+  /** Log every MCP request, response and stream (`mcp-trace` lines; see host/mcp-trace.ts). BRIDGE_MCP_TRACE=1. */
+  trace?: boolean;
   log?: (message: string) => void;
 }
 
@@ -196,10 +214,25 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const json = (res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { 'content-type': 'application/json', ...headers }).end(JSON.stringify(body));
   };
-  const serveMcp = (req: http.IncomingMessage, res: http.ServerResponse) => {
+  const trace = options.trace ? new McpTrace(log) : undefined;
+  const serveMcp = async (req: http.IncomingMessage, res: http.ServerResponse, pathname: string) => {
     // The secret isn't kept on the request: the owner is the only principal.
     (req as http.IncomingMessage & { auth?: unknown }).auth = { token: '', clientId: OWNER, scopes: [] };
-    return mcp(req, res);
+    if (!trace) return mcp(req, res);
+    // Tracing reads the body first, to log the JSON-RPC method, and hands the SDK the parsed body.
+    let body: unknown;
+    if (req.method === 'POST') {
+      const raw = await readBody(req, MAX_MCP_BYTES);
+      if (raw === null) return tooLarge(req, res);
+      try {
+        body = JSON.parse(raw.toString('utf8'));
+      } catch {
+        trace.request(req, res, redactPath(pathname));
+        return json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+      }
+    }
+    trace.request(req, res, redactPath(pathname), body);
+    return body === undefined ? mcp(req, res) : mcp(req, res, body);
   };
   const unauthorized = `Send Authorization: Bearer <BRIDGE_MCP_SECRET>${config.auth.secretUrl ? ', or use /mcp/<BRIDGE_MCP_SECRET>' : ''}`;
 
@@ -211,26 +244,20 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
         if (!token || !secretMatches(token, mcpSecret)) {
           return json(res, 401, { error: unauthorized }, { 'WWW-Authenticate': 'Bearer realm="mcp-events-bridge"' });
         }
-        return await serveMcp(req, res);
+        return await serveMcp(req, res, pathname);
       }
       const mcpMatch = config.auth.secretUrl ? /^\/mcp\/([^/]+)$/.exec(pathname) : null;
       if (mcpMatch) {
         if (!secretMatches(mcpMatch[1]!, mcpSecret)) return json(res, 404, { error: 'not found' });
-        return await serveMcp(req, res);
+        return await serveMcp(req, res, pathname);
       }
 
       if (pathname.startsWith('/inbound/') && req.method === 'POST') {
         // Bounded, since the body is read before its signature can be checked.
-        if (Number(req.headers['content-length'] ?? 0) > MAX_INBOUND_BYTES) return tooLarge(req, res);
-        const chunks: Buffer[] = [];
-        let size = 0;
-        for await (const chunk of req) {
-          size += (chunk as Buffer).length;
-          if (size > MAX_INBOUND_BYTES) return tooLarge(req, res);
-          chunks.push(chunk as Buffer);
-        }
+        const body = await readBody(req, MAX_INBOUND_BYTES);
+        if (body === null) return tooLarge(req, res);
         const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]));
-        const response = await notifications.handle(pathname, headers, Buffer.concat(chunks));
+        const response = await notifications.handle(pathname, headers, body);
         return json(res, response.status, response.body);
       }
 
