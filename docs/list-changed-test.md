@@ -165,6 +165,7 @@ Driven in Chrome against the Fly deployment (`BRIDGE_LIST_CHANGED_TEST=1`), with
 | In a new chat | **No.** A new chat's tool discovery and its Automations subscription schema were still the copy from before: five tools and eight events, no probe of any generation. Nothing was requested from the bridge |
 | After "Refresh tools" (Plugins > MCP Events Bridge demo > Manage app) | **Yes:** `server/discover`, `tools/list` and `events/list`, in that order, within 0.5 s. A new chat then had `debug_probe_2` (and called it) and `debug.probe_2` in its subscription schema |
 | After a later change, in a chat started after the refresh | **No:** after `bump events`, the same chat's subscription schema still ended at `debug.probe_2`, not `debug.probe_3` |
+| A tools change, in a new chat 13 hours after a refresh that returned `ttlMs: 0` (3 Nov) | **No:** the new chat still had `debug_probe_2`, called it, and got `-32602 Tool debug_probe_2 not found`. No `tools/list` before the call or after the error |
 | Live calls | Tool calls go to the bridge (`tools/call list_sources` returned the live sources), without a `tools/list` or `server/discover` first |
 
 What ChatGPT answered, by step:
@@ -198,6 +199,16 @@ The trace (Claude Code lines left out, except the notifications, to show where t
 The "Refresh tools" request's `clientInfo` is `{"name":"openai-mcp","version":"1.0.0"}` and its `clientCapabilities` are `{"experimental":{"openai/visibility":{"enabled":true}},"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}`.
 
 **Phase B (session id) doesn't apply:** `BRIDGE_LIST_CHANGED_SESSION_ID` only answers a 2025-era `initialize`, and 2026-07-28 has no sessions. It wasn't run.
+
+The tools-only check on 3 Nov: the last `tools/list` ChatGPT made was `#44` above (23:01:07 on 2 Nov, answered with `ttlMs: 0`). Tools were then bumped to `debug_probe_3`, and a new Work chat was asked to list the plugin's tools and call the newest probe:
+
+```
+-- list-changed test: tools bumped to debug.probe_3 and debug_probe_3; notified 15 of 15 stream(s)   (11:56:28, all Claude Code)
+11:57:18.818 #78 IN  POST tools/call {"protocolVersion":"2026-07-28","name":"debug_probe_2"} openai-mcp (Codex)/1.0.0 hdr=2026-07-28 ua=openai-mcp/1.0.0 (Codex)
+11:57:18.823 #78 OUT 200 5ms {"error":{"code":-32602,"message":"Tool debug_probe_2 not found"}}
+```
+
+ChatGPT's answer: "debug_probe_3 is not available. debug_probe_2 is exposed, so I called it", followed by `McpServerError: Tool debug_probe_2 not found`.
 
 The same trace shows the Claude Code side: the 13 sessions with the plugin called `tools/list` again 60 to 220 ms after the notification (`#30` to `#42`, each answered with `debug_probe_2`), and this session's own deferred tool list swapped `debug_probe_1` for `debug_probe_2`.
 
@@ -256,6 +267,24 @@ Covered above with one-shot chats; an interactive run checks the same in a long 
 4. Run `/mcp` and reconnect, and in a new session repeat step 2.
 5. Summarize the log as above.
 
+## Spec conformance
+
+What each client did, checked against the spec text: the [2026-07-28 caching page](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching), the [subscriptions page](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions), and SEP-3415. SEP-3415 is an open pull request (3 Nov 2026), not part of the spec, and ChatGPT follows the earlier design sketch, so a gap against it is a gap against a draft.
+
+| Client | Behavior | Spec text | Verdict |
+| --- | --- | --- | --- |
+| ChatGPT | Opens no notification stream | The subscriptions page never says a client MUST or SHOULD open `subscriptions/listen`; every filter field is optional | Allowed |
+| ChatGPT | Ignores `listChanged: true` for tools and events | `listChanged` says the server may send notifications; a client that never opts in gets none | Allowed |
+| ChatGPT | Doesn't declare the events extension in its client capabilities | SEP-3415: "A client MAY declare the same identifier" | Allowed |
+| ChatGPT | **Keeps a `tools/list` answered with `ttlMs: 0` for 13 hours and into new chats, and doesn't fetch it again after `Tool ... not found`** | Caching: "If `ttlMs` is `0`, the response SHOULD be considered immediately stale"; "Once the TTL expires, the response is stale and the client SHOULD re-fetch on next access". Fetching again after such an error is a MAY | **Deviates from a SHOULD** (proven 3 Nov). The error case is allowed |
+| ChatGPT | Calls `events/list` only on "Refresh tools" | SEP-3415, subscription TTL section: "clients SHOULD still call `events/subscribe` and `events/list` occasionally". The caching page doesn't cover `events/list`, which has no cache hints | Gap against the draft only |
+| Hermes v0.22.5 | Uses `events/*` over a 2025-11-25 connection | SEP-3415: "This extension is defined for protocol revision `2026-07-28` and later" | Outside the draft's scope; not a MUST on clients |
+| Hermes v0.22.5 | Keeps its tool list for the gateway's lifetime without a stream | Its connection is 2025-11-25, which has no `ttlMs`, so the caching page doesn't apply. Its on-disk schema cache does honor `ttlMs` (`tools/mcp_schema_cache.py`) | Allowed |
+| Hermes v0.22.5 | Drops `notifications/events/list_changed` | It never opts in to it (2025-era streams have no filter); SEP-3415's SHOULD applies to 2026-07-28 listen streams | Not applicable |
+| Claude Code 2.1.316 | Opens `subscriptions/listen` for `toolsListChanged` only, and calls `tools/list` again on the notification | Caching: a notification "invalidates the cached response" | Conforms (not tested: whether it fetches `tools/list` again once `ttlMs: 0` has passed without a notification) |
+
+**Why ChatGPT probably does this on purpose (inference, not confirmed):** ChatGPT treats a plugin's tools as a versioned snapshot. The plugin page shows a "Version ID" and a "Review status" (`DEVELOPMENT`), and only "Refresh tools" makes a new version. Pinning tool definitions until the user agrees protects against a server changing its tools after approval (tool poisoning, or a "rug pull"). If so, it's a security trade-off against a freshness SHOULD.
+
 ## Conclusion
 
 | Client | Protocol | Stream | Picks up a new event type | Picks up a new tool |
@@ -267,7 +296,7 @@ Covered above with one-shot chats; an interactive run checks the same in a long 
 What a server can rely on today:
 
 - **No client tested calls `events/list` because it was told to.** None asks for `eventsListChanged`: Claude Code has no MCP Events support, Hermes v0.22.5 drops `notifications/events/list_changed`, and ChatGPT opens no stream at all. Declaring `listChanged: true` for events changes nothing for these clients.
-- **ChatGPT reads `tools/list` and `events/list` only when the plugin is added or "Refresh tools" is clicked,** and keeps that copy for every chat, new ones included. After any change to the bridge's event types (a new source, an upgrade that renames events) the user has to refresh the plugin; the README's advice stands, and now has evidence: a new chat is not enough.
+- **ChatGPT reads `tools/list` and `events/list` only when the plugin is added or "Refresh tools" is clicked,** and keeps that copy for every chat, new ones included, even when `tools/list` said `ttlMs: 0` (a caching SHOULD it doesn't follow; see [Spec conformance](#spec-conformance)). After any change to the bridge's event types (a new source, an upgrade that renames events) the user has to refresh the plugin; the README's advice stands, and now has evidence: a new chat is not enough.
 - **What works for event types today is clients that don't cache `events/list`.** Hermes calls it live on every `list_event_types` tool call, so it sees a new event type at once, with or without a notification.
 - **`tools/list_changed` works where a stream exists:** Claude Code (2026-07-28 `subscriptions/listen`) and Hermes (2025-era GET stream). Hermes opens that stream only if the server gives it a session id, and refreshes once any call in progress has finished.
 - **Stateless 2025-era serving, the MCP SDK's default, leaves Python SDK clients without a stream,** so they never hear a tools change either. Hermes's gateway keeps its connection across chats, so a new chat doesn't fix it; restarting the gateway does.
