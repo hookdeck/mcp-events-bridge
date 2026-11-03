@@ -644,7 +644,7 @@ Three kinds of source exist: `resend()` and `github()`, each on its Event Gatewa
 | 1. A source definition exists | Built in (`resend()`, `github()`, `source()`), or a custom `defineSource` in the deployment's own code | Built in: no. Custom: part of the deployment |
 | 2. Add an instance to `bridge.config.ts` | Options, events, and `env()` references for credentials | Yes: set the secrets and redeploy |
 | 3. `bridge setup` | Creates the source and its transformation, registers the service's webhook where it can | No, a one-off command (or part of the deploy) |
-| 4. Subscribe | Agents call `events/subscribe`; ChatGPT needs "Refresh tools" to see new events | No |
+| 4. Subscribe | Agents call `events/subscribe`; ChatGPT needs "Refresh tools" to see new events (a new chat isn't enough, and it opens no notification stream: [list-changed test](list-changed-test.md)) | No |
 
 Nothing else in the deployment changes per source. Subscription connections are created on demand, on the source.
 
@@ -795,13 +795,13 @@ Checked on 26 Oct 2026 against `b0efd11` (23 Oct), the SEP's latest commit. The 
 
 | # | SEP § (line) | Requirement | Level | Status | Evidence | Fix (gaps) |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Specification (37) | Extension defined for `2026-07-28`+; relies on per-request caps, `server/discover`, `subscriptions/listen` | Scope | Conforms | SDK 2.3.1 serves 2026-07-28; `server/discover` asserted in `test/host/bridge.test.ts:234` | Note: `events/*` are also served on legacy 2025-11-25 sessions (SEP 865 says the extension isn't defined there). Deliberate, for ChatGPT |
+| 1 | Specification (37) | Extension defined for `2026-07-28`+; relies on per-request caps, `server/discover`, `subscriptions/listen` | Scope | Conforms | SDK 2.3.1 serves 2026-07-28; `server/discover` asserted in `test/host/bridge.test.ts:234` | Note: `events/*` are also served on legacy 2025-11-25 sessions (SEP 865 says the extension isn't defined there). Kept for 2025-era clients such as Hermes v0.22.5; ChatGPT used 2026-07-28 on 2 Nov ([list-changed test](list-changed-test.md#chatgpt-work-chat-gpt-61-sol-2-nov-2026)) |
 | 2 | Specification (41) | Every result is a `Result` with `resultType: "complete"` | MUST (convention) | Conforms | SDK `stampResultType` stamps every method on the 2026-07-28 wire (`node_modules/@modelcontextprotocol/server/dist/src-*.mjs`, `encodeResult`); `src/core/poll.ts:450,455` sets it explicitly | |
 | 3 | Capability Negotiation (56–58) | Declared as `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover` | MUST (definition) | Conforms | `src/core/mcp.ts:33`; `test/host/bridge.test.ts:235` | |
 | 4 | Capability Negotiation (75) | `listChanged` optional, default false; `{}` = support without list-change | | Conforms | `src/core/mcp.ts:33` advertises `{}`; catalog is fixed per process (`src/core/catalog.ts:22-32`) | |
 | 5 | Backward Compatibility (866) | Top-level `events` capability is not part of the extension; sketch implementations migrate to `extensions` | Informative | Partial | `src/core/mcp.ts:31-33` still advertises `events: {}` alongside (read by ChatGPT, pi-mcp-events) | Keep for compat; add a removal plan once ChatGPT/pi read `extensions` |
-| 6 | Dynamic event types (196–208) | `eventsListChanged` on `subscriptions/listen`; a server without `listChanged: true` omits it from the acknowledged filter | MUST (by "omits") | Conforms | SDK `honoredSubset` only echoes known fields (`server/dist/mcp-*.mjs:160-167`), so `eventsListChanged` is dropped | |
-| 7 | Dynamic event types (194) | Send `notifications/events/list_changed` when descriptors change | Conditional on `listChanged: true` | N/A | Not declared | |
+| 6 | Dynamic event types (196–208) | `eventsListChanged` on `subscriptions/listen`; a server without `listChanged: true` omits it from the acknowledged filter | MUST (by "omits") | Conforms | SDK `honoredSubset` only echoes known fields (`server/dist/mcp-*.mjs:160-167`), so `eventsListChanged` is dropped; still so in SDK 2.4.0 | Declaring `listChanged: true` means serving `subscriptions/listen` without the SDK: see [the list-changed test](list-changed-test.md) |
+| 7 | Dynamic event types (194) | Send `notifications/events/list_changed` when descriptors change | Conditional on `listChanged: true` | N/A | Not declared. The SDK's change events have no events kind, so it can't send it. Note: the SDK's `registerTool` declares `tools.listChanged: true` by default, which the bridge never sends | [List-changed test](list-changed-test.md): no client tested refetches `events/list` on the notification yet |
 | 8 | Capability Negotiation (94) | Server not offering the extension answers `-32601` | MUST | N/A | Bridge offers it | |
 
 ### `events/list` and schema evolution
