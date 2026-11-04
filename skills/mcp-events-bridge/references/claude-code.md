@@ -1,6 +1,6 @@
 # Claude Code with the bridge
 
-Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhook deliveries. It polls instead, which needs no public URL, so it works with a deployed bridge or a local one:
+Claude Code doesn't support MCP Events yet: it can't subscribe or receive webhook deliveries. It polls instead. Services send webhooks to the bridge's Event Gateway sources and the bridge reads them from Event Gateway, so neither Claude Code nor the bridge needs a public URL of its own, and a local bridge works as well as a deployed one:
 
 - **While Claude works on a request:** the bridge's poll tools (sections 1 and 2).
 - **Between prompts:** the plugin (section 3), which wakes Claude for each event. If you only want this, install the plugin and skip sections 1 and 2.
