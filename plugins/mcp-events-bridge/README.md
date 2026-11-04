@@ -24,6 +24,8 @@ When asked, enter:
 
 Claude Code keeps both in secure storage. If you skip them (Esc), the plugin still installs, but can't reach the bridge. Set or change them with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session.
 
+Installing from Claude's plugin directory shows a warning that `events-bridge` is an unregistered MCP server. That's expected: it's your own bridge, at the endpoint you enter, not a server Hookdeck runs, so there's nothing to register.
+
 ## Use
 
 In any project, ask Claude to watch for events your bridge offers, for example "watch `<owner>/<repo>` for new issues and comments", or "tell me when an email arrives". "What events can the bridge give me?" lists them, "what am I watching?" lists the project's watches, and "stop watching" removes them.
