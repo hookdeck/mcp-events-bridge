@@ -4,10 +4,13 @@
   "version": "0.8.1",
   "description": "Watch MCP Events bridge events (GitHub, Resend, webhooks) in the background: Claude is told as each one happens, between prompts too.",
   "author": { "name": "Hookdeck", "url": "https://hookdeck.com" },
-  "homepage": "https://github.com/hookdeck/mcp-events-bridge/blob/main/skills/mcp-events-bridge/references/claude-code.md",
+  "homepage": "https://github.com/hookdeck/mcp-events-bridge/blob/main/plugins/mcp-events-bridge/README.md",
   "repository": "https://github.com/hookdeck/mcp-events-bridge",
   "license": "MIT",
-  "privacyPolicyUrl": "https://hookdeck.com/privacy",
+  "privacyPolicyUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/plugins/mcp-events-bridge/README.md#privacy",
+  "supportUrl": "https://github.com/hookdeck/mcp-events-bridge/issues",
+  "documentationUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/skills/mcp-events-bridge/references/claude-code.md",
+  "termsOfServiceUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/LICENSE",
   "keywords": ["mcp", "events", "webhooks", "hookdeck"],
   "userConfig": {
     "mcp_url": {

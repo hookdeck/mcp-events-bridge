@@ -1,0 +1,78 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hookdeck/mcp-events-bridge",
+  "title": "MCP Events bridge",
+  "description": "Turn webhooks into MCP Events that AI agents subscribe to, with Hookdeck Event Gateway.",
+  "version": "0.8.1",
+  "websiteUrl": "https://github.com/hookdeck/mcp-events-bridge#readme",
+  "repository": {
+    "url": "https://github.com/hookdeck/mcp-events-bridge",
+    "source": "github",
+    "id": "1407013647"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@hookdeck/mcp-events-bridge",
+      "version": "0.8.1",
+      "runtimeHint": "npx",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve",
+          "description": "Runs the MCP server. Run `npx mcp-events-bridge setup` once first, in a directory with a bridge.config.ts."
+        }
+      ],
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:{BRIDGE_PORT}/mcp",
+        "headers": [
+          {
+            "name": "Authorization",
+            "description": "BRIDGE_MCP_SECRET as a bearer token.",
+            "value": "Bearer {BRIDGE_MCP_SECRET}",
+            "isRequired": true,
+            "isSecret": true
+          }
+        ]
+      },
+      "environmentVariables": [
+        {
+          "name": "HOOKDECK_API_KEY",
+          "description": "API key of the Hookdeck project the bridge uses (project settings, Secrets).",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "HOOKDECK_SIGNING_SECRET",
+          "description": "Signing secret of the same Hookdeck project. Verifies Event Gateway's notifications to the bridge.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "BRIDGE_MCP_SECRET",
+          "description": "The MCP endpoint's secret. `setup` generates one on its first run.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "BRIDGE_PORT",
+          "description": "Port the bridge listens on.",
+          "default": "8080",
+          "format": "number"
+        },
+        {
+          "name": "RESEND_API_KEY",
+          "description": "For the Resend source (inbound email). Needs permission to create webhooks.",
+          "isSecret": true
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "For the GitHub source in automatic mode. Fine-grained token with Webhooks (read and write). Only `setup` uses it.",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

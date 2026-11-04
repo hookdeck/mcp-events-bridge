@@ -4,12 +4,21 @@
 
 ### Added
 
+- **The official MCP Registry:** each stable release publishes `server.json` to the registry as `io.github.hookdeck/mcp-events-bridge`, and `package.json` has the matching `mcpName`.
+- **Tool annotations:** every tool says whether it's read-only. All are except `create_callback_url`, which is marked idempotent and not destructive. `list_sources` and `list_callback_urls` are also marked closed-world (`openWorldHint: false`), since they answer from the bridge's own state ([#84](https://github.com/hookdeck/mcp-events-bridge/pull/84)).
 - **Glama introspection entry:** `scripts/glama/stdio.ts` serves the bridge's MCP server over stdio, from a placeholder config and with no Event Gateway calls, so Glama can list its tools and score them. Not part of the npm package ([#81](https://github.com/hookdeck/mcp-events-bridge/pull/81)).
 
 ### Changed
 
+- **`create_callback_url` with an existing name and a different `port` or `path` now fails,** as it already did for a new name on an agent with another port or path. It used to succeed, returning the existing URL and ignoring the port or path, so the URL didn't forward where the caller asked. An agent's URLs share one port and path, so to move them, create URLs under a new agent name; unused URLs are deleted after an hour ([#84](https://github.com/hookdeck/mcp-events-bridge/pull/84)).
+- **`create_callback_url` and `list_callback_urls` descriptions:** they now say what a repeat call does (the same agent, name and secret return the existing URL), how to route and dedupe deliveries, when an agent doesn't need a callback URL (it has a public URL, or polls), and the 40-character limit on `agent` and `name` ([#84](https://github.com/hookdeck/mcp-events-bridge/pull/84)).
 - **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
 - **Claude Code plugin:** it has its own README, which says what the plugin runs and sends, a privacy policy URL (`privacyPolicyUrl`), and an icon (the Hookdeck logo), for Claude's plugin directory. Its session start hook is now a script, `scripts/session-start.sh`, and does the same as before ([#79](https://github.com/hookdeck/mcp-events-bridge/pull/79)).
+- **Claude Code plugin:** `bin/events-bridge` always runs the published CLI at the plugin's version, written out in full, because Claude's plugin directory refuses a command it computes. `MCP_EVENTS_BRIDGE_CLI` no longer swaps in another build: to try a checkout, run its CLI yourself (`npx tsx src/cli.ts watch ...`) ([#83](https://github.com/hookdeck/mcp-events-bridge/pull/83)).
+- **Claude Code plugin:** the monitor's command is now only `scripts/monitor.sh`, with no `${CLAUDE_PLUGIN_DATA}` or `${CLAUDE_PROJECT_DIR}`, which Claude's plugin directory refuses. The script finds the data directory from `MCP_EVENTS_BRIDGE_PLUGIN_DATA`, which the session start hook adds to the session's environment, or else from where the plugin is installed, and takes the project from its working directory. It still watches the same watch lists ([#83](https://github.com/hookdeck/mcp-events-bridge/pull/83)).
+- **Claude Code plugin:** its README and the Claude Code guide say that installing from Claude's plugin directory warns that `events-bridge` is an unregistered MCP server, and why that's expected. `plugin.json` sets `supportUrl` to the repository's issues ([#85](https://github.com/hookdeck/mcp-events-bridge/pull/85)).
+- **Claude Code plugin:** its privacy policy is the Privacy section of its README, which now says what the plugin reads, keeps on your machine and sends, and `privacyPolicyUrl` points there. It was Hookdeck's privacy policy, which covers hookdeck.com and Hookdeck's managed services, not this plugin ([#86](https://github.com/hookdeck/mcp-events-bridge/pull/86)).
+- **Claude Code plugin:** `plugin.json` sets `documentationUrl` (the Claude Code guide) and `termsOfServiceUrl` (the MIT license, which is the plugin's terms of use; Hookdeck's Terms of Use cover Event Gateway, and the README says so), and `homepage` is now the plugin's README ([#87](https://github.com/hookdeck/mcp-events-bridge/pull/87)).
 
 ### Fixed
 

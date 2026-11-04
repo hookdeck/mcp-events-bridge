@@ -389,10 +389,13 @@ Built 9 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), [#4
 
 **The plugin** (`plugins/mcp-events-bridge`, listed in `.claude-plugin/marketplace.json` as `mcp-events-bridge@hookdeck`):
 
-- A **monitor** (`when: always`) runs `watch --store "${CLAUDE_PLUGIN_DATA}" --project "${CLAUDE_PROJECT_DIR}"` for the whole session, so each project has its own watch list, and a new session first delivers what happened since the last one.
+- A **monitor** (`when: always`) runs `watch --store <plugin data> --project <session directory>` for the whole session, so each project has its own watch list, and a new session first delivers what happened since the last one. Its command is only `"${CLAUDE_PLUGIN_ROOT}/scripts/monitor.sh"`, because Claude's plugin directory refuses a command with any other variable ("Command path can't be followed"), and the script finds the rest itself:
+  - **Verified 4 Nov (Claude Code 2.1.318, probe plugin):** a monitor gets `${CLAUDE_PLUGIN_DATA}` and `${CLAUDE_PROJECT_DIR}` substituted into its command, but none of `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA` or `CLAUDE_PROJECT_DIR` in its environment (hooks get all three). Its working directory is the session's. It does get variables a `SessionStart` hook added to `CLAUDE_ENV_FILE`, and it started about 0.5 seconds after the hook, without waiting for the hook to finish.
+  - **The data directory:** the hook's first step adds `MCP_EVENTS_BRIDGE_PLUGIN_DATA` to `CLAUDE_ENV_FILE`. If the monitor started first, the script works it out from where the plugin is installed: `<plugins>/cache/<marketplace>/mcp-events-bridge/<version>` has its data in `<plugins>/data/mcp-events-bridge-<marketplace>` (the pattern every plugin on the maintainer's machine follows; a `--plugin-dir` plugin's is `<name>-inline`, which only the hook's variable finds). With neither, it prints a `{"problem": ...}` line.
+  - **The project:** the working directory, the session's when the monitor starts.
 - A **skill** (`watch`) turns "watch…", "stop watching…" and "what am I watching?" into `events-bridge watches …` (pre-approved with `allowed-tools`), and says to read a cut-off line with `get_event`: notifications shorten long lines (seen at around 500 characters).
-- The bridge as an **MCP server**, `url: ${user_config.mcp_url}`, a sensitive option kept in secure storage. Monitor commands can't read user config, so a `SessionStart` hook copies it to `${CLAUDE_PLUGIN_DATA}/mcp-url` (mode 0600) for `watch`.
-- `bin/events-bridge` runs `npx @hookdeck/mcp-events-bridge@<version>`, or `MCP_EVENTS_BRIDGE_CLI` for a checkout.
+- The bridge as an **MCP server**, `url: ${user_config.mcp_url}`, a sensitive option kept in secure storage. Monitor commands can't read user config, so a `SessionStart` hook (`scripts/session-start.sh`) copies it to `${CLAUDE_PLUGIN_DATA}/mcp-url` (mode 0600) for `watch`.
+- `bin/events-bridge` runs `npx -y @hookdeck/mcp-events-bridge@<version>`, written out in full so Claude's plugin directory can check the pin. (Until 0.8.1, `MCP_EVENTS_BRIDGE_CLI` could run a checkout instead; the directory refuses a computed command.)
 
 Limits: plugin monitors run only in interactive sessions (not `claude -p`); two sessions in one project each hear every event and share the saved cursors; events from more than 24 hours before a session starts are skipped.
 
