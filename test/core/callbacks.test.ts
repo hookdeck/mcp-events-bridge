@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CallbackInputError, CallbackRegistry, type CallbacksHookdeck } from '../../src/core/callbacks.js';
 import { Catalog } from '../../src/core/catalog.js';
 import { DEFAULT_SUBSCRIPTION_SETTINGS, defineConfig, resolveConfig } from '../../src/core/config.js';
@@ -73,13 +73,17 @@ describe('CallbackRegistry: creating callback URLs', () => {
     await expect(callbacks.create({ agent: 'laptop', name: 'open', secret: SECRET })).rejects.toThrow(/without a secret.*new name/);
   });
 
-  it('returns a pass-through URL again for the same agent and name, with no second source', async () => {
-    const { gateway, callbacks } = setup();
-    const first = await callbacks.create({ agent: 'hermes', name: 'base', port: 8644, path: '/' });
-    const sources = gateway.sources.size;
-    expect(await callbacks.create({ agent: 'hermes', name: 'base' })).toEqual(first);
-    expect(await callbacks.create({ agent: 'hermes', name: 'base', port: 8644, path: '/' })).toEqual(first);
-    expect(gateway.sources.size).toBe(sources);
+  it('returns an existing URL again, with or without a secret, without writing to Event Gateway', async () => {
+    const { hookdeck, callbacks } = setup();
+    const open = await callbacks.create({ agent: 'hermes', name: 'base', port: 8644, path: '/' });
+    const signed = await callbacks.create({ agent: 'laptop', name: 'email', port: 4000, secret: SECRET });
+    // The fake upserts by name, so counting its sources can't show a second write; counting the calls can.
+    const writes = [vi.spyOn(hookdeck, 'upsertSource'), vi.spyOn(hookdeck, 'upsertConnection')];
+    expect(await callbacks.create({ agent: 'hermes', name: 'base' })).toEqual(open);
+    expect(await callbacks.create({ agent: 'hermes', name: 'base', port: 8644, path: '/' })).toEqual(open);
+    expect(await callbacks.create({ agent: 'laptop', name: 'email', secret: SECRET })).toEqual(signed);
+    expect(await callbacks.create({ agent: 'laptop', name: 'email', port: 4000, path: '/events', secret: SECRET })).toEqual(signed);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
   });
 
   it("refuses an existing name with a different port or path, rather than returning a URL that doesn't forward there", async () => {
@@ -87,6 +91,8 @@ describe('CallbackRegistry: creating callback URLs', () => {
     await callbacks.create({ agent: 'laptop', name: 'email', port: 4000, secret: SECRET });
     await expect(callbacks.create({ agent: 'laptop', name: 'email', port: 5000, secret: SECRET })).rejects.toThrow(/forwards to port 4000/);
     await expect(callbacks.create({ agent: 'laptop', name: 'email', path: '/hooks', secret: SECRET })).rejects.toThrow(/forwards to path \/events/);
+    // Checked before the secret, so a call wrong on both gets the port error, with no Event Gateway read.
+    await expect(callbacks.create({ agent: 'laptop', name: 'email', port: 5000, secret: generateWebhookSecret() })).rejects.toThrow(/forwards to port 4000/);
   });
 
   it('without a secret: a pass-through WEBHOOK source that verifies nothing, and a log line saying so', async () => {

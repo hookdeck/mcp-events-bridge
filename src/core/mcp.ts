@@ -161,7 +161,7 @@ export function buildMcpServer(deps: {
           'With secret, Event Gateway answers the subscribe challenge and accepts only deliveries signed with it. ' +
           'Without it, the URL is pass-through and your receiver must verify every delivery: use that when you subscribe with a different secret per path under one URL. ' +
           'Deliveries are signed with your subscription secret: route them by X-MCP-Subscription-Id and dedupe by webhook-id. ' +
-          'Calling again with the same agent, name and secret returns the existing URL; a different secret, port or path for that name is an error. ' +
+          'Calling again with the same agent, name and secret returns the existing URL; a different secret, or a port or path you pass that differs, is an error. ' +
           'A URL no subscription uses for an hour is deleted. ' +
           'Not needed if your agent has a public URL or polls (wait_for_event, poll_events).',
         // Creates an Event Gateway source and never deletes one; a repeat call with the same arguments returns the same URL.
