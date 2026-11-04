@@ -44,7 +44,7 @@ export function buildMcpServer(deps: {
         'Get one past event by its name and eventId, as an MCP Events delivery or list_events gives them, read from Hookdeck Event Gateway. ' +
         'Returns the eventId, name, timestamp and data, the same as its delivery. ' +
         'Use it to look an event up again by id; to browse past events, use list_events, and for new ones, wait_for_event or poll_events. ' +
-        "An eventId Event Gateway doesn't have (or no longer keeps) is an error, and so is an event whose source can't be searched by id: the error says to use list_events.",
+        "An unknown name, an eventId Event Gateway doesn't have (or no longer keeps), and an event whose source can't be searched by id are errors; for the last, the error says to use list_events.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().describe('The event name, such as resend.email.received'),
@@ -64,15 +64,16 @@ export function buildMcpServer(deps: {
     'list_events',
     {
       description:
-        'List past events, newest first, from every source or for one event name, read from Hookdeck Event Gateway. ' +
-        'Each has the eventId, name, timestamp and data its delivery has; an empty list means none matched. ' +
+        'List past events, newest first by timestamp, from every source or for one event name, read from Hookdeck Event Gateway. ' +
+        'Each has the eventId, name, timestamp and data its delivery has. ' +
         'Use it to look back at what already happened; to follow new events, use wait_for_event or poll_events, and for one event you have the id of, get_event. ' +
-        "There's no paging: it returns at most limit events, so narrow with since or name. Events Event Gateway no longer keeps aren't listed. " +
-        'For the event names, see list_sources or events/list.',
+        "There's no paging: it reads about twice limit of each source's most recent requests and returns up to limit events from them, " +
+        'so it can return fewer than exist (or none), most often with name on a busy source; narrow with since to reach further back. ' +
+        "Events Event Gateway no longer keeps aren't listed. An unknown name is an error; for the names, see list_sources or events/list.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().describe('An event name, such as resend.email.received. Omit for every source.').optional(),
-        since: z.string().describe('Only events Event Gateway received at or after this time, in ISO 8601, e.g. 2026-11-04T09:00:00Z.').optional(),
+        since: z.string().describe("Only events Event Gateway received at or after this time, in ISO 8601, e.g. 2026-11-04T09:00:00Z. It compares received time, not the event's timestamp.").optional(),
         limit: z.number().int().min(1).max(100).optional().describe('At most this many events (default 20, at most 100).'),
       }),
     },
