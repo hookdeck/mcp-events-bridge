@@ -15,16 +15,21 @@ npx tsx scripts/glama/stdio.ts
 
 ## Glama build settings
 
-Glama builds from its admin page (Admin, then Dockerfile), not from the repo's `Dockerfile`. It clones the default branch, runs the build steps, and starts `mcp-proxy` with the CMD arguments.
+Glama builds from its admin page (Admin, then Dockerfile), not from the repo's `Dockerfile`. It generates a Dockerfile from these fields: it clones the commit Glama last synced, runs the build steps, and runs the CMD. These values built and passed on 4 Nov 2026 (release 0.8.1 on Glama).
 
 | Field | Value |
 | --- | --- |
-| Node.js version (or base image) | `24` (the bridge needs Node 22.12 or later) |
+| Base image | `debian:trixie-slim` (the default) |
+| Node.js version | `24` (the bridge needs Node 22.12 or later) |
 | Python version | Leave the default; the bridge doesn't use Python |
 | Build steps | `["npm ci --omit=dev --no-audit --no-fund"]` |
-| CMD arguments | `["npx", "tsx", "scripts/glama/stdio.ts"]` |
+| CMD arguments | `["mcp-proxy", "--", "npx", "tsx", "scripts/glama/stdio.ts"]` |
 | Environment variables JSON schema | `{"type": "object", "properties": {}, "required": []}` |
 | Placeholder parameters | `{}` |
-| Pinned commit SHA | Leave empty |
+| Pinned commit SHA (optional) | Leave empty, to build the last synced commit |
 
-There's no TypeScript build step: `tsx` (a runtime dependency) runs the source.
+- **The CMD includes `mcp-proxy`:** Glama installs it globally in the image, and `--` ends its options, so the rest is the server's command.
+- **The schema and placeholders are empty on purpose:** the entry reads no environment variables (its placeholder config is built in), so declaring the bridge's real variables would suggest that keys entered on Glama do something.
+- **Sync first:** Admin, then Repository, then Sync Server, so Glama builds the current default branch. The Dockerfile page shows the synced commit as the pinned SHA's placeholder.
+- **Then release:** Build runs a test, and a passing test offers Create Release, which asks for a version and a changelog. Releases are listed under Admin, then Releases, and Glama scores the tool definitions of the latest one (Admin, then TDQS).
+- **No TypeScript build step:** `tsx` (a runtime dependency) runs the source. npm skips esbuild's install script and says so; `tsx` still runs, because esbuild's binary comes from its platform package.
