@@ -7,6 +7,13 @@
 data="$CLAUDE_PLUGIN_DATA"
 [ -n "$data" ] || exit 0
 
+# First, before the monitor starts: tell it where the data directory is (see scripts/monitor.sh). Claude Code starts
+# processes with what SessionStart hooks add to CLAUDE_ENV_FILE.
+if [ -n "$CLAUDE_ENV_FILE" ]; then
+  quoted=$(printf '%s' "$data" | sed "s/'/'\\\\''/g")
+  printf "export MCP_EVENTS_BRIDGE_PLUGIN_DATA='%s'\n" "$quoted" >> "$CLAUDE_ENV_FILE"
+fi
+
 # save <file> <value>: write the value with mode 0600, or remove the file when the value is empty.
 save() {
   if [ -n "$2" ]; then
