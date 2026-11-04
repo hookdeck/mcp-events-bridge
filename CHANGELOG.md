@@ -5,6 +5,7 @@
 ### Changed
 
 - **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
+- **Claude Code plugin:** it has its own README, which says what the plugin runs and sends, and a privacy policy URL (`privacyPolicyUrl`), for Claude's plugin directory. Its session start hook is now a script, `scripts/session-start.sh`, and does the same as before.
 
 ### Fixed
 
