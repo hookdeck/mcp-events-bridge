@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Glama introspection entry:** `scripts/glama/stdio.ts` serves the bridge's MCP server over stdio, from a placeholder config and with no Event Gateway calls, so Glama can list its tools and score them. Not part of the npm package.
+
 ### Changed
 
 - **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).

@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
-import { createMcpHandler } from '@modelcontextprotocol/server';
+import { createMcpHandler, type McpServer } from '@modelcontextprotocol/server';
 import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
 import { Catalog, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
@@ -48,6 +48,8 @@ export interface BridgeServer {
   store: SubscriptionStore;
   callbacks: CallbackRegistry;
   hookdeck: HookdeckClient;
+  /** A fresh MCP server for one principal, as the HTTP endpoint builds per request (scripts/glama serves one over stdio). */
+  mcpServer(principal?: string): McpServer;
   listen(): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
 }
@@ -187,11 +189,9 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     });
 
   const localAgents = options.localAgents ?? config.inbound === 'cli';
-  const mcp = toNodeHandler(
-    createMcpHandler((ctx) =>
-      buildMcpServer({ subscriptions, catalog, history, poll, sources, callbacks: localAgents ? callbacks : undefined, principal: ctx.authInfo?.clientId, version: options.version }),
-    ),
-  );
+  const mcpServer = (principal?: string) =>
+    buildMcpServer({ subscriptions, catalog, history, poll, sources, callbacks: localAgents ? callbacks : undefined, principal, version: options.version });
+  const mcp = toNodeHandler(createMcpHandler((ctx) => mcpServer(ctx.authInfo?.clientId)));
 
   const json = (res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { 'content-type': 'application/json', ...headers }).end(JSON.stringify(body));
@@ -255,6 +255,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     store,
     callbacks,
     hookdeck,
+    mcpServer,
     listen: () =>
       new Promise((resolve) => server.listen(config.port, host, () => resolve({ host, port: (server.address() as { port: number }).port }))),
     close: () =>
