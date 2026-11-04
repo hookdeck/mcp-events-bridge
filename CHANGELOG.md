@@ -5,11 +5,11 @@
 ### Added
 
 - **The official MCP Registry:** each stable release publishes `server.json` to the registry as `io.github.hookdeck/mcp-events-bridge`, and `package.json` has the matching `mcpName`.
-- **Tool annotations:** every tool says whether it's read-only. All are except `create_callback_url`, which is marked idempotent and not destructive.
+- **Tool annotations:** every tool says whether it's read-only. All are except `create_callback_url`, which is marked idempotent and not destructive ([#84](https://github.com/hookdeck/mcp-events-bridge/pull/84)).
 
 ### Changed
 
-- **`create_callback_url` and `list_callback_urls` descriptions:** shorter, and they now say that the same agent and name return the existing URL, when an agent doesn't need a callback URL (it has a public URL, or polls), and the 40-character limit on `agent` and `name`. Routing and dedupe advice for receivers stays in the README and the skill's receiving-deliveries reference.
+- **`create_callback_url` and `list_callback_urls` descriptions:** shorter, and they now say that the same agent and name return the existing URL, when an agent doesn't need a callback URL (it has a public URL, or polls), and the 40-character limit on `agent` and `name`. Routing and dedupe advice for receivers stays in the README and the skill's receiving-deliveries reference ([#84](https://github.com/hookdeck/mcp-events-bridge/pull/84)).
 - **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
 - **Claude Code plugin:** it has its own README, which says what the plugin runs and sends, a privacy policy URL (`privacyPolicyUrl`), and an icon (the Hookdeck logo), for Claude's plugin directory. Its session start hook is now a script, `scripts/session-start.sh`, and does the same as before ([#79](https://github.com/hookdeck/mcp-events-bridge/pull/79)).
 
