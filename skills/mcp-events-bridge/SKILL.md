@@ -89,7 +89,7 @@ Every event is named **`{source id}.{event}`**: the source `id` (by default its 
   3. What the agent's receiver must do: [references/receiving-deliveries.md](references/receiving-deliveries.md).
 - **Hermes Agent** (v0.22.5 or later; experimental in Hermes): follow [references/hermes-agent.md](references/hermes-agent.md).
 - **Code built on the Vercel AI SDK, Mastra or TanStack AI** (their MCP client libraries; experimental): follow [references/library-clients.md](references/library-clients.md).
-- **Agents without MCP Events support** (Claude Code, Codex, Cursor): add the bridge as an HTTP MCP server (Claude Code: `claude mcp add --transport http events-bridge <bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`; see [references/claude-code.md](references/claude-code.md)) and use the poll tools, which need no public URL:
+- **Agents without MCP Events support** (Claude Code, Codex, Cursor): add the bridge as an HTTP MCP server (Claude Code: `claude mcp add --transport http events-bridge <bridge>/mcp --header "Authorization: Bearer <BRIDGE_MCP_SECRET>"`; see [references/claude-code.md](references/claude-code.md)) and use the poll tools, which need no public URL of their own (webhooks arrive at the bridge's Event Gateway sources):
   - `wait_for_event` (`name`, `arguments`, `cursor`): waits up to 45 s and returns as soon as there are events. Call it again with the `cursor` it returned to keep waiting.
   - `poll_events` (same, plus `maxEvents`, `maxAgeMs`): returns at once; call again after `nextPollMs`, or at once when `hasMore` is true.
   - Without a cursor, both start from now. Events can repeat: dedupe by `eventId`. For events that already happened, use `list_events` and `get_event`.

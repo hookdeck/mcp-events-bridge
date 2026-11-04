@@ -70,7 +70,7 @@ const sub = await client.experimental_events.subscribe({
 
 ## Mastra
 
-Mastra's `MCPClient` subscribes with webhook delivery when you give it a `webhook` URL, and polls otherwise. Poll mode needs no public URL at all, so it's the simplest with a local bridge. A subscription is an async iterator.
+Mastra's `MCPClient` subscribes with webhook delivery when you give it a `webhook` URL, and polls otherwise. Poll mode needs no public URL of your own (webhooks arrive at the bridge's Event Gateway sources), so it's the simplest with a local bridge. A subscription is an async iterator.
 
 ```ts
 import { MCPClient } from '@mastra/mcp';

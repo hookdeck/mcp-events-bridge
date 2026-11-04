@@ -29,7 +29,7 @@ It's for developers who want agents ([ChatGPT, Claude Code, Hermes Agent and oth
 
 - **Event Gateway** verifies each service's webhook signature, keeps every request, turns each one into an MCP Event, and delivers it to each subscriber, signed with the subscriber's secret, with retries.
 - **The bridge** is the MCP server: it lists the events on offer, handles subscribe (including the spec's endpoint challenge), and manages one Event Gateway connection per subscription. Events don't pass through it.
-- **The Hookdeck CLI** forwards MCP Events to [local agents](#local-agents), and Event Gateway's notifications to a bridge on your laptop, so neither needs a public URL.
+- **The Hookdeck CLI** forwards MCP Events to [local agents](#local-agents), and Event Gateway's notifications to a bridge on your laptop, so neither needs a public URL of its own.
 
 The design, its trade-offs and how it maps to the spec are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -144,7 +144,7 @@ Claude Code doesn't support MCP Events yet, so it polls. Install the plugin, whi
 
 If you skip them (Esc), the plugin still installs. Set them later with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session. An endpoint with the secret in it (`/mcp/<BRIDGE_MCP_SECRET>`), set before the secret field existed, still works.
 
-Then, in any project, ask Claude to watch for events your bridge offers ("what events can the bridge give me?" lists them). For example, with the [GitHub source](#github) set up for a repository, "watch `<owner>/<repo>` for new issues and comments"; with [Resend](#resend), "tell me when an email arrives". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). It needs no public URL, so it works with a local bridge.
+Then, in any project, ask Claude to watch for events your bridge offers ("what events can the bridge give me?" lists them). For example, with the [GitHub source](#github) set up for a repository, "watch `<owner>/<repo>` for new issues and comments"; with [Resend](#resend), "tell me when an email arrives". The plugin keeps a watch list per project and runs [`watch`](#in-the-background-watch) for the whole session, so each event wakes Claude, between prompts too, and a new session first catches up on what it missed (up to 24 hours). Webhooks arrive at the bridge's Event Gateway sources and the plugin polls the bridge, so it works with a local bridge, which needs no public URL of its own.
 
 Without the plugin, add the bridge as an MCP server and ask Claude to wait for events with the poll tools (see [Polling](#polling)). The [Claude Code guide](skills/mcp-events-bridge/references/claude-code.md) has both.
 
@@ -401,7 +401,7 @@ Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp
 
 ![Claude Code, asked to watch hookdeck/hookdeck-demos for new issue comments until three arrive, calls the events-bridge tools and reports each comment as it's posted, then lists all three with their times](docs/images/claude-code-wait-for-event.png)
 
-- **No public URL needed:** each poll reads the source's requests from Event Gateway, so it works from a laptop, with a deployed or a local bridge.
+- **No public URL of your own:** services send webhooks to the public URL of the bridge's Event Gateway source, and each poll reads them from Event Gateway, so it works from a laptop or behind a NAT, with a deployed or a local bridge.
 - **Start from now:** a first call without a cursor returns no events, only a cursor. For events that already happened, use `list_events`.
 - **At least once:** events can repeat, so dedupe by `eventId`. `truncated: true` means events were skipped (`maxAgeMs`, or older than Event Gateway keeps).
 - **Replay:** every delivery and every subscribe response includes a `cursor`, a position in Event Gateway's history of the source's requests. Subscribe again with the latest one, after an unsubscribe, an expiry or downtime, and the bridge delivers what you missed, alongside live events, up to Event Gateway's retention (3 days on the Developer plan). Refreshing a live subscription with it changes nothing. Poll mode uses the same cursors.
