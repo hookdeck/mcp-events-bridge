@@ -8,6 +8,7 @@
   "repository": "https://github.com/hookdeck/mcp-events-bridge",
   "license": "MIT",
   "privacyPolicyUrl": "https://hookdeck.com/privacy",
+  "supportUrl": "https://github.com/hookdeck/mcp-events-bridge/issues",
   "keywords": ["mcp", "events", "webhooks", "hookdeck"],
   "userConfig": {
     "mcp_url": {
