@@ -69,6 +69,24 @@ describe('CallbackRegistry: creating callback URLs', () => {
     await callbacks.create({ agent: 'laptop', name: 'email', secret: SECRET });
     await expect(callbacks.create({ agent: 'laptop', name: 'email', secret: generateWebhookSecret() })).rejects.toThrow(/different secret.*new name/);
     await expect(callbacks.create({ agent: 'laptop', name: 'email' })).rejects.toThrow(CallbackInputError);
+    await callbacks.create({ agent: 'laptop', name: 'open' });
+    await expect(callbacks.create({ agent: 'laptop', name: 'open', secret: SECRET })).rejects.toThrow(/without a secret.*new name/);
+  });
+
+  it('returns a pass-through URL again for the same agent and name, with no second source', async () => {
+    const { gateway, callbacks } = setup();
+    const first = await callbacks.create({ agent: 'hermes', name: 'base', port: 8644, path: '/' });
+    const sources = gateway.sources.size;
+    expect(await callbacks.create({ agent: 'hermes', name: 'base' })).toEqual(first);
+    expect(await callbacks.create({ agent: 'hermes', name: 'base', port: 8644, path: '/' })).toEqual(first);
+    expect(gateway.sources.size).toBe(sources);
+  });
+
+  it("refuses an existing name with a different port or path, rather than returning a URL that doesn't forward there", async () => {
+    const { callbacks } = setup();
+    await callbacks.create({ agent: 'laptop', name: 'email', port: 4000, secret: SECRET });
+    await expect(callbacks.create({ agent: 'laptop', name: 'email', port: 5000, secret: SECRET })).rejects.toThrow(/forwards to port 4000/);
+    await expect(callbacks.create({ agent: 'laptop', name: 'email', path: '/hooks', secret: SECRET })).rejects.toThrow(/forwards to path \/events/);
   });
 
   it('without a secret: a pass-through WEBHOOK source that verifies nothing, and a log line saying so', async () => {

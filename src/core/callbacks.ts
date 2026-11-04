@@ -269,6 +269,13 @@ export class CallbackRegistry {
             `callback URL ${name} was created ${existing.passThrough ? 'without a secret' : 'with a different secret'}. One URL holds one secret: to rotate, create a callback URL with a new name and subscribe with it.`,
           );
         }
+        // A repeat call returns the URL as it is, so a port or path it wouldn't apply is an error, not ignored.
+        if (input.port !== undefined && input.port !== existing.port) {
+          throw new CallbackInputError(`callback URL ${name} forwards to port ${existing.port}: all of an agent's callback URLs share one local port`);
+        }
+        if (input.path !== undefined && input.path !== existing.path) {
+          throw new CallbackInputError(`callback URL ${name} forwards to path ${existing.path}: all of an agent's callback URLs share one local path`);
+        }
         return existing;
       }
       const agentPath = this.agentPath(agent);

@@ -79,7 +79,8 @@ export function buildMcpServer(deps: {
     'list_sources',
     {
       description: 'List the configured event sources (the services events come from), their types, their events, and how many subscriptions each has.',
-      annotations: { readOnlyHint: true },
+      // Answered from the bridge's config and loaded subscriptions, without calling Event Gateway.
+      annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({}),
     },
     async () => json({ sources: deps.sources() }),
@@ -159,13 +160,15 @@ export function buildMcpServer(deps: {
           'Deliveries reach Hookdeck Event Gateway at the URL, and the bridge forwards them to http://localhost:<port><path>. ' +
           'With secret, Event Gateway answers the subscribe challenge and accepts only deliveries signed with it. ' +
           'Without it, the URL is pass-through and your receiver must verify every delivery: use that when you subscribe with a different secret per path under one URL. ' +
-          'The same agent and name return the existing URL. A URL no subscription uses for an hour is deleted. ' +
+          'Deliveries are signed with your subscription secret: route them by X-MCP-Subscription-Id and dedupe by webhook-id. ' +
+          'Calling again with the same agent, name and secret returns the existing URL; a different secret, port or path for that name is an error. ' +
+          'A URL no subscription uses for an hour is deleted. ' +
           'Not needed if your agent has a public URL or polls (wait_for_event, poll_events).',
-        // Creates an Event Gateway source and never deletes one; a repeat call returns the same URL.
+        // Creates an Event Gateway source and never deletes one; a repeat call with the same arguments returns the same URL.
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
         inputSchema: z.object({
           agent,
-          name: z.string().describe('A name for this URL (up to 40 letters, digits or _), e.g. "email_from_alice". Reusing a name returns that URL.'),
+          name: z.string().describe('A name for this URL (up to 40 letters, digits or _), e.g. "email_from_alice". Reusing a name with the same secret returns that URL.'),
           port: z.number().int().min(1).max(65535).optional().describe(`Local port your agent receives deliveries on. Set by the agent's first URL (default ${DEFAULT_AGENT_PORT}) and shared by the rest.`),
           path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by the agent's first URL (default ${DEFAULT_CALLBACK_PATH}) and shared by the rest.`),
           secret: z.string().optional().describe('The whsec_ secret you will subscribe with. One URL holds one secret: to rotate, create a URL with a new name. Omit for a pass-through URL.'),
@@ -186,7 +189,7 @@ export function buildMcpServer(deps: {
       {
         description:
           "List the callback URLs an agent created with create_callback_url, with each one's local port and path and whether it's pass-through. Check here before creating a URL.",
-        annotations: { readOnlyHint: true },
+        annotations: { readOnlyHint: true, openWorldHint: false },
         inputSchema: z.object({ agent }),
       },
       async ({ agent: name }) => json({ callbackUrls: callbacks.forAgent(name).map(describe) }),
