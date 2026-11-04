@@ -10,7 +10,7 @@
 
 - **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
 - **Claude Code plugin:** it has its own README, which says what the plugin runs and sends, a privacy policy URL (`privacyPolicyUrl`), and an icon (the Hookdeck logo), for Claude's plugin directory. Its session start hook is now a script, `scripts/session-start.sh`, and does the same as before ([#79](https://github.com/hookdeck/mcp-events-bridge/pull/79)).
-- **Claude Code plugin:** `bin/events-bridge` always runs the published CLI at the plugin's version, written out in full, because Claude's plugin directory refuses a command it computes. `MCP_EVENTS_BRIDGE_CLI` no longer swaps in another build: to try a checkout, run its CLI yourself (`npx tsx src/cli.ts watch ...`).
+- **Claude Code plugin:** `bin/events-bridge` always runs the published CLI at the plugin's version, written out in full, because Claude's plugin directory refuses a command it computes. `MCP_EVENTS_BRIDGE_CLI` no longer swaps in another build: to try a checkout, run its CLI yourself (`npx tsx src/cli.ts watch ...`) ([#83](https://github.com/hookdeck/mcp-events-bridge/pull/83)).
 
 ### Fixed
 
