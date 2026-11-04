@@ -6,6 +6,7 @@
 
 - **The official MCP Registry:** each stable release publishes `server.json` to the registry as `io.github.hookdeck/mcp-events-bridge`, and `package.json` has the matching `mcpName`.
 - **Tool annotations:** every tool says whether it's read-only. All are except `create_callback_url`, which is marked idempotent and not destructive. `list_sources` and `list_callback_urls` are also marked closed-world (`openWorldHint: false`), since they answer from the bridge's own state ([#84](https://github.com/hookdeck/mcp-events-bridge/pull/84)).
+- **Glama introspection entry:** `scripts/glama/stdio.ts` serves the bridge's MCP server over stdio, from a placeholder config and with no Event Gateway calls, so Glama can list its tools and score them. Not part of the npm package ([#81](https://github.com/hookdeck/mcp-events-bridge/pull/81)).
 
 ### Changed
 
