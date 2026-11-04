@@ -45,7 +45,12 @@ The data directory, `~/.claude/plugins/data/mcp-events-bridge-hookdeck/` when in
 
 ## Privacy
 
-The plugin sends data only to the bridge endpoint you configure, and fetches the bridge's CLI from the npm registry. It doesn't send events, watch lists or your secret anywhere else. Your bridge runs on your own Hookdeck project: Hookdeck Event Gateway receives the webhooks, verifies them and keeps a record of each event, under the [Hookdeck privacy policy](https://hookdeck.com/privacy).
+This section is the plugin's privacy policy: what it reads, keeps and sends.
+
+- **What it reads:** events from your own bridge, which can include personal data, such as an inbound email's sender and subject. Claude reads them in your session. The plugin doesn't store them.
+- **What it keeps on your machine:** in the plugin's data directory, the watch lists (the event names and filters you chose), a cursor per project, and a copy of the bridge endpoint and secret, readable only by you. Uninstalling the plugin deletes the directory.
+- **Where it sends data:** only to the bridge endpoint you configure, a server you run, with your secret as an `Authorization: Bearer` header. It also downloads the bridge's CLI from the npm registry. The plugin sends nothing to Hookdeck or anyone else.
+- **Your bridge:** you run it, so you control it and what it keeps. It doesn't store what Claude sends it. It uses your own Hookdeck project: Hookdeck Event Gateway receives the webhooks from your services, verifies them and keeps a record of each event, under the [Hookdeck privacy policy](https://hookdeck.com/privacy).
 
 ## More
 
