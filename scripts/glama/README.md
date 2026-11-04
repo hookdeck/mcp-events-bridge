@@ -2,8 +2,9 @@
 
 [Glama](https://glama.ai/mcp/servers/hookdeck/mcp-events-bridge) scores an MCP server from its tool definitions, which it reads by running the server in a sandbox and calling `tools/list`. Glama runs servers over stdio, through [`mcp-proxy`](https://www.npmjs.com/package/mcp-proxy), with no credentials. The bridge serves MCP over HTTP and needs a Hookdeck project, so `stdio.ts` serves the bridge's own MCP server (the `createBridgeServer` wiring that `serve` uses) over stdio, from a placeholder config and a stub Event Gateway client that makes no network calls.
 
-- **Tool definitions are the real ones:** `test/scripts/glama-stdio.test.ts` checks that `tools/list` over stdio equals what the bridge serves over HTTP, with outbound sockets, DNS and `fetch` blocked in the child process.
-- **Tool calls don't work:** a tool that needs Event Gateway returns an error that says this is the introspection build. To use the bridge, run `mcp-events-bridge serve`.
+- **Tool definitions are the real ones:** `test/scripts/glama-stdio.test.ts` checks that `tools/list` over stdio equals what the bridge serves over HTTP. It runs the entry with `fetch`, outbound sockets (`net`, so `http`, `https` and `tls` too) and DNS (`lookup` and the `resolve` family) blocked, and checks the preload reports each of them.
+- **The local tool set:** it lists all seven tools, as a bridge with CLI inbound (the default on your own machine) does. A deployed bridge (HTTP inbound) has five: it doesn't offer `create_callback_url` and `list_callback_urls`.
+- **Requests that need Event Gateway don't work:** a tool call returns an error that says this is the introspection build, and `events/subscribe` fails without checking or challenging the callback URL. To use the bridge, run `mcp-events-bridge serve`.
 - **No environment variables:** the process environment is never read for config, so no real key reaches it.
 
 Run it locally:

@@ -13,6 +13,12 @@ net.Socket.prototype.connect = function connect(...args) {
   const [target] = args;
   blocked(`socket ${typeof target === 'object' && target ? `${target.host ?? target.path}:${target.port ?? ''}` : String(target)}`);
 };
-dns.lookup = (host) => blocked(`dns ${host}`);
-dns.promises.lookup = async (host) => blocked(`dns ${host}`);
+// lookup (getaddrinfo, what sockets use) and the resolve* family (c-ares), on dns, dns.promises and their Resolvers.
+for (const target of [dns, dns.promises, dns.Resolver.prototype, dns.promises.Resolver.prototype]) {
+  for (const name of Object.keys(target).concat(Object.getOwnPropertyNames(target))) {
+    if (name === 'lookup' || name === 'lookupService' || name.startsWith('resolve') || name === 'reverse') {
+      target[name] = (host) => blocked(`dns ${name} ${host}`);
+    }
+  }
+}
 globalThis.fetch = async (input) => blocked(`fetch ${String(input)}`);

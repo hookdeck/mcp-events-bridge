@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
+import type { CallbackTransport } from '../../src/core/callback.js';
 import { HookdeckClient } from '../../src/core/hookdeck.js';
 import { MemoryStore } from '../../src/core/memory-store.js';
 import { github, resend, source } from '../../src/sources.js';
@@ -51,8 +52,8 @@ export const PLACEHOLDER_ENV: Record<string, string> = {
 };
 
 export class OfflineError extends Error {
-  constructor(method: string) {
-    super(`This is the bridge's introspection build (scripts/glama), with no Hookdeck Event Gateway project, so ${method} isn't available. Run mcp-events-bridge serve to use the bridge.`);
+  constructor() {
+    super("This is the bridge's introspection build (scripts/glama), with no Hookdeck Event Gateway project, so this request can't run. Run mcp-events-bridge serve to use the bridge.");
   }
 }
 
@@ -63,11 +64,17 @@ export class OfflineError extends Error {
 export function offlineHookdeck(): HookdeckClient {
   const stub: Record<string, unknown> = {};
   for (const method of Object.getOwnPropertyNames(HookdeckClient.prototype)) {
-    if (method !== 'constructor') stub[method] = () => Promise.reject(new OfflineError(method));
+    if (method !== 'constructor') stub[method] = () => Promise.reject(new OfflineError());
   }
   stub.listAllConnections = async () => [];
   return Object.setPrototypeOf(stub, HookdeckClient.prototype) as HookdeckClient;
 }
+
+/** events/subscribe checks and challenges the caller's callback URL; here both reject, so it fails without the network. */
+const offlineCallbacks: CallbackTransport = {
+  assertPublicHost: () => Promise.reject(new OfflineError()),
+  post: () => Promise.reject(new OfflineError()),
+};
 
 export async function introspectionServer() {
   const version = (JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
@@ -77,12 +84,22 @@ export async function introspectionServer() {
     store: new MemoryStore(),
     // The callback URL tools are offered by a bridge on the agent's machine (CLI inbound), so list them too.
     localAgents: true,
+    subscriptionOverrides: { transport: offlineCallbacks, verify: () => Promise.reject(new OfflineError()) },
     version,
-    log,
+    // The bridge's startup line says it loaded subscriptions "from Event Gateway"; here they come from an empty store.
+    log: (message) => log(message.replace(/ from Event Gateway/, ' (introspection build: an empty in-memory store)')),
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+const isMain = () => {
+  try {
+    return !!process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href;
+  } catch {
+    return false; // argv[1] isn't a file (for example a path without its extension): not run directly.
+  }
+};
+
+if (isMain()) {
   const bridge = await introspectionServer();
   // The HTTP listener is never started, and the sweeper timer is unref'd, so stdin alone keeps the process alive.
   serveStdio(() => bridge.mcpServer(OWNER), { onerror: (error) => log(`stdio error: ${error.message}`) });
