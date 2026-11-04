@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **The official MCP Registry:** each stable release publishes `server.json` to the registry as `io.github.hookdeck/mcp-events-bridge`, and `package.json` has the matching `mcpName`.
+
 ### Changed
 
 - **Docs:** the README's status line calls the bridge an open-source project, and says Hookdeck is building the same thing into Event Gateway ([#71](https://github.com/hookdeck/mcp-events-bridge/pull/71)).
