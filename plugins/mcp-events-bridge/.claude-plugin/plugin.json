@@ -7,7 +7,7 @@
   "homepage": "https://github.com/hookdeck/mcp-events-bridge/blob/main/skills/mcp-events-bridge/references/claude-code.md",
   "repository": "https://github.com/hookdeck/mcp-events-bridge",
   "license": "MIT",
-  "privacyPolicyUrl": "https://hookdeck.com/privacy",
+  "privacyPolicyUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/plugins/mcp-events-bridge/README.md#privacy",
   "supportUrl": "https://github.com/hookdeck/mcp-events-bridge/issues",
   "keywords": ["mcp", "events", "webhooks", "hookdeck"],
   "userConfig": {
