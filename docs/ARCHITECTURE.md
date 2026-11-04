@@ -392,7 +392,7 @@ Built 9 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), [#4
 - A **monitor** (`when: always`) runs `watch --store "${CLAUDE_PLUGIN_DATA}" --project "${CLAUDE_PROJECT_DIR}"` for the whole session, so each project has its own watch list, and a new session first delivers what happened since the last one.
 - A **skill** (`watch`) turns "watch…", "stop watching…" and "what am I watching?" into `events-bridge watches …` (pre-approved with `allowed-tools`), and says to read a cut-off line with `get_event`: notifications shorten long lines (seen at around 500 characters).
 - The bridge as an **MCP server**, `url: ${user_config.mcp_url}`, a sensitive option kept in secure storage. Monitor commands can't read user config, so a `SessionStart` hook copies it to `${CLAUDE_PLUGIN_DATA}/mcp-url` (mode 0600) for `watch`.
-- `bin/events-bridge` runs `npx @hookdeck/mcp-events-bridge@<version>`, or `MCP_EVENTS_BRIDGE_CLI` for a checkout.
+- `bin/events-bridge` runs `npx -y @hookdeck/mcp-events-bridge@<version>`, written out in full so Claude's plugin directory can check the pin. (Until 0.8.1, `MCP_EVENTS_BRIDGE_CLI` could run a checkout instead; the directory refuses a computed command.)
 
 Limits: plugin monitors run only in interactive sessions (not `claude -p`); two sessions in one project each hear every event and share the saved cursors; events from more than 24 hours before a session starts are skipped.
 

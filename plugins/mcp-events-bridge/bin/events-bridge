@@ -1,11 +1,10 @@
 #!/bin/sh
-# The bridge's CLI, for the plugin's monitor and skill. MCP_EVENTS_BRIDGE_CLI runs another build,
-# such as a checkout: MCP_EVENTS_BRIDGE_CLI="npx tsx /path/to/mcp-events-bridge/src/cli.ts".
+# The bridge's CLI, for the plugin's monitor and skill: the published package at the plugin's version, named in full
+# so Claude's plugin directory can see the pin. To run another build, such as a checkout, run its CLI directly
+# (npx tsx /path/to/mcp-events-bridge/src/cli.ts watch ...) instead of the plugin's monitor.
 # The published CLI runs from an empty directory: in a project that is this package (the bridge's own repository),
 # npx would run the project instead, and fail with "mcp-events-bridge: command not found". The monitor and the skill
 # pass absolute paths, so the directory doesn't change what they read.
-if [ -z "$MCP_EVENTS_BRIDGE_CLI" ]; then
-  dir="${TMPDIR:-/tmp}/mcp-events-bridge-plugin"
-  mkdir -p "$dir" && cd "$dir" || exit 1
-fi
-exec ${MCP_EVENTS_BRIDGE_CLI:-npx -y @hookdeck/mcp-events-bridge@0.8.1} "$@"
+dir="${TMPDIR:-/tmp}/mcp-events-bridge-plugin"
+mkdir -p "$dir" && cd "$dir" || exit 1
+exec npx -y @hookdeck/mcp-events-bridge@0.8.1 "$@"

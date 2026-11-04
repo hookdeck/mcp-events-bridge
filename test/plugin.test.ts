@@ -14,7 +14,7 @@ describe('Claude Code plugin', () => {
   });
 
   it('runs the package version of the CLI', () => {
-    expect(fs.readFileSync('plugins/mcp-events-bridge/bin/events-bridge', 'utf8')).toContain(`@hookdeck/mcp-events-bridge@${version}}`);
+    expect(fs.readFileSync('plugins/mcp-events-bridge/bin/events-bridge', 'utf8')).toContain(`exec npx -y @hookdeck/mcp-events-bridge@${version} "$@"`);
   });
 });
 
