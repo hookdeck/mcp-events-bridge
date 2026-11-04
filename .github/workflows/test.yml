@@ -21,3 +21,15 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The registry's own validator, which `mcp-publisher validate` calls, so a bad server.json
+  # fails here rather than after npm has published a release.
+  mcp-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate server.json
+        run: |
+          curl --fail-with-body --silent --show-error -X POST https://registry.modelcontextprotocol.io/v0/validate \
+            -H 'Content-Type: application/json' --data-binary @server.json | tee result.json
+          node -e "process.exit(require('./result.json').valid ? 0 : 1)"
