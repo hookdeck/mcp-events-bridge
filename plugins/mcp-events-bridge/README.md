@@ -59,4 +59,4 @@ This section is the plugin's privacy policy: what it reads, keeps and sends.
 
 ## License
 
-MIT. Made by [Hookdeck](https://hookdeck.com).
+MIT. Made by [Hookdeck](https://hookdeck.com). The [MIT license](https://github.com/hookdeck/mcp-events-bridge/blob/main/LICENSE) is the plugin's terms of use. Your bridge's use of Hookdeck Event Gateway is under Hookdeck's [Terms of Use](https://hookdeck.com/terms).
