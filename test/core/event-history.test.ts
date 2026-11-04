@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Catalog } from '../../src/core/catalog.js';
 import { defineConfig, resolveConfig } from '../../src/core/config.js';
-import { EventHistory } from '../../src/core/event-history.js';
+import { EventHistory, RECENT_MAX_REQUESTS_PER_SOURCE, RECENT_PAGE_SIZE } from '../../src/core/event-history.js';
 import type { HookdeckClient } from '../../src/core/hookdeck.js';
 import { source } from '../../src/sources.js';
 
@@ -64,6 +64,71 @@ describe('EventHistory.recent', () => {
 
     expect((await history.recent({ name: 'broker_a.order.filled' }))[0]?.timestamp).toBe('2026-10-08T10:32:08.100Z');
     expect((await history.get('broker_a.order.filled', '1'))?.timestamp).toBe('2026-10-08T10:32:08.100Z');
+  });
+});
+
+describe('EventHistory.recent paging', () => {
+  const twoEvents = source({
+    type: 'webhook',
+    id: 'broker_a',
+    verification: { type: 'hmac', algorithm: 'sha256', encoding: 'hex', header: 'x-signature', secret: 'a-long-enough-secret' },
+    events: ['order.filled', 'order.placed'],
+    eventType: { field: 'type' },
+    eventId: { header: 'x-delivery-id' },
+  });
+
+  /**
+   * A source with `total` requests, newest first, served a page per call with a cursor. Every `every`th request is an
+   * order.filled and the rest are order.placed. Records each call's cursor.
+   */
+  function pagedHistory(total: number, every: number) {
+    const config = resolveConfig(defineConfig({ sources: [twoEvents] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+    const calls: (string | undefined)[] = [];
+    const request = (i: number) => ({
+      id: `req_${i}`,
+      created_at: new Date(Date.UTC(2026, 10, 4) - i * 1000).toISOString(),
+      verified: true,
+      rejection_cause: null,
+      data: { headers: { 'x-delivery-id': String(i) }, body: { type: i % every === 0 ? 'order.filled' : 'order.placed' } },
+    });
+    const hookdeck = {
+      listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }),
+      listRequests: async ({ limit, next }: { limit: number; next?: string }) => {
+        calls.push(next);
+        const start = next ? Number(next) : 0;
+        const end = Math.min(start + limit, total);
+        const models = Array.from({ length: end - start }, (_, k) => request(start + k));
+        return { models, pagination: { order_by: 'created_at', dir: 'desc', next: end < total ? String(end) : undefined } };
+      },
+    } as unknown as HookdeckClient;
+    return { history: new EventHistory({ hookdeck, catalog: new Catalog(config.sources), providers: config.sources }), calls };
+  }
+
+  it('reads further pages until it has limit events of the name', async () => {
+    // One request in 50 is an order.filled, 2 a page, so 5 of them take 3 pages.
+    const { history, calls } = pagedHistory(1000, 50);
+    const events = await history.recent({ name: 'broker_a.order.filled', limit: 5 });
+    expect(events.map((e) => e.eventId)).toEqual(['0', '50', '100', '150', '200']);
+    expect(calls).toEqual([undefined, '100', '200']);
+  });
+
+  it('stops after RECENT_MAX_REQUESTS_PER_SOURCE requests, and returns what it found', async () => {
+    const { history, calls } = pagedHistory(5000, 200);
+    const events = await history.recent({ name: 'broker_a.order.filled', limit: 20 });
+    expect(calls).toHaveLength(RECENT_MAX_REQUESTS_PER_SOURCE / RECENT_PAGE_SIZE);
+    expect(events.map((e) => e.eventId)).toEqual(['0', '200', '400']);
+  });
+
+  it("stops when the source's requests run out", async () => {
+    const { history, calls } = pagedHistory(150, 50);
+    expect((await history.recent({ name: 'broker_a.order.filled', limit: 10 })).map((e) => e.eventId)).toEqual(['0', '50', '100']);
+    expect(calls).toEqual([undefined, '100']);
+  });
+
+  it('reads one page when the first has limit events', async () => {
+    const { history, calls } = pagedHistory(1000, 50);
+    expect(await history.recent({ limit: 20 })).toHaveLength(20);
+    expect(calls).toEqual([undefined]);
   });
 });
 

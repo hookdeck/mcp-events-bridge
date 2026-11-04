@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- **`list_events` returns `limit` events when the source has them:** it reads further pages of each source's requests until it has `limit` events, or has read 500 of the source's requests. It read one page of about twice `limit`, so with `name` on a busy source, where few requests are that event, it returned fewer than existed, or none. Its description says so, and no longer suggests `since` to reach further back (`since` only stops the listing earlier).
 - **Docs:** an open ChatGPT chat shows a delivered event on its own, about a minute after it arrives (seen on 28 Oct, in a focused tab); the README and the skill said it needed a reload ([#75](https://github.com/hookdeck/mcp-events-bridge/pull/75)).
 
 ## 0.8.1 (2026-10-28)

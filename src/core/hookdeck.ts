@@ -21,11 +21,17 @@ export async function allPages<T>(page: (next: string | undefined) => Promise<Pa
   for (let i = 0; i < maxPages; i++) {
     const result = await page(next);
     models.push(...result.models);
-    const cursor = result.pagination?.next;
-    next = cursor && result.models.length > 0 ? (cursor.startsWith('http') ? (new URL(cursor).searchParams.get('next') ?? undefined) : cursor) : undefined;
+    next = nextCursor(result);
     if (!next) return { models, complete: true };
   }
   return { models, complete: false };
+}
+
+/** A listing's next-page cursor (the API gives a URL or the bare cursor), or undefined on the last page. */
+export function nextCursor(page: Page<unknown>): string | undefined {
+  const cursor = page.pagination?.next;
+  if (!cursor || page.models.length === 0) return undefined;
+  return cursor.startsWith('http') ? (new URL(cursor).searchParams.get('next') ?? undefined) : cursor;
 }
 
 export interface HookdeckRequest {
