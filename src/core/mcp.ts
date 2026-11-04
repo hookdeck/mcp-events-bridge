@@ -41,11 +41,14 @@ export function buildMcpServer(deps: {
     'get_event',
     {
       description:
-        'Get one event that happened, by its name and eventId (both are in every MCP Events delivery and in list_events), read from Hookdeck Event Gateway.',
+        'Get one past event by its name and eventId, as an MCP Events delivery or list_events gives them, read from Hookdeck Event Gateway. ' +
+        'Returns the eventId, name, timestamp and data, the same as its delivery. ' +
+        'Use it to look an event up again by id; to browse past events, use list_events, and for new ones, wait_for_event or poll_events. ' +
+        "An eventId Event Gateway doesn't have (or no longer keeps) is an error, and so is an event whose source can't be searched by id: the error says to use list_events.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().describe('The event name, such as resend.email.received'),
-        eventId: z.string(),
+        eventId: z.string().describe("The event's id from a delivery or list_events. It's the service's own id (such as a Resend svix-id), so it's unique only together with name."),
       }),
     },
     async ({ name, eventId }) => {
@@ -61,12 +64,16 @@ export function buildMcpServer(deps: {
     'list_events',
     {
       description:
-        'List events that happened, newest first, optionally for one event name and since a time (ISO 8601), read from Hookdeck Event Gateway. For the kinds of events you can subscribe to, see events/list.',
+        'List past events, newest first, from every source or for one event name, read from Hookdeck Event Gateway. ' +
+        'Each has the eventId, name, timestamp and data its delivery has; an empty list means none matched. ' +
+        'Use it to look back at what already happened; to follow new events, use wait_for_event or poll_events, and for one event you have the id of, get_event. ' +
+        "There's no paging: it returns at most limit events, so narrow with since or name. Events Event Gateway no longer keeps aren't listed. " +
+        'For the event names, see list_sources or events/list.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        name: z.string().describe('An event name, such as resend.email.received').optional(),
-        since: z.string().optional(),
-        limit: z.number().int().min(1).max(100).optional(),
+        name: z.string().describe('An event name, such as resend.email.received. Omit for every source.').optional(),
+        since: z.string().describe('Only events Event Gateway received at or after this time, in ISO 8601, e.g. 2026-11-04T09:00:00Z.').optional(),
+        limit: z.number().int().min(1).max(100).optional().describe('At most this many events (default 20, at most 100).'),
       }),
     },
     async (args) => {
@@ -78,7 +85,10 @@ export function buildMcpServer(deps: {
   server.registerTool(
     'list_sources',
     {
-      description: 'List the configured event sources (the services events come from), their types, their events, and how many subscriptions each has.',
+      description:
+        'List the configured event sources (the services events come from): each one\'s id, type, event names, and how many subscriptions it has. ' +
+        'Use it first, to find the event names that list_events, get_event, wait_for_event and poll_events take. ' +
+        "For each event's description and filters, see events/list (an MCP Events method, not a tool); for the events themselves, list_events.",
       // Answered from the bridge's config and loaded subscriptions, without calling Event Gateway.
       annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({}),
