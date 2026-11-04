@@ -42,6 +42,7 @@ export function buildMcpServer(deps: {
     {
       description:
         'Get one event that happened, by its name and eventId (both are in every MCP Events delivery and in list_events), read from Hookdeck Event Gateway.',
+      annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().describe('The event name, such as resend.email.received'),
         eventId: z.string(),
@@ -61,6 +62,7 @@ export function buildMcpServer(deps: {
     {
       description:
         'List events that happened, newest first, optionally for one event name and since a time (ISO 8601), read from Hookdeck Event Gateway. For the kinds of events you can subscribe to, see events/list.',
+      annotations: { readOnlyHint: true },
       inputSchema: z.object({
         name: z.string().describe('An event name, such as resend.email.received').optional(),
         since: z.string().optional(),
@@ -77,6 +79,7 @@ export function buildMcpServer(deps: {
     'list_sources',
     {
       description: 'List the configured event sources (the services events come from), their types, their events, and how many subscriptions each has.',
+      annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },
     async () => json({ sources: deps.sources() }),
@@ -106,6 +109,7 @@ export function buildMcpServer(deps: {
           'Call it first without a cursor to start from now, then call it again with the cursor it returned: at once when hasMore is true, otherwise after nextPollMs. ' +
           'Events can repeat: dedupe by eventId. truncated: true means some events were skipped (maxAgeMs, or older than Event Gateway keeps). ' +
           'To wait for the next event in one call instead, use wait_for_event. For past events, use list_events.',
+        annotations: { readOnlyHint: true },
         inputSchema: z.object({
           ...pollInput,
           maxAgeMs: z.number().int().min(0).optional().describe('With a cursor, skip events older than this many milliseconds.'),
@@ -122,6 +126,7 @@ export function buildMcpServer(deps: {
           `Wait for the next events after your cursor, returning as soon as there are some, or with none after timeoutMs (default ${WAIT_DEFAULT_MS / 1000} s, at most ${WAIT_MAX_MS / 1000} s). ` +
           'Without a cursor, waits for events from now on. Call it again with the cursor it returns to keep waiting; dedupe by eventId. ' +
           'Uses the same cursor as poll_events and events/poll.',
+        annotations: { readOnlyHint: true },
         inputSchema: z.object({
           ...pollInput,
           timeoutMs: z.number().int().min(1000).max(WAIT_MAX_MS).optional().describe(`How long to wait, in milliseconds (default ${WAIT_DEFAULT_MS}).`),
@@ -143,26 +148,27 @@ export function buildMcpServer(deps: {
 
   const callbacks = deps.callbacks;
   if (callbacks) {
-    const agent = z.string().describe('Your agent or machine name (letters, digits, _), e.g. "laptop". Names the shared Event Gateway destination.');
+    const agent = z.string().describe('Your agent or machine name (up to 40 letters, digits or _), e.g. "laptop". It names an Event Gateway destination shared by its URLs, so keep it unique in the Hookdeck project.');
     const describe = (record: CallbackRecord) => ({ name: record.name, url: record.url, port: record.port, path: record.path, passThrough: record.passThrough });
 
     server.registerTool(
       'create_callback_url',
       {
         description:
-          'For an agent on this machine without a public URL: create a public callback URL for MCP Events webhook delivery, then call events/subscribe with it. ' +
-          'Hookdeck Event Gateway receives deliveries at the URL, and the bridge forwards them to http://localhost:<port><path> through the Hookdeck CLI. ' +
-          'With secret (the whsec_ secret you subscribe with), Event Gateway answers the subscribe challenge and only accepts deliveries signed with it; one URL holds one secret, so to rotate, create a new URL. ' +
-          'Without secret, the URL is pass-through: Event Gateway verifies nothing, so your receiver must check every signature. Use it when you use a different secret per subscription under one base URL. ' +
-          'Deliveries arrive signed with your subscription secret, all on one local port and path; route them by X-MCP-Subscription-Id and dedupe by webhook-id. ' +
-          'Deliveries missed while your agent or the forwarding was down are retried automatically, freshly signed. ' +
-          'A URL no subscription has used for an hour is deleted.',
+          'Create a public callback URL for MCP Events webhook delivery, for an agent on this machine with no public URL of its own, then pass it to events/subscribe. ' +
+          'Deliveries reach Hookdeck Event Gateway at the URL, and the bridge forwards them to http://localhost:<port><path>. ' +
+          'With secret, Event Gateway answers the subscribe challenge and accepts only deliveries signed with it. ' +
+          'Without it, the URL is pass-through and your receiver must verify every delivery: use that when you subscribe with a different secret per path under one URL. ' +
+          'The same agent and name return the existing URL. A URL no subscription uses for an hour is deleted. ' +
+          'Not needed if your agent has a public URL or polls (wait_for_event, poll_events).',
+        // Creates an Event Gateway source and never deletes one; a repeat call returns the same URL.
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
         inputSchema: z.object({
           agent,
-          name: z.string().describe('A name for this URL (letters, digits, _), e.g. "email_from_alice".'),
-          port: z.number().int().min(1).max(65535).optional().describe(`Local port your agent receives deliveries on. Set by your first URL (default ${DEFAULT_AGENT_PORT}) and shared by all of them.`),
-          path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by your first URL (default ${DEFAULT_CALLBACK_PATH}) and shared by all of them.`),
-          secret: z.string().optional().describe('The whsec_ secret you will subscribe with. Omit for a pass-through URL.'),
+          name: z.string().describe('A name for this URL (up to 40 letters, digits or _), e.g. "email_from_alice". Reusing a name returns that URL.'),
+          port: z.number().int().min(1).max(65535).optional().describe(`Local port your agent receives deliveries on. Set by the agent's first URL (default ${DEFAULT_AGENT_PORT}) and shared by the rest.`),
+          path: z.string().optional().describe(`Local path deliveries are forwarded to. Set by the agent's first URL (default ${DEFAULT_CALLBACK_PATH}) and shared by the rest.`),
+          secret: z.string().optional().describe('The whsec_ secret you will subscribe with. One URL holds one secret: to rotate, create a URL with a new name. Omit for a pass-through URL.'),
         }),
       },
       async ({ agent: name, name: urlName, port, path, secret }) => {
@@ -177,7 +183,12 @@ export function buildMcpServer(deps: {
 
     server.registerTool(
       'list_callback_urls',
-      { description: "List an agent's callback URLs.", inputSchema: z.object({ agent }) },
+      {
+        description:
+          "List the callback URLs an agent created with create_callback_url, with each one's local port and path and whether it's pass-through. Check here before creating a URL.",
+        annotations: { readOnlyHint: true },
+        inputSchema: z.object({ agent }),
+      },
       async ({ agent: name }) => json({ callbackUrls: callbacks.forAgent(name).map(describe) }),
     );
   }
