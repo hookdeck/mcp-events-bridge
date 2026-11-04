@@ -243,6 +243,33 @@ describe('bridge server', () => {
       expect(JSON.stringify(result)).not.toContain('whsec_');
       const listed = (await client.callTool({ name: 'list_callback_urls', arguments: { agent: 'laptop' } })) as { structuredContent?: { callbackUrls: unknown[] } };
       expect(listed.structuredContent?.callbackUrls).toEqual([result.structuredContent]);
+      // Idempotent, as its annotations say: the same agent, name and secret return the same URL.
+      const again = (await client.callTool({ name: 'create_callback_url', arguments: { agent: 'laptop', name: 'email', secret } })) as { structuredContent?: Record<string, unknown> };
+      expect(again.structuredContent).toEqual(result.structuredContent);
+      // And a port the URL doesn't forward to is a tool error the model can read, not the old URL.
+      const moved = (await client.callTool({ name: 'create_callback_url', arguments: { agent: 'laptop', name: 'email', port: 5000, secret } })) as { isError?: boolean; content: Array<{ text?: string }> };
+      expect(moved.isError).toBe(true);
+      expect(moved.content[0]?.text).toMatch(/forwards to port 4000/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('annotates every tool: all read-only but create_callback_url, which is idempotent and not destructive', async () => {
+    const { port } = await startBridge();
+    const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
+    try {
+      const annotations = Object.fromEntries((await client.listTools()).tools.map((t) => [t.name, t.annotations]));
+      expect(annotations).toEqual({
+        get_event: { readOnlyHint: true },
+        list_events: { readOnlyHint: true },
+        list_sources: { readOnlyHint: true, openWorldHint: false },
+        poll_events: { readOnlyHint: true },
+        wait_for_event: { readOnlyHint: true },
+        create_callback_url: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+        list_callback_urls: { readOnlyHint: true, openWorldHint: false },
+      });
     } finally {
       await client.close();
     }

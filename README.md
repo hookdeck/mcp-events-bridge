@@ -385,7 +385,8 @@ Each `source()`'s credentials, named as its `env()` references name them. `sourc
 - `poll_events(name, arguments?, cursor?, maxAgeMs?, maxEvents?)` and `wait_for_event(name, arguments?, cursor?, timeoutMs?)`: the same polling as tools, for MCP clients without MCP Events support (see [Polling](#polling)).
 - `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (`events/list` is the catalog of events you can subscribe to). `get_event` takes the event's name as well as its id, since an id is the service's own and two sources can share one.
 - `list_sources()`: configured sources, their types and events, and their subscriptions.
-- `create_callback_url(agent, name, port?, path?, secret?)` and `list_callback_urls(agent)`: public callback URLs for agents on the same machine as a local bridge (see [Local agents](#local-agents)). Not offered by a deployed bridge.
+- `create_callback_url(agent, name, port?, path?, secret?)` and `list_callback_urls(agent)`: public callback URLs for agents on the same machine as a local bridge (see [Local agents](#local-agents)). Calling again with the same `agent`, `name` and secret returns the existing URL; a different secret, port or path for that name is an error. Not offered by a deployed bridge.
+- Every tool is annotated `readOnlyHint: true` except `create_callback_url`, which is `idempotentHint: true` and `destructiveHint: false`. `list_sources` and `list_callback_urls` are also `openWorldHint: false`: they answer from the bridge's own state.
 
 ## Polling
 
