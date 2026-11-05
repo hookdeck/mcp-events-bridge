@@ -12,6 +12,16 @@ import { providerSourceName } from './names.js';
 export const RECENT_PAGE_SIZE = 100;
 export const RECENT_MAX_REQUESTS_PER_SOURCE = 500;
 
+/**
+ * Whether Event Gateway kept a request as a provider's event: verified, and either accepted or rejected only because
+ * its source had no connection. A source has a connection per subscription, so with no subscriptions every request is
+ * rejected as `NO_CONNECTION` (the sender still gets `200`, and the request is kept, verified, with its data); poll and
+ * the history must still see them. Any other rejection, such as `VERIFICATION_FAILED`, isn't an event.
+ */
+export function isEventRequest(request: Pick<HookdeckRequest, 'verified' | 'rejection_cause'>): boolean {
+  return !!request.verified && (!request.rejection_cause || request.rejection_cause === 'NO_CONNECTION');
+}
+
 export interface PastEvent {
   eventId: string;
   name: string;
@@ -37,7 +47,7 @@ export class EventHistory {
 
   /** Maps a stored request to its MCP event, or undefined if it isn't a verified, enabled event. */
   toEvent(providerId: string, request: HookdeckRequest): PastEvent | undefined {
-    if (!request.verified || request.rejection_cause || !request.data) return undefined;
+    if (!isEventRequest(request) || !request.data) return undefined;
     const headers = Object.fromEntries(Object.entries(request.data.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
     const req = { headers, body: request.data.body, receivedAt: request.created_at };
     const entry = this.deps.catalog.forProvider(providerId).find((e) => e.runtime.matches(req));
