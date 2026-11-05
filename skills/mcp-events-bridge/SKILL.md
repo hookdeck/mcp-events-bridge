@@ -93,6 +93,7 @@ Every event is named **`{source id}.{event}`**: the source `id` (by default its 
   - `wait_for_event` (`name`, `arguments`, `cursor`): waits up to 45 s and returns as soon as there are events. Call it again with the `cursor` it returned to keep waiting.
   - `poll_events` (same, plus `maxEvents`, `maxAgeMs`): returns at once; call again after `nextPollMs`, or at once when `hasMore` is true.
   - Without a cursor, both start from now. Events can repeat: dedupe by `eventId`. For events that already happened, use `list_events` and `get_event`.
+  - Event names and filters: the `list_sources` tool. Its `filters` maps each event name to the arguments it takes, each with a type and description (for GitHub, `repository`, `actions` as a list such as `["opened"]`, and `sender`). Arguments that don't match are a tool error that names the wrong or unknown one and lists the event's arguments, for example `arguments do not match the inputSchema: unknown argument "action". github.issues takes repository (string), actions (string[]), sender (string)`.
 - **Claude Code, between prompts:** the poll tools only wait while Claude is working on a request. To be told about events while it's idle, the user installs the plugin, `/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge` (it asks for the MCP URL), then says "watch … for …"; see [references/claude-code.md](references/claude-code.md), section 3. Other agents that wake on a background command's output can run `npx @hookdeck/mcp-events-bridge watch <event...> [--filter key=value]`, which prints one JSON line per event.
 - **Clients that implement MCP Events poll mode** call `events/poll` (same arguments and cursor) instead of subscribing.
 
@@ -102,7 +103,7 @@ Every event is named **`{source id}.{event}`**: the source `id` (by default its 
 2. Trigger a real event: send an email to the Resend receiving address, open a GitHub issue, or have the sender post one.
 3. The agent gets it. Events don't pass through the bridge, so `serve` logs nothing for it, except for a local agent: `[listen] agent <agent>: ... POST http://localhost:<port><path>`.
 4. In the Event Gateway dashboard, the subscription's connection, `mcp-sub-<id>` on `bridge-<source id>`, shows each request: delivered, with its attempts, or `FILTERED` when the subscription's filter or event type didn't match.
-5. The `list_sources` tool shows each source's type, events, and how many subscriptions each has.
+5. The `list_sources` tool shows each source's type, events, each event's filters, and how many subscriptions each has.
 
 ## Troubleshooting
 

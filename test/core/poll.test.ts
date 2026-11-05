@@ -270,7 +270,11 @@ describe('poll mode: cursor', () => {
     await expect(service.poll({ name: NAME, arguments: { symbol: 'MSFT' }, cursor: start.cursor })).rejects.toMatchObject({ code: EventsErrorCode.InvalidParams });
     await expect(service.poll({ name: NAME, cursor: 'not-a-cursor' })).rejects.toMatchObject({ code: EventsErrorCode.InvalidParams });
     await expect(service.poll({ name: 'nope.order.filled' })).rejects.toMatchObject({ code: EventsErrorCode.NotFound });
-    await expect(service.poll({ name: NAME, arguments: { side: 'buy' } })).rejects.toMatchObject({ code: EventsErrorCode.InvalidParams });
+    // An unknown argument is refused, and the error names it and the arguments the event takes.
+    await expect(service.poll({ name: NAME, arguments: { side: 'buy' } })).rejects.toMatchObject({
+      code: EventsErrorCode.InvalidParams,
+      data: { detail: 'unknown argument "side". fills.order.filled takes symbol (string | number | boolean)' },
+    });
     // maxEvents above the limit is lowered, not refused.
     await expect(service.poll({ name: NAME, maxEvents: 1000 })).resolves.toMatchObject({ resultType: 'complete' });
   });

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-json.js';
-import type { Catalog } from './catalog.js';
+import { argumentsError, type Catalog } from './catalog.js';
 import { internalError, invalidParams, notFound } from './errors.js';
 import { matchesFilter } from './filter.js';
 import { isEventRequest, type EventHistory, type PastEvent } from './event-history.js';
@@ -263,7 +263,7 @@ export class PollService {
     try {
       args = entry.event.parseArguments(rawArgs);
     } catch (error) {
-      throw invalidParams('arguments do not match the inputSchema', { detail: (error as Error).message });
+      throw argumentsError(entry.name, entry.event, error);
     }
     const { cursor, maxAgeMs, maxEvents } = params;
     if (cursor !== undefined && cursor !== null && typeof cursor !== 'string') throw invalidParams('cursor must be a string or null', { field: 'cursor' });

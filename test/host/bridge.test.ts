@@ -169,14 +169,29 @@ describe('bridge server', () => {
     expect(typeof subscriber.events[0]!.cursor).toBe('string');
   });
 
-  it('lists sources with their MCP event names and how many subscriptions each has', async () => {
+  it("lists sources with their MCP event names, each event's filters, and how many subscriptions each has", async () => {
     const { port } = await startBridge();
     await startSubscriber(port);
     const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
     try {
       expect(client.getServerVersion()).toMatchObject({ name: 'mcp-events-bridge', version: '9.9.9' });
-      const expected = [{ id: 'resend', type: 'resend', events: ['resend.email.received'], subscriptions: 1 }];
+      // `events` stays a list of names (the plugin's watch skill and other clients read it); `filters` is by event name,
+      // for clients with tools only, which can't call events/list for the inputSchema.
+      const expected = [
+        {
+          id: 'resend',
+          type: 'resend',
+          events: ['resend.email.received'],
+          filters: {
+            'resend.email.received': {
+              from: { type: 'string', description: expect.stringMatching(/^Only emails from this sender address\./) },
+              to: { type: 'string', description: 'Only emails sent to this address.' },
+            },
+          },
+          subscriptions: 1,
+        },
+      ];
       const result = (await client.callTool({ name: 'list_sources', arguments: {} })) as { structuredContent?: { sources: unknown[] } };
       expect(result.structuredContent?.sources).toEqual(expected);
       // The old name, removed in 0.8.0.
@@ -201,6 +216,8 @@ describe('bridge server', () => {
       const listed = await call('list_events', { name: 'email.received' });
       expect(listed).toMatchObject({ isError: true });
       expect(listed.content?.[0]?.text).toContain('Unknown event name email.received');
+      // A tool, not events/list, which a client with tools only can't call.
+      expect(listed.content?.[0]?.text).toContain('list_sources has the names');
     } finally {
       await client.close();
     }
@@ -359,6 +376,21 @@ describe('poll mode over MCP', () => {
       // Errors: NotFound over the protocol; a readable tool error for the model.
       await expect(poll({ name: 'email.received', arguments: {}, cursor: null })).rejects.toMatchObject({ code: -32023 });
       expect((await client.callTool({ name: 'poll_events', arguments: { name: 'email.received' } })).isError).toBe(true);
+
+      // Arguments that don't match: the tool error says which argument is wrong and which the event takes (it used to
+      // be only "arguments do not match the inputSchema"). The protocol error has the same in data.detail.
+      const takes = 'resend.email.received takes from (string), to (string)';
+      type ToolError = { isError?: boolean; content?: Array<{ text?: string }> };
+      for (const tool of ['poll_events', 'wait_for_event']) {
+        const unknownKey = (await client.callTool({ name: tool, arguments: { name: 'resend.email.received', arguments: { sender: 'a@example.com' }, cursor: next.cursor } })) as ToolError;
+        expect(unknownKey).toMatchObject({ isError: true, content: [{ text: `arguments do not match the inputSchema: unknown argument "sender". ${takes}` }] });
+        const wrongType = (await client.callTool({ name: tool, arguments: { name: 'resend.email.received', arguments: { from: 42 } } })) as ToolError;
+        expect(wrongType).toMatchObject({ isError: true, content: [{ text: `arguments do not match the inputSchema: from: Invalid input: expected string, received number. ${takes}` }] });
+      }
+      await expect(poll({ name: 'resend.email.received', arguments: { sender: 'a@example.com' }, cursor: null })).rejects.toMatchObject({
+        code: -32602,
+        data: { detail: `unknown argument "sender". ${takes}` },
+      });
 
       // Push isn't offered: events/stream is Unsupported for a known event, NotFound for an unknown one.
       const stream = (name: string) => client.request({ method: 'events/stream', params: { name, arguments: {} } } as never, anyResult);

@@ -1,5 +1,5 @@
 import { CallbackUrlError, parseCallbackUrl, verifyEndpoint, type CallbackTransport, type VerificationResult, type VerifyEndpointOptions } from './callback.js';
-import type { Catalog } from './catalog.js';
+import { argumentsError, type Catalog } from './catalog.js';
 import type { SubscriptionSettings } from './config.js';
 import { callbackEndpointError, forbidden, internalError, invalidParams, notFound, resourceExhausted, unsupported, type CallbackFailureReason } from './errors.js';
 import { deriveSubscriptionId, verificationKey } from './identity.js';
@@ -132,7 +132,7 @@ export class SubscriptionService {
     try {
       args = event.parseArguments(rawArgs);
     } catch (error) {
-      throw invalidParams('arguments do not match the inputSchema', { detail: (error as Error).message });
+      throw argumentsError(key.name, event, error);
     }
     if (!isValidWebhookSecret(delivery.secret)) {
       throw invalidParams('delivery.secret must be whsec_ followed by base64 of 24 to 64 bytes', { field: 'delivery.secret' });
