@@ -24,7 +24,7 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  * The bridge isn't in the data path: it takes the subscription, sends the
  * challenge and manages the connection.
  *
- * Poll mode is checked first, always, before any test subscriber subscribes: the
+ * Poll mode is checked first, always, before any test subscriber makes a webhook subscription: the
  * setup new users make, and the path Claude Code, Codex and Cursor use. With no
  * subscriptions the service's source has no connections, so Event Gateway rejects
  * every request as NO_CONNECTION while keeping it. An MCP client takes cursors
@@ -33,7 +33,7 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  * don't match mustn't, and an unknown argument is a tool error. The checks record
  * that the source had no connections and that Event Gateway rejected the request
  * as NO_CONNECTION, and fail if it had connections (leftover subscriptions in a
- * shared project), since then the no-subscriptions path wasn't exercised.
+ * shared project), since then the no-webhook-subscription path wasn't exercised.
  *
  * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_API_KEY
  * (this repo's config always includes Resend), RESEND_INBOUND_ADDRESS and
@@ -310,7 +310,7 @@ async function main() {
   }
   const mcpUrl = `${bridgeUrl}/mcp/${config.auth.mcpSecret}`;
 
-  // 1b. Poll mode, before anything subscribes, so the source has no subscription connections.
+  // 1b. Poll mode, before any webhook subscription, so the source has no connections.
   await pollChecks({ hookdeck, mcpUrl, events });
 
   // 2. Test subscribers, each with its own receiver and callback (an MCP Events source, or a tunnel).
@@ -464,10 +464,10 @@ async function main() {
 }
 
 /**
- * Poll mode on a source with no subscriptions: the setup new users make, and the path Claude Code, Codex and Cursor
+ * Poll mode on a source with no webhook subscriptions: the setup new users make, and the path Claude Code, Codex and Cursor
  * use. A source has a connection only per subscription, so with none Event Gateway rejects every request as
  * NO_CONNECTION (the sender still gets 200, and the request is kept); 0.8.0 to 0.9.0 returned nothing then. Runs
- * before any test subscriber subscribes, and records whether the source really had no connections and the request
+ * before any test subscriber makes a webhook subscription, and records whether the source really had no connections and the request
  * was rejected so, so a project with leftover subscriptions can't pass it vacuously. Failures are recorded, not thrown.
  */
 async function pollChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string; events: TestEvents }) {
@@ -503,11 +503,11 @@ async function pollFlow(ctx: { hookdeck: HookdeckClient; events: TestEvents }, c
   const connections = (await hookdeck.listAllConnections()).filter((c) => c.source.id === source.id);
   const fresh = connections.length === 0;
   record(
-    `poll: ${sourceName} has no subscriptions (no connections), so its requests are rejected as NO_CONNECTION`,
+    `poll: ${sourceName} has no webhook subscriptions (no connections), so its requests are rejected as NO_CONNECTION`,
     fresh,
     fresh
-      ? 'the no-subscriptions path is exercised'
-      : `${connections.length} connection(s) left: ${connections.map((c) => c.name).join(', ')}. The no-subscriptions path is NOT exercised: delete them, or use a project with no subscriptions`,
+      ? 'the no-webhook-subscription path is exercised'
+      : `${connections.length} connection(s) left: ${connections.map((c) => c.name).join(', ')}. The no-webhook-subscription path is NOT exercised: delete them, or use a project with no webhook subscriptions`,
   );
 
   // An argument the event doesn't take is a tool error the model can read.
@@ -521,7 +521,7 @@ async function pollFlow(ctx: { hookdeck: HookdeckClient; events: TestEvents }, c
   const otherCursor = (await polled('poll_events', { name: events.event, arguments: events.nonMatching })).cursor;
   let allCursor = (await eventsPoll({ name: events.event, arguments: {}, cursor: null })).cursor;
 
-  const tag = events.tag('poll with no subscriptions');
+  const tag = events.tag('poll with no webhook subscriptions');
   const sentAt = Date.now();
   await events.send(tag);
 
@@ -571,7 +571,7 @@ async function pollFlow(ctx: { hookdeck: HookdeckClient; events: TestEvents }, c
   record(
     `poll: Event Gateway rejected the ${NOUN}'s request as NO_CONNECTION, and poll returned it`,
     request?.rejection_cause === 'NO_CONNECTION',
-    fresh ? `rejection_cause: ${cause}` : `rejection_cause: ${cause}; the source had connections, so this run didn't cover the no-subscriptions path`,
+    fresh ? `rejection_cause: ${cause}` : `rejection_cause: ${cause}; the source had connections, so this run didn't cover the no-webhook-subscription path`,
   );
 }
 

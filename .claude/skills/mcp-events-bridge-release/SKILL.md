@@ -26,7 +26,7 @@ Follow in order.
 - [ ] **SemVer gate:** state the minimum bump the change set needs (see **SemVer**). If the maintainer proposed a version that under-bumps, say so and recommend the right one.
 - [ ] **Release PR** (see **The release PR**): `package.json` version, the plugin's pinned version, `server.json`'s versions, and the `CHANGELOG.md` heading. **Gate:** the maintainer approves the version and the changelog, then the PR is merged.
 - [ ] **CI gate:** the `test` workflow is green on the commit you'll release (see **CI check**). Don't release on red, pending or unknown.
-- [ ] **E2E gate:** the maintainer runs `npm run e2e` on that commit and every check passes, the `poll:` checks included, with the no-subscriptions path exercised (see **Before publishing**).
+- [ ] **E2E gate:** the maintainer runs `npm run e2e` on that commit and every check passes, the `poll:` checks included, with the no-webhook-subscription path exercised (see **Before publishing**).
 - [ ] **Cold test gate:** an agent with no context sets the bridge up from the published steps, with the package packed from that commit, and Claude Code receives a real event through `wait_for_event` (see **Before publishing**).
 - [ ] **Release notes:** draft them (see **Release notes** and [`references/release-notes-template.md`](references/release-notes-template.md)). **Gate:** the maintainer approves the tag, the target and the notes.
 - [ ] **Publish:** `gh release create` with a temporary notes file (see **Publish**).
@@ -91,12 +91,12 @@ Proceed only on `SUCCESS`. Don't use `repos/.../commits/$SHA/status`: Actions wr
 
 0.8.0 to 0.9.0 shipped with poll mode returning nothing on a freshly set-up bridge: the unit tests' fake Event Gateway accepted requests the real one rejects as `NO_CONNECTION`, and the e2e didn't poll. These two checks run against the real Event Gateway, on the commit you'll release.
 
-- **`npm run e2e`:** the maintainer runs it (it needs `.env` and the dev project). The `poll:` checks run first, before any test subscriber subscribes, and must all pass, including `poll: bridge-<source> has no subscriptions ...` and `poll: Event Gateway rejected the ...'s request as NO_CONNECTION ...`. If those two fail, the source had connections left over (the output lists them), so the run didn't test a fresh bridge: delete them, or use a project with no subscriptions, and run it again.
+- **`npm run e2e`:** the maintainer runs it (it needs `.env` and the dev project). The `poll:` checks run first, before any test subscriber makes a webhook subscription, and must all pass, including `poll: bridge-<source> has no webhook subscriptions ...` and `poll: Event Gateway rejected the ...'s request as NO_CONNECTION ...`. If those two fail, the source had connections left over (the output lists them), so the run didn't test a fresh bridge: delete them, or use a project with no webhook subscriptions, and run it again.
 - **A cold test of the setup steps:**
   1. A new Hookdeck project, with nothing in it.
   2. `npm pack` in a clean checkout of the release commit.
   3. An agent with no context, in an empty directory: `npx skills add hookdeck/mcp-events-bridge --skill mcp-events-bridge` (the skill comes from `main`, the release commit), then "set up the MCP Events bridge". The only other thing it's told is to install the package from the `.tgz` instead of npm.
-  4. Claude Code, as a poll-only agent (no plugin), added as the setup says, calls `wait_for_event` and receives a real event, with nothing subscribed.
+  4. Claude Code, as a poll-only agent (no plugin), added as the setup says, calls `wait_for_event` and receives a real event, with no webhook subscription.
 
 ## Release notes
 
@@ -151,6 +151,6 @@ npm view @hookdeck/mcp-events-bridge dist-tags                                  
 
 - Don't release without the maintainer's yes on the version, the notes and the target.
 - Don't release on red or pending CI.
-- Don't release without a passing `npm run e2e` (no-subscriptions path exercised) and a passing cold test on the release commit.
+- Don't release without a passing `npm run e2e` (no-webhook-subscription path exercised) and a passing cold test on the release commit.
 - Never push `v*` tags by hand, and never `npm publish` from a laptop.
 - Never put secrets in notes, commits or chat.
