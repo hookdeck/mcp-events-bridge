@@ -46,9 +46,11 @@ Clients that support MCP Events subscribe to the bridge, and receive each event 
 | Mastra (`@mastra/mcp`) | MCP Events, poll or webhook delivery | Poll: no. Webhook: a callback URL, as for the Vercel AI SDK | 2.5.0 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#mastra) |
 | TanStack AI (`@tanstack/ai-mcp`) | MCP Events, webhook delivery | A callback URL: your own public route, or one a local bridge creates | 1.0.0 | [Library guide](skills/mcp-events-bridge/references/library-clients.md#tanstack-ai) |
 | OpenClaw | MCP Events (beta builds only), webhook delivery | Yes: a bare HTTPS origin, with no path, which a local bridge's callback URLs can't be | Not tested | None yet ([openclaw#184684](https://github.com/openclaw/openclaw/issues/184684)) |
-| Other MCP clients (Cursor, Codex, VS Code and others) | Polls, with `wait_for_event` and `poll_events` | No | Not tested | [Polling](#polling) |
+| Codex | Polls, with `wait_for_event` and `poll_events` | No | codex-cli 0.154.0 (`codex exec`) | [Poll clients guide](skills/mcp-events-bridge/references/poll-clients.md#codex) |
+| Cursor's CLI (`cursor-agent`) | Polls, with `wait_for_event` and `poll_events` | No | 2026.11.05-86047df (`cursor-agent -p`) | [Poll clients guide](skills/mcp-events-bridge/references/poll-clients.md#cursor) |
+| Other MCP clients (the Cursor editor's agent, VS Code and others) | Polls, with `wait_for_event` and `poll_events` | No | Not tested | [Polling](#polling) |
 
-Versions are the ones tested against the bridge, in October 2026. MCP Events support is experimental in Hermes Agent and in the three libraries.
+Versions are the ones tested against the bridge, in October and November 2026. MCP Events support is experimental in Hermes Agent and in the three libraries. Codex and Cursor's CLI were tested non-interactively, and each needs the bridge's tools allowed before it can call them: see the guide.
 
 ## Set up with a coding agent
 
@@ -398,7 +400,7 @@ claude mcp add --transport http events-bridge https://<bridge>/mcp --header "Aut
 
 Any MCP client that can send a header connects the same way: the `/mcp` endpoint, with `BRIDGE_MCP_SECRET` as a bearer token.
 
-Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp-events-bridge/references/claude-code.md)), for example "wait for fills.order.filled for AAPL and tell me about each fill". It calls `wait_for_event`, which returns as soon as there are events (or after up to 50 seconds with none), and calls it again with the `cursor` it returned.
+Then ask the agent to wait for an event (Claude Code: see [the guide](skills/mcp-events-bridge/references/claude-code.md); Codex and Cursor's CLI: see [the poll clients guide](skills/mcp-events-bridge/references/poll-clients.md)), for example "wait for fills.order.filled for AAPL and tell me about each fill". It calls `wait_for_event`, which returns as soon as there are events (or after up to 50 seconds with none), and calls it again with the `cursor` it returned.
 
 ![Claude Code, asked to watch hookdeck/hookdeck-demos for new issue comments until three arrive, calls the events-bridge tools and reports each comment as it's posted, then lists all three with their times](docs/images/claude-code-wait-for-event.png)
 
