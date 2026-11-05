@@ -333,13 +333,15 @@ describe('poll mode over MCP', () => {
       // (The SDK client consumes resultType when it decodes a result; the poll tests check it's 'complete'.)
       expect(first).toMatchObject({ events: [], truncated: false, hasMore: false });
 
+      // Nothing has subscribed, so the source has no connection: Event Gateway keeps the request but rejects it as
+      // NO_CONNECTION, as it does live. Poll still returns it.
       gateway.requests.push({
         id: 'req_1',
         source_id: 'src_resend',
         created_at: new Date(Date.now() + 1000).toISOString(),
         verified: true,
-        rejection_cause: null,
-        events_count: 1,
+        rejection_cause: 'NO_CONNECTION',
+        events_count: 0,
         ignored_count: 0,
         data: { headers: fixture.headers, body: freshEmail() },
       });

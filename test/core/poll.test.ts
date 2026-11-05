@@ -276,6 +276,72 @@ describe('poll mode: cursor', () => {
   });
 });
 
+describe('poll mode: sources with and without subscriptions (NO_CONNECTION)', () => {
+  // A source has a connection only per subscription: with none, Event Gateway rejects each request as NO_CONNECTION
+  // (and keeps it); once something subscribes, requests are accepted; when the last subscription goes, NO_CONNECTION again.
+
+  it('returns events once, in order, across a subscription starting and ending, on one cursor', async () => {
+    const { listing, service } = setup();
+    const start = await service.poll({ name: NAME });
+    listing.add({ createdAt: T0 + 1000, deliveryId: 'before-subscribe', rejection: 'NO_CONNECTION' });
+    listing.add({ createdAt: T0 + 2000, deliveryId: 'while-subscribed' });
+    listing.add({ createdAt: T0 + 3000, deliveryId: 'after-unsubscribe', rejection: 'NO_CONNECTION' });
+    listing.add({ createdAt: T0 + 3500, deliveryId: 'bad-signature', rejection: 'VERIFICATION_FAILED' });
+    listing.now += 5000;
+    const first = await service.poll({ name: NAME, cursor: start.cursor });
+    listing.now += 5000;
+    const again = await service.poll({ name: NAME, cursor: first.cursor });
+    expect(first.events.map((e) => e.eventId)).toEqual(['before-subscribe', 'while-subscribed', 'after-unsubscribe']);
+    expect(again.events).toEqual([]);
+  });
+
+  it("returns a sender's redelivery once when the first try was NO_CONNECTION and the retry was accepted", async () => {
+    const { listing, service } = setup();
+    const start = await service.poll({ name: NAME });
+    listing.add({ createdAt: T0 + 1000, deliveryId: 'same', rejection: 'NO_CONNECTION' });
+    listing.add({ createdAt: T0 + 4000, deliveryId: 'same' });
+    listing.now += 10_000;
+    const result = await service.poll({ name: NAME, cursor: start.cursor });
+    expect(result.events.map((e) => e.eventId)).toEqual(['same']);
+  });
+
+  it('catches up on NO_CONNECTION requests after a long gap (a cursor resumed later, as watch does)', async () => {
+    const { listing, service } = setup();
+    const start = await service.poll({ name: NAME });
+    for (let i = 0; i < 30; i++) listing.add({ createdAt: T0 + 1000 + i * 1000, deliveryId: `gap-${i}`, rejection: i % 2 ? 'NO_CONNECTION' : undefined });
+    listing.now += 10 * 60_000;
+    let cursor = start.cursor;
+    const got: string[] = [];
+    for (;;) {
+      const result = await service.poll({ name: NAME, cursor, maxEvents: 7 });
+      got.push(...result.events.map((e) => e.eventId));
+      cursor = result.cursor;
+      if (!result.hasMore) break;
+    }
+    expect(got).toEqual(Array.from({ length: 30 }, (_, i) => `gap-${i}`));
+  });
+
+  it('replays NO_CONNECTION requests from a webhook cursor, so a subscription made with one gets what arrived before it', async () => {
+    const { listing, service } = setup();
+    listing.now = T0 + 120_000;
+    const cursor = service.webhookCursor(NAME, {}, { at: listing.now });
+    listing.add({ createdAt: T0 + 200_000, deliveryId: 'while-unsubscribed', rejection: 'NO_CONNECTION' });
+    listing.now = T0 + 300_000;
+    const result = await service.poll({ name: NAME, arguments: {}, cursor });
+    expect(result.events.map((e) => e.eventId)).toEqual(['while-unsubscribed']);
+  });
+
+  it('applies the arguments filter to NO_CONNECTION requests, as to accepted ones', async () => {
+    const { listing, service } = setup();
+    const start = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' } });
+    listing.add({ createdAt: T0 + 1000, deliveryId: 'aapl', rejection: 'NO_CONNECTION' });
+    listing.add({ createdAt: T0 + 2000, deliveryId: 'msft', symbol: 'MSFT', rejection: 'NO_CONNECTION' });
+    listing.now += 5000;
+    const result = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' }, cursor: start.cursor });
+    expect(result.events.map((e) => e.eventId)).toEqual(['aapl']);
+  });
+});
+
 describe('poll mode: shared listing and back-off', () => {
   it('answers concurrent polls with one listing, and lists only sources polled recently', async () => {
     const { listing, service } = setup({ sources: ['fills', 'orders'] });
