@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Docs:** Codex (codex-cli 0.154.0, `codex exec`) and Cursor's CLI (`cursor-agent` 2026.11.05-86047df) are listed as tested clients in the README, and a new guide, [`poll-clients.md`](skills/mcp-events-bridge/references/poll-clients.md), sets each up to poll the bridge, with the approvals each needs to call the bridge's tools unattended: Codex's `default_tools_approval_mode = "approve"`, and Cursor's `--trust`, `--approve-mcps` and a tool allowlist in `.cursor/cli.json`. The skill points to it ([#94](https://github.com/hookdeck/mcp-events-bridge/pull/94)).
+
 ## 0.9.0 (2026-11-05)
 
 Breaking, for agents that call `create_callback_url` again for an existing URL with a different `port` or `path`: that's now an error.
