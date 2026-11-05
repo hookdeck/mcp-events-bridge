@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Poll tools on a bridge with no subscriptions:** `wait_for_event`, `poll_events`, `events/poll`, `watch`, `get_event` and `list_events` returned no events until something subscribed. A source has a connection only per subscription, and Event Gateway rejects requests to a source with no connection as `NO_CONNECTION` (the sender still gets `200`, and the request is kept); the bridge listed only accepted requests. It now also reads verified requests rejected as `NO_CONNECTION`. Broken since 0.8.0.
+
 ## 0.9.0 (2026-11-05)
 
 Breaking, for agents that call `create_callback_url` again for an existing URL with a different `port` or `path`: that's now an error.

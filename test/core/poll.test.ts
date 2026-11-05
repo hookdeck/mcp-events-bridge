@@ -29,6 +29,8 @@ interface FakeRequest {
   kind: 'event' | 'duplicate' | 'filtered' | 'cli-disconnected';
   symbol: string;
   deliveryId: string;
+  /** Rejected at the source: `NO_CONNECTION` (no subscriptions, so no connection) or a failed signature. */
+  rejection?: 'NO_CONNECTION' | 'VERIFICATION_FAILED';
 }
 
 /** Event Gateway's request listing, with requests that appear late and out of order. */
@@ -51,22 +53,22 @@ class FakeListing {
 
   private view(r: FakeRequest): HookdeckRequest {
     const processed = this.now >= r.processedAt;
-    const events = processed && r.kind === 'event' ? 1 : 0;
+    const events = processed && !r.rejection && r.kind === 'event' ? 1 : 0;
     return {
       id: r.id,
       source_id: r.source_id,
       created_at: new Date(r.createdAt).toISOString(),
-      verified: true,
-      rejection_cause: null,
+      verified: r.rejection !== 'VERIFICATION_FAILED',
+      rejection_cause: r.rejection ?? null,
       events_count: events,
       cli_events_count: 0,
-      ignored_count: processed && r.kind !== 'event' ? 1 : 0,
+      ignored_count: processed && !r.rejection && r.kind !== 'event' ? 1 : 0,
       data: { headers: { 'x-delivery-id': r.deliveryId }, body: { symbol: r.symbol, qty: 1 } },
     };
   }
 
   readonly client = {
-    listAcceptedRequests: async ({ source_ids, created_at_gte, limit = 255, next }: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }) => {
+    listPollRequests: async ({ source_ids, created_at_gte, limit = 255, next }: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }) => {
       this.attempts++;
       if (this.rateLimited) throw new HookdeckApiError('GET', '/requests', 429, '{}');
       const from = Date.parse(created_at_gte);
@@ -167,6 +169,17 @@ describe('poll mode: cursor', () => {
     listing.now += 5000;
     const result = await service.poll({ name: NAME, arguments: { symbol: 'AAPL' }, cursor: start.cursor });
     expect(result.events.map((e) => e.eventId).sort()).toEqual(['aapl', 'filtered', 'laptop-asleep']);
+  });
+
+  it('returns requests to a source with no subscriptions (rejected as NO_CONNECTION), but not ones that failed verification', async () => {
+    const { listing, service } = setup();
+    const start = await service.poll({ name: NAME });
+    listing.add({ createdAt: T0 + 1000, deliveryId: 'no-subscriptions', rejection: 'NO_CONNECTION' });
+    listing.add({ createdAt: T0 + 1500, deliveryId: 'bad-signature', rejection: 'VERIFICATION_FAILED' });
+    listing.add({ createdAt: T0 + 2000, deliveryId: 'subscribed' });
+    listing.now += 5000;
+    const result = await service.poll({ name: NAME, cursor: start.cursor });
+    expect(result.events.map((e) => e.eventId)).toEqual(['no-subscriptions', 'subscribed']);
   });
 
   it("returns a request as soon as it's listed, whether or not Event Gateway has routed it yet", async () => {

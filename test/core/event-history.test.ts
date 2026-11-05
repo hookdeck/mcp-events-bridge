@@ -52,6 +52,24 @@ describe('EventHistory.recent', () => {
     expect(await history.recent({ name: 'nope.order.filled' })).toEqual([]);
   });
 
+  it('includes requests to a source with no subscriptions (rejected as NO_CONNECTION), but not ones that failed verification', async () => {
+    const config = resolveConfig(defineConfig({ sources: [broker('broker_a')] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
+    const request = (id: string, verified: boolean, rejection_cause: string | null) => ({
+      id: `req_${id}`,
+      verified,
+      rejection_cause,
+      data: { headers: { 'x-delivery-id': id }, body: { symbol: 'AAPL' } },
+    });
+    const hookdeck = {
+      listSources: async ({ name }: { name: string }) => ({ models: [{ id: `src_${name}` }] }),
+      listRequests: async () => ({ models: [request('no-subscriptions', true, 'NO_CONNECTION'), request('bad-signature', false, 'VERIFICATION_FAILED')] }),
+    } as unknown as HookdeckClient;
+    const history = new EventHistory({ hookdeck, catalog: new Catalog(config.sources), providers: config.sources });
+
+    expect((await history.recent({ name: 'broker_a.order.filled' })).map((e) => e.eventId)).toEqual(['no-subscriptions']);
+    expect((await history.get('broker_a.order.filled', 'no-subscriptions'))?.eventId).toBe('no-subscriptions');
+  });
+
   it('times an event without occurredAt by when Event Gateway received it, not when it was read back', async () => {
     const config = resolveConfig(defineConfig({ sources: [broker('broker_a')] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
     const hookdeck = {
