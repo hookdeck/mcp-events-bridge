@@ -3,7 +3,7 @@
   "name": "io.github.hookdeck/mcp-events-bridge",
   "title": "MCP Events bridge",
   "description": "Turn webhooks into MCP Events that AI agents subscribe to, with Hookdeck Event Gateway.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "websiteUrl": "https://github.com/hookdeck/mcp-events-bridge#readme",
   "repository": {
     "url": "https://github.com/hookdeck/mcp-events-bridge",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@hookdeck/mcp-events-bridge",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "runtimeHint": "npx",
       "packageArguments": [
         {
