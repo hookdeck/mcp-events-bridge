@@ -52,7 +52,7 @@ describe('EventHistory.recent', () => {
     expect(await history.recent({ name: 'nope.order.filled' })).toEqual([]);
   });
 
-  it('includes requests to a source with no subscriptions (rejected as NO_CONNECTION), but not ones that failed verification', async () => {
+  it('includes requests to a source with no webhook subscriptions (rejected as NO_CONNECTION), but not ones that failed verification', async () => {
     const config = resolveConfig(defineConfig({ sources: [broker('broker_a')] }), { HOOKDECK_API_KEY: 'k', HOOKDECK_SIGNING_SECRET: 's' });
     const request = (id: string, verified: boolean, rejection_cause: string | null) => ({
       id: `req_${id}`,

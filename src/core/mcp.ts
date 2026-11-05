@@ -87,10 +87,10 @@ export function buildMcpServer(deps: {
     'list_sources',
     {
       description:
-        'List the configured event sources (the services events come from): each one\'s id, type, event names, the filters each event takes, and how many subscriptions it has. ' +
-        'Use it first, to find the event names that list_events, get_event, wait_for_event and poll_events take, ' +
-        'and the filters (the arguments of wait_for_event and poll_events): filters maps each event name to its argument names, each with a type and description. ' +
-        "For each event's description, see events/list (an MCP Events method, not a tool); for the events themselves, list_events.",
+        "List the configured sources (the services events come from): each one's id, type, event types and webhook subscription count. " +
+        "Each entry in a source's events is an event type, as events/list describes it: its name, description and inputSchema (the arguments it takes). " +
+        'Use it first, to find the event type names that list_events, get_event, wait_for_event and poll_events take, and the arguments wait_for_event and poll_events take. ' +
+        'subscriptions counts webhook subscriptions (events/subscribe); poll subscriptions are held by the client and not counted. For events that already happened, list_events.',
       // Answered from the bridge's config and loaded subscriptions, without calling Event Gateway.
       annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({}),
@@ -101,12 +101,12 @@ export function buildMcpServer(deps: {
   const poll = deps.poll;
   if (poll) {
     const pollInput = {
-      name: z.string().describe('The event name, from list_sources (or events/list), such as github.issues'),
+      name: z.string().describe('The event type name, from list_sources (or events/list), such as github.issues'),
       arguments: z
         .record(z.string(), z.unknown())
         .optional()
         .describe(
-          "Filters: only the argument names list_sources gives for the event under filters (its inputSchema in events/list), e.g. { \"repository\": \"owner/name\", \"actions\": [\"opened\"] } for github.issues. An unknown name or a wrong type is an error that lists the event's arguments.",
+          "The event type's arguments, as its inputSchema in list_sources (or events/list) describes them, e.g. { \"repository\": \"owner/name\", \"actions\": [\"opened\"] } for github.issues. An unknown argument or a wrong type is an error that lists the event type's arguments.",
         ),
       cursor: z.string().nullable().optional().describe('The cursor from your last call. Omit (or null) to start from now: the first call returns no events, only a cursor.'),
     };

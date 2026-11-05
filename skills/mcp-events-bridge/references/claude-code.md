@@ -30,11 +30,11 @@ The header contains `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
 
 ## 2. Ask for events
 
-Name the event and its filter, and ask Claude to keep waiting. The examples here use the GitHub source, set up for the repository; ask "what events can the bridge give me?" to see the events and filters your bridge offers.
+Name the event type and its arguments, and ask Claude to keep waiting. The examples here use the GitHub source, set up for the repository; ask "what events can the bridge give me?" to see the events and filters your bridge offers.
 
 > Wait for new comments on issues in `<owner>/<repo>` (github.issue_comment, repository `<owner>/<repo>`) and summarize each one.
 
-Claude calls `wait_for_event`, which returns as soon as there are events, or with none after up to 45 seconds, and calls it again with the `cursor` it returned. The `list_sources` tool lists the names and each event's filters (ask "what events can the bridge give me?").
+Claude calls `wait_for_event`, which returns as soon as there are events, or with none after up to 45 seconds, and calls it again with the `cursor` it returned. The `list_sources` tool lists each source's event types and the arguments each takes (ask "what events can the bridge give me?").
 
 - **Start from now:** the first call has no cursor, so it returns only events after it. For events that already happened, ask for them: Claude uses `list_events` and `get_event`.
 - **Repeats:** delivery is at least once. If the same `eventId` comes back, it's the same event.
@@ -60,7 +60,7 @@ Claude adds the watches to the project's watch list, and the plugin's monitor, w
 - **Interactive sessions only:** plugin monitors don't run with `claude -p`.
 - **More than one session in a project:** each one is told about every event.
 - **Long events are shortened:** monitor notifications cut long lines short (seen at around 500 characters), so the plugin's skill has Claude read the whole event with `get_event`.
-- **Busy sources:** Claude Code stops a monitor that prints too many lines. Filter by repository, actions or sender.
+- **Busy sources:** Claude Code stops a monitor that prints too many lines. Narrow the watch with arguments: repository, actions or sender.
 - **Where things are kept:** the watch lists and cursors, and a copy of the endpoint and secret for the monitor (readable only by you; plugin monitors can't read secure storage), are in the plugin's data directory, `~/.claude/plugins/data/mcp-events-bridge-hookdeck/`.
 
 **Without the plugin**, ask Claude to run `watch` with its Monitor tool, which wakes the session on each line a command prints:

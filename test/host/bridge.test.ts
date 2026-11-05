@@ -169,31 +169,33 @@ describe('bridge server', () => {
     expect(typeof subscriber.events[0]!.cursor).toBe('string');
   });
 
-  it("lists sources with their MCP event names, each event's filters, and how many subscriptions each has", async () => {
+  it('lists sources with their event types, as events/list describes them, and how many webhook subscriptions each has', async () => {
     const { port } = await startBridge();
     await startSubscriber(port);
     const client = new Client({ name: 'test', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp/${MCP_SECRET}`)));
     try {
       expect(client.getServerVersion()).toMatchObject({ name: 'mcp-events-bridge', version: '9.9.9' });
-      // `events` stays a list of names (the plugin's watch skill and other clients read it); `filters` is by event name,
-      // for clients with tools only, which can't call events/list for the inputSchema.
+      // Each source's events are its event types, with the name, description and inputSchema events/list gives them, for
+      // clients with tools only, which can't call events/list. subscriptions counts webhook subscriptions.
+      const list = await client.request({ method: 'events/list', params: {} } as never, z.record(z.string(), z.unknown()));
+      const eventType = (list.events as Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>).find((e) => e.name === 'resend.email.received')!;
       const expected = [
         {
           id: 'resend',
           type: 'resend',
-          events: ['resend.email.received'],
-          filters: {
-            'resend.email.received': {
-              from: { type: 'string', description: expect.stringMatching(/^Only emails from this sender address\./) },
-              to: { type: 'string', description: 'Only emails sent to this address.' },
-            },
-          },
+          events: [{ name: 'resend.email.received', description: eventType.description, inputSchema: eventType.inputSchema }],
           subscriptions: 1,
         },
       ];
       const result = (await client.callTool({ name: 'list_sources', arguments: {} })) as { structuredContent?: { sources: unknown[] } };
       expect(result.structuredContent?.sources).toEqual(expected);
+      expect(eventType.inputSchema).toMatchObject({
+        properties: {
+          from: { type: 'string', description: expect.stringMatching(/^Only emails from this sender address\./) },
+          to: { type: 'string', description: 'Only emails sent to this address.' },
+        },
+      });
       // The old name, removed in 0.8.0.
       expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('list_providers');
     } finally {

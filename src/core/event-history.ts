@@ -14,7 +14,7 @@ export const RECENT_MAX_REQUESTS_PER_SOURCE = 500;
 
 /**
  * Whether Event Gateway kept a request as a provider's event: verified, and either accepted or rejected only because
- * its source had no connection. A source has a connection per subscription, so with no subscriptions every request is
+ * its source had no connection. A source has a connection per webhook subscription, so with none every request is
  * rejected as `NO_CONNECTION` (the sender still gets `200`, and the request is kept, verified, with its data); poll and
  * the history must still see them. Any other rejection, such as `VERIFICATION_FAILED`, isn't an event.
  */

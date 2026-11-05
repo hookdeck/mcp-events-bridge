@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { argumentsError, Catalog, describeFilters, descriptionWarnings } from '../../src/core/catalog.js';
+import { argumentsError, Catalog, describeArguments, descriptionWarnings } from '../../src/core/catalog.js';
 import { defineConfig, env, resolveConfig } from '../../src/core/config.js';
 import { github, resend, source } from '../../src/sources.js';
 
@@ -64,15 +64,15 @@ describe("an event's filters, for clients with tools only", () => {
   };
 
   it("describes each argument in the event's inputSchema: its type, in TypeScript's notation, and description", () => {
-    expect(describeFilters(issues.event.inputSchema)).toEqual({
+    expect(describeArguments(issues.event.inputSchema)).toEqual({
       repository: { type: 'string', description: 'Only events for this repository (owner/name).' },
       actions: { type: 'string[]', description: 'Only these actions, for example ["opened", "reopened"].' },
       sender: { type: 'string', description: 'Only events caused by this GitHub user (login).' },
     });
-    expect(describeFilters(catalog.get('fills.order.filled')!.event.inputSchema)).toEqual({
+    expect(describeArguments(catalog.get('fills.order.filled')!.event.inputSchema)).toEqual({
       symbol: { type: 'string | number | boolean', description: 'Only events whose symbol equals this value.' },
     });
-    expect(describeFilters({ type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] })).toEqual({ n: { type: 'integer', required: true } });
+    expect(describeArguments({ type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] })).toEqual({ n: { type: 'integer', required: true } });
   });
 
   // Seen on 5 Nov: Claude Code guessed `action` for github.issues, and the error didn't say which field was wrong.
