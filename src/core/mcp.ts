@@ -67,8 +67,8 @@ export function buildMcpServer(deps: {
         'List past events, newest first by timestamp, from every source or for one event name, read from Hookdeck Event Gateway. ' +
         'Each has the eventId, name, timestamp and data its delivery has. ' +
         'Use it to look back at what already happened; to follow new events, use wait_for_event or poll_events, and for one event you have the id of, get_event. ' +
-        "There's no paging: it reads about twice limit of each source's most recent requests and returns up to limit events from them, " +
-        'so it can return fewer than exist (or none), most often with name on a busy source; narrow with since to reach further back. ' +
+        "It reads each source's requests newest first until it has limit events, reading at most 500 per source, " +
+        'so with name on a busy source where few requests are that event it can return fewer than exist. ' +
         "Events Event Gateway no longer keeps aren't listed. An unknown name is an error; for the names, see list_sources or events/list.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({

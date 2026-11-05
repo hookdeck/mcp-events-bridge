@@ -1,12 +1,16 @@
 import type { Catalog } from './catalog.js';
 import type { ResolvedSource } from './config.js';
-import type { HookdeckClient, HookdeckRequest } from './hookdeck.js';
+import { nextCursor, type HookdeckClient, type HookdeckRequest } from './hookdeck.js';
 import { providerSourceName } from './names.js';
 
 /*
  * Past events, read from Event Gateway: every provider request is kept there,
  * so the bridge stores none. Used by get_event and list_events.
  */
+
+/** How many requests `recent` reads per page, and at most per source: 5 API calls per source, at most. */
+export const RECENT_PAGE_SIZE = 100;
+export const RECENT_MAX_REQUESTS_PER_SOURCE = 500;
 
 export interface PastEvent {
   eventId: string;
@@ -74,6 +78,11 @@ export class EventHistory {
     return undefined;
   }
 
+  /**
+   * The newest events, by the time Event Gateway received them, then sorted by the event's own timestamp. Each source
+   * is read a page at a time, newest first, until it has `limit` matching events, its requests run out, or
+   * RECENT_MAX_REQUESTS_PER_SOURCE have been read (a busy source with few matching events can return fewer than exist).
+   */
   async recent({ name, since, limit = 20 }: { name?: string; since?: string; limit?: number } = {}): Promise<PastEvent[]> {
     const events: PastEvent[] = [];
     // A name is one instance's event: search only that instance's source.
@@ -82,11 +91,22 @@ export class EventHistory {
     for (const provider of this.deps.providers.filter((p) => instance === undefined || p.id === instance)) {
       const sourceId = await this.sourceIdFor(provider.id);
       if (!sourceId) continue;
-      const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, created_at_gte: since, includeData: true, limit: Math.min(limit * 2, 100) });
-      for (const request of page.models) {
-        const event = this.toEvent(provider.id, request);
-        if (event && (!name || event.name === name)) events.push(event);
-      }
+      let found = 0;
+      let read = 0;
+      let next: string | undefined;
+      do {
+        const page = await this.deps.hookdeck.listRequests({ source_id: sourceId, created_at_gte: since, includeData: true, limit: RECENT_PAGE_SIZE, next });
+        read += page.models.length;
+        for (const request of page.models) {
+          const event = this.toEvent(provider.id, request);
+          // Every match on a page is kept, so the sort by timestamp below sees them all.
+          if (event && (!name || event.name === name)) {
+            events.push(event);
+            found++;
+          }
+        }
+        next = nextCursor(page);
+      } while (next && found < limit && read < RECENT_MAX_REQUESTS_PER_SOURCE);
     }
     return events.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit);
   }
