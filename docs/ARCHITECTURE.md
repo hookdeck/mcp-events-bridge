@@ -374,6 +374,7 @@ Designed 8 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)) 
 
 - `poll_events(name, arguments?, cursor?, maxAgeMs?, maxEvents?)`: the same as `events/poll`.
 - `wait_for_event(name, arguments?, cursor?, timeoutMs?)`: polls at each `nextPollMs` (at least 2 seconds, so it reads the shared window), at once while `hasMore` with nothing matching, with progress notifications, and returns as soon as there are events, or with none and the cursor at `timeoutMs` (default 45 s, at most 50 s: Claude Code's HTTP timer and Codex's tool timeout are 60 s by default).
+- Errors are tool errors with the protocol error's message and its `data.detail`. For arguments that don't match the event's inputSchema (every source's arguments are strict, so an unknown key is refused, not ignored), the detail names the field and lists the arguments the event takes; `events/poll` and `events/subscribe` return the same detail.
 
 **Acceptance (#26).** A property test against a fake listing (requests appearing late and out of order, duplicates, unprocessed requests, `maxEvents` from 1 to 100). pi-mcp-events calling `events/poll`. A 10-minute live soak with bursts, wrong signatures and duplicates, with Claude Code calling `wait_for_event` during it. A local bridge with `listen` stopped. A long gap, and concurrent pollers with no `429` reaching a caller.
 
@@ -708,7 +709,7 @@ Handlers registered by hand:
 
 Tools:
 
-- `list_sources()`: configured sources, their types and events, and how many subscriptions each has. (`list_providers()`, the pre-0.6.0 name, was removed in 0.8.0.)
+- `list_sources()`: configured sources, their types and events, each event's filters (`filters`: by event name, each argument's type and description from the event's inputSchema, for clients with tools only, which can't call `events/list`), and how many subscriptions each has. (`list_providers()`, the pre-0.6.0 name, was removed in 0.8.0.)
 - `create_callback_url(agent, name, port?, path?, secret?)` and `list_callback_urls(agent)`: callback URLs for local agents, on a bridge with CLI inbound (see "Callback URLs from the bridge"). Results include the name, URL, port, path and `passThrough`, never a secret. (`create_tunnel_url` and `list_tunnel_urls` until 0.8.0.)
 - `get_event(name, eventId)` and `list_events(name?, since?, limit?)`: events that happened, read from Event Gateway (not the catalog of event kinds, which is `events/list`). These also work around openai/codex#50714, where dot runs don't receive event data.
 - Poll mode ("Poll mode", [#26](https://github.com/hookdeck/mcp-events-bridge/issues/26)): `events/poll` (`name`, `arguments`, `cursor`, `maxAgeMs`, `maxEvents`), read from Event Gateway's stored requests on the source; the cursor is a position in that history. `events/list` offers `"poll"` in each event's `delivery`. For hosts that don't support MCP Events, the same implementation as the `poll_events` and `wait_for_event` tools.

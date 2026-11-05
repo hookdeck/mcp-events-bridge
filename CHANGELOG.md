@@ -5,9 +5,11 @@
 ### Changed
 
 - **The `watch` skill without the plugin:** `npx skills add hookdeck/mcp-events-bridge` also installs the plugin's `watch` skill, and without the plugin its `events-bridge` commands fail with `command not found`. The skill now tells the agent to stop and explain how to install the plugin, or what to use outside Claude Code. To install only the setup skill, add `--skill mcp-events-bridge`.
+- **`list_sources` lists each event's filters:** a new `filters` field maps each event name to the arguments it takes, each with its type and description, from the event's inputSchema. Clients with tools only (Claude Code without the plugin, Codex, Cursor) can't call `events/list`, so they had no way to find the filters, and guessed. `events` is still a list of names. The descriptions of `list_sources`, and of `poll_events` and `wait_for_event`'s `name` and `arguments`, point there instead of at `events/list`, and so do `get_event` and `list_events`' unknown-name errors.
 
 ### Fixed
 
+- **Arguments that don't match an event's inputSchema say what's wrong:** `poll_events` and `wait_for_event` returned only "arguments do not match the inputSchema", dropping the protocol error's `data.detail`, so an agent couldn't tell which argument was wrong (seen on 5 Nov: Claude Code passed `action` for `github.issues`, whose filter is `actions`, a list, then dropped the filter). The tool error now includes the detail, which names the unknown or wrong argument and lists the event's arguments: `arguments do not match the inputSchema: unknown argument "action". github.issues takes repository (string), actions (string[]), sender (string)`. `events/poll` and `events/subscribe` return the same `data.detail`, which was the validator's raw JSON, and `watch` and `watches add` print it. Unknown arguments were already refused, not ignored.
 - **Poll tools on a bridge with no subscriptions:** `wait_for_event`, `poll_events`, `events/poll`, `watch`, `get_event` and `list_events` returned no events until something subscribed. A source has a connection only per subscription, and Event Gateway rejects requests to a source with no connection as `NO_CONNECTION` (the sender still gets `200`, and the request is kept); the bridge listed only accepted requests. It now also reads verified requests rejected as `NO_CONNECTION`. Broken since 0.8.0.
 
 ## 0.9.0 (2026-11-05)

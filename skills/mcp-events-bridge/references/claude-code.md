@@ -34,7 +34,7 @@ Name the event and its filter, and ask Claude to keep waiting. The examples here
 
 > Wait for new comments on issues in `<owner>/<repo>` (github.issue_comment, repository `<owner>/<repo>`) and summarize each one.
 
-Claude calls `wait_for_event`, which returns as soon as there are events, or with none after up to 45 seconds, and calls it again with the `cursor` it returned. `events/list` (or asking "what events can the bridge give me?") lists the names and their filters.
+Claude calls `wait_for_event`, which returns as soon as there are events, or with none after up to 45 seconds, and calls it again with the `cursor` it returned. The `list_sources` tool lists the names and each event's filters (ask "what events can the bridge give me?").
 
 - **Start from now:** the first call has no cursor, so it returns only events after it. For events that already happened, ask for them: Claude uses `list_events` and `get_event`.
 - **Repeats:** delivery is at least once. If the same `eventId` comes back, it's the same event.

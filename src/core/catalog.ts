@@ -1,5 +1,6 @@
 import type { ResolvedSource } from './config.js';
-import type { EventRuntime, SourceEvent } from './sources/types.js';
+import { invalidParams } from './errors.js';
+import type { EventRuntime, JsonSchema, SourceEvent } from './sources/types.js';
 import { instantiateRuntime } from './transformation.js';
 
 /**
@@ -25,6 +26,72 @@ export const descriptionWarnings = (catalog: Catalog) =>
         `${e.name}'s description is ${e.description.length} characters. ChatGPT has been reported to leave out events ` +
         `whose description is over about ${LONG_DESCRIPTION}, so shorten it if ChatGPT doesn't offer ${e.name}`,
     );
+
+/** A JSON Schema's type in TypeScript's notation, which models read well: `string`, `string[]`, `string | number`. */
+function schemaType(schema: unknown): string {
+  if (typeof schema !== 'object' || schema === null) return 'unknown';
+  const s = schema as Record<string, unknown>;
+  const union = s.anyOf ?? s.oneOf;
+  if (Array.isArray(union)) return union.map(schemaType).join(' | ');
+  if (Array.isArray(s.enum)) return s.enum.map((value) => JSON.stringify(value)).join(' | ');
+  if (s.const !== undefined) return JSON.stringify(s.const);
+  if (Array.isArray(s.type)) return s.type.join(' | ');
+  if (s.type === 'array') {
+    const item = schemaType(s.items);
+    return item.includes(' ') ? `(${item})[]` : `${item}[]`;
+  }
+  return typeof s.type === 'string' ? s.type : 'unknown';
+}
+
+export interface FilterDescription {
+  type: string;
+  description?: string;
+  required?: true;
+}
+
+/**
+ * The filters (subscribe and poll arguments) an event takes, from its inputSchema: each one's type and description.
+ * For list_sources, so a client with tools only, which can't call events/list, can find them.
+ */
+export function describeFilters(inputSchema: JsonSchema): Record<string, FilterDescription> {
+  const properties = (inputSchema.properties ?? {}) as Record<string, Record<string, unknown>>;
+  const required = Array.isArray(inputSchema.required) ? (inputSchema.required as string[]) : [];
+  return Object.fromEntries(
+    Object.entries(properties).map(([key, schema]) => [
+      key,
+      {
+        type: schemaType(schema),
+        ...(typeof schema.description === 'string' && { description: schema.description }),
+        ...(required.includes(key) && { required: true as const }),
+      },
+    ]),
+  );
+}
+
+/** What a parseArguments error says, in a line: zod's issues by field (an unknown key named as such), else its message. */
+function describeArgumentsError(error: unknown): string {
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return error instanceof Error ? error.message : String(error);
+  return issues
+    .map((issue: { code?: string; keys?: string[]; path?: PropertyKey[]; message?: string }) => {
+      if (issue.code === 'unrecognized_keys' && Array.isArray(issue.keys)) {
+        return `unknown argument${issue.keys.length === 1 ? '' : 's'} ${issue.keys.map((key) => JSON.stringify(key)).join(', ')}`;
+      }
+      const path = issue.path?.length ? issue.path.map(String).join('.') : 'arguments';
+      return `${path}: ${issue.message ?? 'invalid'}`;
+    })
+    .join('; ');
+}
+
+/**
+ * The InvalidParams error for arguments an event's parseArguments refused. `data.detail` names the bad or unknown
+ * field and lists the arguments the event takes, so an agent can correct the call.
+ */
+export function argumentsError(name: string, event: Pick<SourceEvent, 'inputSchema'>, error: unknown) {
+  const filters = Object.entries(describeFilters(event.inputSchema));
+  const takes = filters.length ? `${name} takes ${filters.map(([key, f]) => `${key} (${f.type})`).join(', ')}` : `${name} takes no arguments`;
+  return invalidParams('arguments do not match the inputSchema', { detail: `${describeArgumentsError(error)}. ${takes}` });
+}
 
 export interface CatalogEntry {
   /** The MCP event name: `{instance id}.{event.name}`. */

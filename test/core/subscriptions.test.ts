@@ -71,6 +71,13 @@ describe('SubscriptionService.subscribe', () => {
     await expect(setup().service.subscribe(principal, request)).rejects.toMatchObject({ code });
   });
 
+  it("says which argument is wrong, and which the event takes, when the arguments don't match", async () => {
+    await expect(setup().service.subscribe('owner', params({ arguments: { subject: 'x' } }))).rejects.toMatchObject({
+      code: -32602,
+      data: { detail: 'unknown argument "subject". resend.email.received takes from (string), to (string)' },
+    });
+  });
+
   it('rejects callbacks that resolve to non-public addresses', async () => {
     await expect(setup({ publicHost: false }).service.subscribe('owner', params())).rejects.toMatchObject({ code: -32602 });
   });

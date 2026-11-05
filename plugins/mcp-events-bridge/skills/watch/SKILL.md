@@ -20,7 +20,7 @@ This skill is part of the bridge's Claude Code plugin, `mcp-events-bridge`. The 
 
 ## Find event names and filters
 
-Call the `events-bridge` MCP server's `list_sources` tool (`list_providers` on a bridge before 0.6.0). Event names look like `github.issue_comment` or `resend.email.received`, and each event's filters are in its input schema (for GitHub: `repository` as owner/name, `actions` as a list, `sender`).
+Call the `events-bridge` MCP server's `list_sources` tool (`list_providers` on a bridge before 0.6.0). Event names look like `github.issue_comment` or `resend.email.received`. Its `filters` field maps each event name to the filters it takes, each with a type and description (for GitHub: `repository` as owner/name, `actions` as a list, `sender`). An older bridge's `list_sources` has no `filters`; either way, `watches add` checks the filters with the bridge and says which one is wrong.
 
 ## Add, remove and list watches
 
