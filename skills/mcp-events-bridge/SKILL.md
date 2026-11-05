@@ -57,7 +57,7 @@ Write `.env` with `HOOKDECK_API_KEY`, `HOOKDECK_SIGNING_SECRET` and each source'
 npx mcp-events-bridge setup
 ```
 
-- **Success:** a line per source (`source resend: https://hkdk.events/..., transformation bridge-resend-envelope, webhook registered`; on a re-run, `updated` or `existing`), then the MCP endpoint. Exit code 0. With a local bridge it also logs the Hookdeck CLI in to the bridge's project in `.hookdeck/config.toml`, so `hookdeck` commands run in this directory use that project.
+- **Success:** a line per source (`source resend: https://hkdk.events/..., transformation bridge-resend-envelope, webhook registered`; on a re-run, `updated` or `existing`, or `registered` again if the Resend or GitHub webhook was deleted at the service, after the log line `the <service> webhook saved on bridge-<id> is missing at <service>; registering it again`), then the MCP endpoint. Exit code 0. With a local bridge it also logs the Hookdeck CLI in to the bridge's project in `.hookdeck/config.toml`, so `hookdeck` commands run in this directory use that project.
 - **First run:** it generates an MCP secret and prints a `BRIDGE_MCP_SECRET=...` line. Add that line to `.env` as printed. `setup` prints the full MCP URL, secret included, on every run: don't repeat it in your replies or write it anywhere but `.env`.
 - **Exit code 1 with "Setup isn't complete":** a `source()`'s secret is missing (step 3). Everything else was set up.
 - **Data from 0.7:** setup says "The bridge's data model in Event Gateway changed in 0.8" and asks `Migrate now? [Y/n]`. Answer `y`; it ends with `migrated <n> subscription(s) and <m> callback URL(s)`. Declining exits 1, and `serve` won't start until it's migrated.
@@ -115,6 +115,8 @@ Every event is named **`{source id}.{event}`**: the source `id` (by default its 
 | Log: `subscription ... is for "...", which this bridge doesn't offer` | The source was removed, its `id` renamed, or the subscription is from 0.1.0; or it belongs to another bridge in the same Hookdeck project | The agent subscribes again, to a name from `events/list`; ignore another bridge's |
 | `events/subscribe` fails: "Unknown event" | Old or wrong name | Use a name from `events/list` |
 | A sender gets 401 | Wrong signature, header, encoding or secret | Match the source's `verification` or secret; a new secret can take about a minute |
+| No events from Resend or GitHub reach the source | The webhook was deleted at the service | Run `setup` again: it checks the saved webhook, and registers it again if it's missing |
+| `setup` logs `warning: could not confirm the <service> webhook saved on bridge-<id> still exists` | The API key or token can't read webhooks, or the service didn't answer | Setup kept the saved webhook. Fix the key or token (GitHub: Webhooks permission) and run `setup` again |
 | An agent doesn't get an event | Its filter or event type didn't match, or its callback is failing | Check the subscription's connection, `mcp-sub-<id>`, in the Event Gateway dashboard (`FILTERED`, or failed attempts), and its name and arguments |
 | An event arrives after a minute or two | `hookdeck listen` occasionally takes ~30s to connect; Event Gateway occasionally queues a CLI delivery | Wait; missed deliveries are retried by the bridge |
 | The same event twice | A retry, or a replay | Receivers dedupe by `webhook-id` |

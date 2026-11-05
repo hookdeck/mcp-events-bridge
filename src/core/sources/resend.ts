@@ -103,6 +103,12 @@ export const emailReceived: SourceEvent<EmailReceivedArguments> = {
   payloadSchema: z.toJSONSchema(emailReceivedPayload) as Record<string, unknown>,
 };
 
+class ResendApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function resendApi(fetchFn: typeof fetch, apiKey: string, path: string, init: { method: string; body?: unknown }) {
   const res = await fetchFn(`${RESEND_API}${path}`, {
     method: init.method,
@@ -110,7 +116,7 @@ async function resendApi(fetchFn: typeof fetch, apiKey: string, path: string, in
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Resend ${init.method} ${path} -> ${res.status} ${text.slice(0, 300)}`);
+  if (!res.ok) throw new ResendApiError(`Resend ${init.method} ${path} -> ${res.status} ${text.slice(0, 300)}`, res.status);
   return text ? (JSON.parse(text) as Record<string, unknown>) : {};
 }
 
@@ -135,5 +141,16 @@ export const resendProvider: SourceDefinition<ResendOptions> = {
 
   async unregister({ webhookId, options, fetch: fetchFn }) {
     await resendApi(fetchFn, options.apiKey, `/webhooks/${encodeURIComponent(webhookId)}`, { method: 'DELETE' });
+  },
+
+  /** A 404 means the webhook was deleted at Resend; any other failure means setup can't tell. */
+  async webhookExists({ webhookId, options, fetch: fetchFn }) {
+    try {
+      await resendApi(fetchFn, options.apiKey, `/webhooks/${encodeURIComponent(webhookId)}`, { method: 'GET' });
+      return true;
+    } catch (error) {
+      if (error instanceof ResendApiError && error.status === 404) return false;
+      throw error;
+    }
   },
 };

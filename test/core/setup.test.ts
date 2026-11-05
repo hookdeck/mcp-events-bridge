@@ -8,13 +8,26 @@ import { FakeEventGateway } from '../support/fake-event-gateway.js';
 
 const environment = { HOOKDECK_API_KEY: 'hk', HOOKDECK_SIGNING_SECRET: 'hs', RESEND_API_KEY: 're_1' };
 
+/** Resend's webhooks API: POST creates, GET reads (404 once deleted), DELETE deletes. */
 function resendApi() {
   const calls: Array<{ url: string; body: unknown }> = [];
+  const webhooks = new Set<string>();
+  /** When set, GET /webhooks/{id} fails with this status (for example 401 for a key that can't read webhooks). */
+  const state: { getFailsWith?: number } = {};
   const fetch = (async (url: string, init: RequestInit) => {
     calls.push({ url, body: init.body ? JSON.parse(String(init.body)) : undefined });
-    return new Response(JSON.stringify({ object: 'webhook', id: `wh_${calls.length}`, signing_secret: 'whsec_from_resend' }), { status: 201 });
+    const id = /\/webhooks\/([^/]+)$/.exec(url)?.[1];
+    const method = init.method ?? 'GET';
+    if (method === 'POST') {
+      webhooks.add(`wh_${calls.length}`);
+      return new Response(JSON.stringify({ object: 'webhook', id: `wh_${calls.length}`, signing_secret: 'whsec_from_resend' }), { status: 201 });
+    }
+    if (method === 'GET' && state.getFailsWith) return new Response('{"message":"API key is invalid"}', { status: state.getFailsWith });
+    if (!id || !webhooks.has(id)) return new Response('{"message":"Webhook not found"}', { status: 404 });
+    if (method === 'DELETE') webhooks.delete(id);
+    return Response.json({ object: 'webhook', id, endpoint: 'https://hkdk.events/x', events: ['email.received'] });
   }) as unknown as typeof globalThis.fetch;
-  return { fetch, calls };
+  return { fetch, calls, webhooks, state };
 }
 
 function setup(over: Record<string, unknown> = {}, env_: Record<string, string> = environment) {
@@ -22,7 +35,8 @@ function setup(over: Record<string, unknown> = {}, env_: Record<string, string> 
   const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
   const config = resolveConfig(defineConfig({ deployment: 'dev', sources: [resend({ apiKey: env('RESEND_API_KEY') })], ...over }), env_);
   const resendFake = resendApi();
-  return { gateway, run: () => runSetup({ config, hookdeck, fetch: resendFake.fetch }), resendFake };
+  const logs: string[] = [];
+  return { gateway, run: () => runSetup({ config, hookdeck, fetch: resendFake.fetch, log: (m) => logs.push(m) }), resendFake, logs };
 }
 
 describe('bridge setup', () => {
@@ -40,14 +54,47 @@ describe('bridge setup', () => {
     expect(report.sources).toEqual([{ id: 'resend', sourceUrl: source.url, transformation: 'bridge-resend-envelope', webhook: 'registered' }]);
   });
 
-  it('is idempotent: a second run reuses the registered webhook and keeps the source secret', async () => {
+  it('is idempotent: a second run checks the registered webhook is still at Resend, reuses it, and keeps the source secret', async () => {
     const { gateway, run, resendFake } = setup();
     await run();
     const second = await run();
-    expect(resendFake.calls).toHaveLength(1);
+    expect(resendFake.calls.map((c) => c.url)).toEqual(['https://api.resend.com/webhooks', 'https://api.resend.com/webhooks/wh_1']);
     expect(second.sources[0]!.webhook).toBe('existing');
     expect([...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
     expect([...gateway.transformations.values()].map((t) => t.name)).toEqual(['bridge-resend-envelope']);
+  });
+
+  it('registers the webhook again when it was deleted at Resend, and saves the new id and secret', async () => {
+    // Found live with GitHub: the webhook was deleted at the service, and re-running setup said `webhook existing`.
+    const { gateway, run, resendFake, logs } = setup();
+    await run();
+    resendFake.webhooks.clear();
+    const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!;
+    source.config = { auth: { webhook_secret_key: 'whsec_old' } };
+
+    logs.length = 0;
+    const report = await run();
+    expect(report.sources[0]!.webhook).toBe('registered');
+    expect(logs).toContain('the Resend webhook saved on bridge-resend is missing at Resend; registering it again');
+    expect(logs).toContain('registered the Resend webhook and set its secret on bridge-resend');
+    // A fresh registration: the missing webhook isn't deleted, and the new one's id and secret are saved.
+    expect(resendFake.calls.map((c) => c.url)).toEqual(['https://api.resend.com/webhooks', 'https://api.resend.com/webhooks/wh_1', 'https://api.resend.com/webhooks']);
+    expect(JSON.parse(source.description!)).toEqual({ provider: 'resend', events: ['email.received'], webhookId: 'wh_3' });
+    expect(source.config).toMatchObject({ auth: { webhook_secret_key: 'whsec_from_resend' } });
+  });
+
+  it("keeps the saved webhook and warns when it can't check it at Resend", async () => {
+    const { run, resendFake, logs } = setup();
+    await run();
+    resendFake.state.getFailsWith = 401;
+
+    logs.length = 0;
+    const report = await run();
+    expect(report.sources[0]!.webhook).toBe('existing');
+    expect(logs).toContainEqual(
+      expect.stringMatching(/^warning: could not confirm the Resend webhook saved on bridge-resend still exists, so keeping it: Resend GET \/webhooks\/wh_1 -> 401/),
+    );
+    expect(resendFake.calls.map((c) => c.url)).toEqual(['https://api.resend.com/webhooks', 'https://api.resend.com/webhooks/wh_1']);
   });
 
   it('replaces the provider webhook if the source lost its signing secret', async () => {
@@ -84,6 +131,61 @@ describe('bridge setup', () => {
     }
     expect(source.config).toMatchObject({ auth: { webhook_secret_key: secret } });
     expect(gh.calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
+  });
+
+  it('GitHub: re-registers a webhook deleted at GitHub, keeping the secret the other repositories use', async () => {
+    const gateway = new FakeEventGateway();
+    const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
+    const gh = new FakeGithub();
+    const logs: string[] = [];
+    const run = () =>
+      runSetup({
+        config: resolveConfig(defineConfig({ deployment: 'dev', sources: [github({ token: 't', scope: { repos: ['o/one', 'o/two'] } })] }), environment),
+        hookdeck,
+        fetch: gh.fetch,
+        log: (m) => logs.push(m),
+      });
+
+    await run();
+    const source = [...gateway.sources.values()].find((s) => s.name === 'bridge-github')!;
+    const secret = (source.config as { auth: { webhook_secret_key: string } }).auth.webhook_secret_key;
+
+    // Present: one listing per repository, nothing written.
+    gh.calls.length = 0;
+    expect((await run()).sources[0]!.webhook).toBe('existing');
+    expect(gh.calls).toEqual(['GET /repos/o/one/hooks', 'GET /repos/o/two/hooks']);
+
+    // Deleted on one repository: registered again there; the other is updated in place with the same secret.
+    gh.hooks.set('/repos/o/two/hooks', []);
+    logs.length = 0;
+    expect((await run()).sources[0]!.webhook).toBe('registered');
+    expect(logs).toContain('the GitHub webhook saved on bridge-github is missing at GitHub; registering it again');
+    for (const path of ['/repos/o/one/hooks', '/repos/o/two/hooks']) {
+      expect(gh.hooks.get(path)).toEqual([expect.objectContaining({ config: expect.objectContaining({ url: source.url, secret }) })]);
+    }
+    expect(source.config).toMatchObject({ auth: { webhook_secret_key: secret } });
+    expect(gh.calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
+  });
+
+  it("GitHub: keeps the saved webhook and warns when the token can't list webhooks", async () => {
+    const gateway = new FakeEventGateway();
+    const hookdeck = new HookdeckClient({ apiKey: 'hk', fetch: gateway.fetch });
+    const gh = new FakeGithub();
+    const logs: string[] = [];
+    const run = () =>
+      runSetup({
+        config: resolveConfig(defineConfig({ deployment: 'dev', sources: [github({ token: 't', scope: { repos: ['o/one'] } })] }), environment),
+        hookdeck,
+        fetch: gh.fetch,
+        log: (m) => logs.push(m),
+      });
+
+    await run();
+    gh.failWith = 403;
+    gh.calls.length = 0;
+    expect((await run()).sources[0]!.webhook).toBe('existing');
+    expect(logs).toContainEqual(expect.stringMatching(/^warning: could not confirm the GitHub webhook saved on bridge-github still exists, so keeping it: GitHub GET .* -> 403/));
+    expect(gh.calls).toEqual(['GET /repos/o/one/hooks']);
   });
 
   it('GitHub manual mode: puts the configured secret on the source, prints a hint, and follows secret changes', async () => {
