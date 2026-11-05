@@ -7,4 +7,4 @@
 # pass absolute paths, so the directory doesn't change what they read.
 dir="${TMPDIR:-/tmp}/mcp-events-bridge-plugin"
 mkdir -p "$dir" && cd "$dir" || exit 1
-exec npx -y @hookdeck/mcp-events-bridge@0.9.0 "$@"
+exec npx -y @hookdeck/mcp-events-bridge@0.10.0 "$@"

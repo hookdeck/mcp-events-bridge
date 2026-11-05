@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (2026-11-05)
 
 Breaking, for code that reads `list_sources`' `events` as a list of names: each entry is now an event type object; read `events[].name`.
 
