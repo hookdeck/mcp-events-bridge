@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The plugin's `watch` skill says it needs the plugin.** `npx skills add hookdeck/mcp-events-bridge` also installs `watch`, without the plugin that provides its `events-bridge` command, so its commands failed with `command not found`. When that happens, the skill now tells the agent to stop and offer the user the plugin in Claude Code, or `watch` and the poll tools in other agents. To install only the setup skill: `npx skills add hookdeck/mcp-events-bridge --skill mcp-events-bridge`.
+
 ## 0.9.0 (2026-11-05)
 
 Breaking, for agents that call `create_callback_url` again for an existing URL with a different `port` or `path`: that's now an error.
