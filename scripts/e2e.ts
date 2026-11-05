@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Tunnel, bin, install } from 'cloudflared';
+import * as z from 'zod';
 import { HookdeckClient } from '../src/core/hookdeck.js';
 import { providerSourceName, subscriptionResourceName } from '../src/core/names.js';
 import { generateWebhookSecret } from '../src/core/secret.js';
@@ -22,6 +23,17 @@ import { Subscriber, type McpEvent } from '../test/support/subscriber.js';
  *
  * The bridge isn't in the data path: it takes the subscription, sends the
  * challenge and manages the connection.
+ *
+ * Poll mode is checked first, always, before any test subscriber subscribes: the
+ * setup new users make, and the path Claude Code, Codex and Cursor use. With no
+ * subscriptions the service's source has no connections, so Event Gateway rejects
+ * every request as NO_CONNECTION while keeping it. An MCP client takes cursors
+ * (poll_events, events/poll), the run sends its email or fill, and wait_for_event
+ * with matching arguments and events/poll with none must return it; arguments that
+ * don't match mustn't, and an unknown argument is a tool error. The checks record
+ * that the source had no connections and that Event Gateway rejected the request
+ * as NO_CONNECTION, and fail if it had connections (leftover subscriptions in a
+ * shared project), since then the no-subscriptions path wasn't exercised.
  *
  * Needs `npm run bridge -- setup` first, and .env with HOOKDECK_*, RESEND_API_KEY
  * (this repo's config always includes Resend), RESEND_INBOUND_ADDRESS and
@@ -134,6 +146,8 @@ interface TestEvents {
   event: string;
   /** Subscription arguments that `send` matches and `sendOther` doesn't. */
   matching: Record<string, unknown>;
+  /** Arguments that `sendOther` matches and `send` doesn't. */
+  nonMatching: Record<string, unknown>;
   /** For check names: "an email", "a fill". */
   a: string;
   /** The provider header that becomes the delivery's webhook-id. */
@@ -151,17 +165,19 @@ function emailEvents(config: Awaited<ReturnType<typeof loadConfig>>, run: string
   const provider = config.sources.find((p) => p.definition.type === 'resend');
   if (!provider) throw new Error('the e2e needs Resend enabled in bridge.config.ts, or E2E_SOURCE=webhook');
   const from = env('RESEND_TEST_FROM');
+  const otherFrom = from.replace(/^[^@]+/, 'bridge-other');
   return {
     providerId: provider.id,
     event: `${provider.id}.email.received`,
     matching: { from },
+    nonMatching: { from: otherFrom },
     a: 'an email',
     idHeader: 'svix-id',
     idCheck: 'webhook-id equals the Resend svix-id',
     filterCheck: 'from filter drops other senders',
     tag: (key) => `e2e ${run}: ${key}`,
     send: (subject) => sendEmail(from, subject),
-    sendOther: (subject) => sendEmail(from.replace(/^[^@]+/, 'bridge-other'), subject),
+    sendOther: (subject) => sendEmail(otherFrom, subject),
     tagOf: (data) => (typeof data?.subject === 'string' ? data.subject : undefined),
     tagOfRequest: (r) => (r.data?.body as { data?: { subject?: string } } | undefined)?.data?.subject,
   };
@@ -184,6 +200,7 @@ async function fillEvents(config: Awaited<ReturnType<typeof loadConfig>>, hookde
     providerId: fills.id,
     event: `${fills.id}.order.filled`,
     matching: { symbol: 'AAPL' },
+    nonMatching: { symbol: 'MSFT' },
     a: 'a fill',
     idHeader: 'x-delivery-id',
     idCheck: "webhook-id equals the sender's x-delivery-id",
@@ -292,6 +309,9 @@ async function main() {
     record('hookdeck listen connected (issue notifications)', await runtime.inboundReady);
   }
   const mcpUrl = `${bridgeUrl}/mcp/${config.auth.mcpSecret}`;
+
+  // 1b. Poll mode, before anything subscribes, so the source has no subscription connections.
+  await pollChecks({ hookdeck, mcpUrl, events });
 
   // 2. Test subscribers, each with its own receiver and callback (an MCP Events source, or a tunnel).
   const githubRepo = GITHUB ? (process.env.E2E_GITHUB_REPO ?? (github!.options.scope as { repos?: string[] } | undefined)?.repos?.[0] ?? '') : '';
@@ -441,6 +461,118 @@ async function main() {
   );
   await resumed.stop({ unsubscribe: true });
   subscribers.splice(subscribers.indexOf(resumed), 1);
+}
+
+/**
+ * Poll mode on a source with no subscriptions: the setup new users make, and the path Claude Code, Codex and Cursor
+ * use. A source has a connection only per subscription, so with none Event Gateway rejects every request as
+ * NO_CONNECTION (the sender still gets 200, and the request is kept); 0.8.0 to 0.9.0 returned nothing then. Runs
+ * before any test subscriber subscribes, and records whether the source really had no connections and the request
+ * was rejected so, so a project with leftover subscriptions can't pass it vacuously. Failures are recorded, not thrown.
+ */
+async function pollChecks(ctx: { hookdeck: HookdeckClient; mcpUrl: string; events: TestEvents }) {
+  const client = new Client({ name: 'e2e-poll', version: '0.0.0' }, { versionNegotiation: { mode: 'auto' } });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(ctx.mcpUrl)));
+    await pollFlow(ctx, client);
+  } catch (error) {
+    record('poll checks', false, (error as Error).message);
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+async function pollFlow(ctx: { hookdeck: HookdeckClient; events: TestEvents }, client: Client) {
+  const { hookdeck, events } = ctx;
+  type Polled = { events: Array<{ eventId: string; data?: Record<string, unknown> }>; cursor: string; hasMore: boolean; nextPollMs: number };
+  type ToolResult = { isError?: boolean; content?: Array<{ type: string; text?: string }>; structuredContent?: Polled };
+  const tool = async (name: 'poll_events' | 'wait_for_event', args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as ToolResult;
+  const polled = async (name: 'poll_events' | 'wait_for_event', args: Record<string, unknown>) => {
+    const result = await tool(name, args);
+    if (result.isError || !result.structuredContent) throw new Error(`${name} failed: ${result.content?.[0]?.text ?? 'no result'}`);
+    return result.structuredContent;
+  };
+  const anyResult = z.record(z.string(), z.unknown());
+  const eventsPoll = async (params: Record<string, unknown>) => (await client.request({ method: 'events/poll', params } as never, anyResult)) as unknown as Polled;
+  const withTag = (result: Polled, tag: string) => result.events.find((e) => events.tagOf(e.data) === tag);
+
+  // The precondition: the service's source has no connections, so nothing has subscribed to it (in any deployment).
+  const sourceName = providerSourceName(events.providerId);
+  const source = (await hookdeck.listSources({ name: sourceName })).models[0];
+  if (!source) return record('poll checks', false, `no ${sourceName} source: run setup`);
+  const connections = (await hookdeck.listAllConnections()).filter((c) => c.source.id === source.id);
+  const fresh = connections.length === 0;
+  record(
+    `poll: ${sourceName} has no subscriptions (no connections), so its requests are rejected as NO_CONNECTION`,
+    fresh,
+    fresh
+      ? 'the no-subscriptions path is exercised'
+      : `${connections.length} connection(s) left: ${connections.map((c) => c.name).join(', ')}. The no-subscriptions path is NOT exercised: delete them, or use a project with no subscriptions`,
+  );
+
+  // An argument the event doesn't take is a tool error the model can read.
+  const unknown = await tool('wait_for_event', { name: events.event, arguments: { notAFilter: 'e2e' }, timeoutMs: 1000 });
+  const unknownText = unknown.content?.[0]?.text ?? '';
+  record('poll: an unknown argument is a tool error', unknown.isError === true && unknownText.includes('inputSchema'), unknownText || 'no error');
+
+  // Cursors from now, taken before the event is sent: with the subscribers' arguments, with arguments it doesn't
+  // match, and with none (events/poll, as MCP Events clients and `watch` call it).
+  const matchingCursor = (await polled('poll_events', { name: events.event, arguments: events.matching })).cursor;
+  const otherCursor = (await polled('poll_events', { name: events.event, arguments: events.nonMatching })).cursor;
+  let allCursor = (await eventsPoll({ name: events.event, arguments: {}, cursor: null })).cursor;
+
+  const tag = events.tag('poll with no subscriptions');
+  const sentAt = Date.now();
+  await events.send(tag);
+
+  // wait_for_event as Claude Code calls it: up to 45 s a call, then again with the cursor it returned.
+  let cursor = matchingCursor;
+  let found: Polled['events'][number] | undefined;
+  const deadline = Date.now() + 240_000;
+  while (!found && Date.now() < deadline) {
+    const result = await polled('wait_for_event', { name: events.event, arguments: events.matching, cursor, timeoutMs: 45_000 });
+    found = withTag(result, tag);
+    cursor = result.cursor;
+  }
+  record(
+    `poll: wait_for_event returns the ${NOUN}, with matching arguments and a cursor from before it was sent`,
+    Boolean(found),
+    found ? `${Math.round((Date.now() - sentAt) / 1000)}s` : 'timed out after 240s',
+  );
+  if (!found) return;
+  const eventId = found.eventId;
+
+  const listed = await until(async () => {
+    const result = await eventsPoll({ name: events.event, arguments: {}, cursor: allCursor });
+    allCursor = result.cursor;
+    return withTag(result, tag);
+  }, 60_000, 2000);
+  record(`poll: events/poll returns the ${NOUN}, with no arguments`, Boolean(listed), listed ? eventId : 'timed out after 60s');
+
+  // The event is in the listing now (wait_for_event returned it): arguments it doesn't match mustn't return it.
+  const returned: Polled['events'] = [];
+  let other = otherCursor;
+  for (let page = 0; page < 10; page++) {
+    const result = await polled('poll_events', { name: events.event, arguments: events.nonMatching, cursor: other });
+    returned.push(...result.events);
+    other = result.cursor;
+    if (!result.hasMore) break;
+  }
+  const leaked = returned.some((e) => e.eventId === eventId);
+  record(`poll: ${events.filterCheck}`, !leaked, leaked ? `the ${NOUN} was returned` : `${returned.length} other event(s) returned`);
+
+  // Which path this covered: Event Gateway's own record of the request.
+  const request = await until(
+    async () => (await hookdeck.listRequests({ source_id: source.id, headers: { [events.idHeader]: eventId }, limit: 1 })).models[0],
+    60_000,
+    3000,
+  );
+  const cause = request ? (request.rejection_cause ?? 'none (accepted)') : 'request not found';
+  record(
+    `poll: Event Gateway rejected the ${NOUN}'s request as NO_CONNECTION, and poll returned it`,
+    request?.rejection_cause === 'NO_CONNECTION',
+    fresh ? `rejection_cause: ${cause}` : `rejection_cause: ${cause}; the source had connections, so this run didn't cover the no-subscriptions path`,
+  );
 }
 
 type LocalContext = {
