@@ -16,6 +16,7 @@ import { callbackUrlCommand } from './host/callback-url-cli.js';
 import { CliListenError, DEFAULT_CLI_CONFIG, loginCli } from './host/cli-listen.js';
 import { startLocalRuntime, type LocalRuntime } from './host/local-runtime.js';
 import { CONFIG_FILES, loadConfig } from './host/load-config.js';
+import { saveGeneratedEnv } from './host/env-file.js';
 import { EMPTY_CONFIG, insertSource, missingEnvLines, referencedEnv, sourceSnippet, writeAtomically } from './host/sources-add.js';
 import { createBridgeServer } from './host/server.js';
 import { watchCommand, watchesCommand } from './host/watch-cli.js';
@@ -141,9 +142,15 @@ async function setup(configFile: string | undefined, { migrate: auto }: { migrat
     }
   }
   if (report.mcp.generated) {
-    const where = config.inbound === 'http' ? 'as a secret where the bridge runs (on Fly.io: fly secrets set)' : 'in .env';
-    console.log(`\nGenerated an MCP secret. Set this line ${where} before running serve, and keep it private (the URL is a credential):`);
-    console.log(`BRIDGE_MCP_SECRET=${report.mcp.secret}`);
+    // A local bridge reads .env: save the secret there, so nobody (an agent running setup included) copies it by hand.
+    const saved = config.inbound === 'cli' && saveGeneratedEnv(path.resolve('.env'), 'BRIDGE_MCP_SECRET', report.mcp.secret) === 'saved';
+    if (saved) {
+      console.log('\nGenerated an MCP secret and saved it in .env as BRIDGE_MCP_SECRET. Keep .env private: the secret is a credential.');
+    } else {
+      const where = config.inbound === 'http' ? 'as a secret where the bridge runs (on Fly.io: fly secrets set)' : 'in .env';
+      console.log(`\nGenerated an MCP secret. Set this line ${where} before running serve, and keep it private (the URL is a credential):`);
+      console.log(`BRIDGE_MCP_SECRET=${report.mcp.secret}`);
+    }
   }
   console.log(`\nMCP endpoint, with the header Authorization: Bearer <BRIDGE_MCP_SECRET>:\n  ${report.mcp.endpoint}`);
   if (config.auth.secretUrl) console.log(`MCP URL, with the secret in it, for clients that can't send a header (ChatGPT):\n  ${report.mcp.url}`);

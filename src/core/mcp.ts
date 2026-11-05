@@ -53,7 +53,7 @@ export function buildMcpServer(deps: {
     },
     async ({ name, eventId }) => {
       const lookup = history.lookup(name);
-      if (lookup === 'unknown') return error(`Unknown event name ${name}; events/list has the names`);
+      if (lookup === 'unknown') return error(`Unknown event name ${name}; list_sources has the names`);
       if (lookup === 'no-id-header') return error(`${name} events can't be looked up by id; use list_events with name ${name}`);
       const event = await history.get(name, eventId);
       return event ? json(event) : { content: [{ type: 'text', text: `No ${name} event ${eventId}` }], isError: true };
@@ -78,7 +78,7 @@ export function buildMcpServer(deps: {
       }),
     },
     async (args) => {
-      if (args.name !== undefined && history.lookup(args.name) === 'unknown') return error(`Unknown event name ${args.name}; events/list has the names`);
+      if (args.name !== undefined && history.lookup(args.name) === 'unknown') return error(`Unknown event name ${args.name}; list_sources has the names`);
       return json({ events: await history.recent(args) });
     },
   );
@@ -87,9 +87,10 @@ export function buildMcpServer(deps: {
     'list_sources',
     {
       description:
-        'List the configured event sources (the services events come from): each one\'s id, type, event names, and how many subscriptions it has. ' +
-        'Use it first, to find the event names that list_events, get_event, wait_for_event and poll_events take. ' +
-        "For each event's description and filters, see events/list (an MCP Events method, not a tool); for the events themselves, list_events.",
+        'List the configured event sources (the services events come from): each one\'s id, type, event names, the filters each event takes, and how many subscriptions it has. ' +
+        'Use it first, to find the event names that list_events, get_event, wait_for_event and poll_events take, ' +
+        'and the filters (the arguments of wait_for_event and poll_events): filters maps each event name to its argument names, each with a type and description. ' +
+        "For each event's description, see events/list (an MCP Events method, not a tool); for the events themselves, list_events.",
       // Answered from the bridge's config and loaded subscriptions, without calling Event Gateway.
       annotations: { readOnlyHint: true, openWorldHint: false },
       inputSchema: z.object({}),
@@ -100,16 +101,23 @@ export function buildMcpServer(deps: {
   const poll = deps.poll;
   if (poll) {
     const pollInput = {
-      name: z.string().describe('The event name, from events/list, such as fills.order.filled'),
-      arguments: z.record(z.string(), z.unknown()).optional().describe("Filters, as the event's inputSchema in events/list describes, e.g. { \"symbol\": \"AAPL\" }"),
+      name: z.string().describe('The event name, from list_sources (or events/list), such as github.issues'),
+      arguments: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          "Filters: only the argument names list_sources gives for the event under filters (its inputSchema in events/list), e.g. { \"repository\": \"owner/name\", \"actions\": [\"opened\"] } for github.issues. An unknown name or a wrong type is an error that lists the event's arguments.",
+        ),
       cursor: z.string().nullable().optional().describe('The cursor from your last call. Omit (or null) to start from now: the first call returns no events, only a cursor.'),
     };
-    // A ProtocolError (unknown name, bad arguments or cursor) becomes a tool error the model can read.
+    // A ProtocolError (unknown name, bad arguments or cursor) becomes a tool error the model can read, with its
+    // data.detail, which says which argument is wrong and which the event takes.
     const asTool = async (run: () => Promise<unknown>) => {
       try {
         return json(await run());
       } catch (caught) {
-        return error((caught as Error).message);
+        const detail = (caught as { data?: { detail?: unknown } }).data?.detail;
+        return error(typeof detail === 'string' ? `${(caught as Error).message}: ${detail}` : (caught as Error).message);
       }
     };
 

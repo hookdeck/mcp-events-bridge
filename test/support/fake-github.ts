@@ -3,14 +3,18 @@ export class FakeGithub {
   /** Hooks by hooks path, e.g. /repos/o/r/hooks. */
   readonly hooks = new Map<string, Array<{ id: number; events: string[]; config: { url: string; secret: string } }>>();
   readonly calls: string[] = [];
+  /** When set, every request fails with this status (for example 401 for a revoked token). */
+  failWith: number | undefined;
   private nextId = 1;
 
   readonly fetch = (async (input: string, init: RequestInit) => {
     const url = new URL(input);
     const method = init.method ?? 'GET';
     this.calls.push(`${method} ${url.pathname}`);
+    if (this.failWith !== undefined) return new Response('{"message":"Bad credentials"}', { status: this.failWith });
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    const match = /^(.*\/hooks)(?:\/(\d+))?$/.exec(url.pathname);
+    // GitHub's owner and repository names are case-insensitive.
+    const match = /^(.*\/hooks)(?:\/(\d+))?$/.exec(url.pathname.toLowerCase());
     if (!match) return new Response('{"message":"Not Found"}', { status: 404 });
     const [, path, id] = match as unknown as [string, string, string | undefined];
     const list = this.hooks.get(path) ?? [];

@@ -93,5 +93,24 @@ jobs:
 
       # test/server-json.test.ts already checked that server.json names this version.
       - run: ./mcp-publisher validate
+
+      # The registry checks that npm serves this version, and npm can take a few minutes
+      # after `npm publish` succeeds (about 2 for 0.9.0, when publish failed with a 404).
+      - name: Wait for npm to serve this version
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          for attempt in $(seq 1 40); do
+            if [ "$(npm view "$NAME@$VERSION" version 2>/dev/null || true)" = "$VERSION" ]; then
+              echo "npm serves $NAME@$VERSION"
+              exit 0
+            fi
+            echo "npm doesn't serve $NAME@$VERSION yet ($attempt/40); waiting 15s"
+            sleep 15
+          done
+          echo "::error::npm still doesn't serve $NAME@$VERSION after 10 minutes. Re-run this job once it does."
+          exit 1
+
       - run: ./mcp-publisher login github-oidc
       - run: ./mcp-publisher publish

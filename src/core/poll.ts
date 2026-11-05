@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-json.js';
-import type { Catalog } from './catalog.js';
+import { argumentsError, type Catalog } from './catalog.js';
 import { internalError, invalidParams, notFound } from './errors.js';
 import { matchesFilter } from './filter.js';
-import type { EventHistory, PastEvent } from './event-history.js';
+import { isEventRequest, type EventHistory, type PastEvent } from './event-history.js';
 import { HookdeckApiError, type HookdeckClient, type HookdeckRequest, type ResponseMeta } from './hookdeck.js';
 
 /*
@@ -70,7 +70,7 @@ interface CursorState {
 }
 
 interface Listing {
-  /** Accepted requests, oldest first. */
+  /** Requests, oldest first: accepted ones, and those rejected only because the source had no connection. */
   requests: HookdeckRequest[];
   /** Event Gateway's clock when the listing was taken. */
   t: number;
@@ -78,11 +78,11 @@ interface Listing {
   until?: number;
 }
 
-type ListingClient = Pick<HookdeckClient, 'listAcceptedRequests'>;
+type ListingClient = Pick<HookdeckClient, 'listPollRequests'>;
 
 export class RateLimitedError extends Error {}
 
-/** Reads accepted requests from `from` on, up to `maxPages`, with the meta of the last response. */
+/** Reads the requests from `from` on, up to `maxPages`, with the meta of the last response. */
 async function listFrom(hookdeck: ListingClient, sourceIds: string[], from: number, maxPages: number): Promise<{ requests: HookdeckRequest[]; meta: ResponseMeta; until?: number }> {
   const requests: HookdeckRequest[] = [];
   let next: string | undefined;
@@ -90,7 +90,7 @@ async function listFrom(hookdeck: ListingClient, sourceIds: string[], from: numb
   for (let i = 0; i < maxPages; i++) {
     let result;
     try {
-      result = await hookdeck.listAcceptedRequests({ source_ids: sourceIds, created_at_gte: new Date(from).toISOString(), next });
+      result = await hookdeck.listPollRequests({ source_ids: sourceIds, created_at_gte: new Date(from).toISOString(), next });
     } catch (error) {
       if (error instanceof HookdeckApiError && error.status === 429) throw new RateLimitedError('Event Gateway API rate limit reached');
       throw error;
@@ -106,7 +106,7 @@ async function listFrom(hookdeck: ListingClient, sourceIds: string[], from: numb
 }
 
 /**
- * The shared listing: the accepted requests of every source polled in the last minute, from LOOKBACK_MS (plus
+ * The shared listing: the requests of every source polled in the last minute, from LOOKBACK_MS (plus
  * WINDOW_EXTRA_MS) before Event Gateway's now. Fetched when a poll finds it older than the interval or missing its
  * source; polls that arrive during a fetch share it, and its failure. After a failure, no fetch until `retryAt`. The
  * interval grows as the API's rate limit runs low.
@@ -263,7 +263,7 @@ export class PollService {
     try {
       args = entry.event.parseArguments(rawArgs);
     } catch (error) {
-      throw invalidParams('arguments do not match the inputSchema', { detail: (error as Error).message });
+      throw argumentsError(entry.name, entry.event, error);
     }
     const { cursor, maxAgeMs, maxEvents } = params;
     if (cursor !== undefined && cursor !== null && typeof cursor !== 'string') throw invalidParams('cursor must be a string or null', { field: 'cursor' });
@@ -371,10 +371,11 @@ export class PollService {
     let hasMore = false;
     const holdAt = (at: number) => (hold = hold === undefined ? at : Math.min(hold, at));
 
-    // Every verified request is an event candidate (Event Gateway rejected the rest at the source); a repeat (a sender
+    // Every verified request is an event candidate, including one rejected only because the source had no connection
+    // (no subscriptions yet); a request that failed verification isn't, and can't hold the watermark. A repeat (a sender
     // resending, or a request retried) has an event id already returned, and is skipped.
     for (const request of listing.requests) {
-      if (request.source_id !== sourceId) continue;
+      if (request.source_id !== sourceId || !isEventRequest(request)) continue;
       const created = Date.parse(request.created_at);
       if (created < start) continue;
       const event = this.deps.history.toEvent(entry.providerId, request);

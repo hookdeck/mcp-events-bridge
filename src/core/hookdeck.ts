@@ -297,15 +297,16 @@ export class HookdeckClient {
   }
 
   /**
-   * Accepted requests to several sources, oldest first, with headers and body: poll mode's listing. One call covers
-   * every source (a repeated `source_id`); the meta has Event Gateway's clock and the rate limit.
+   * Requests to several sources, oldest first, with headers and body: poll mode's listing. One call covers every
+   * source (a repeated `source_id`); the meta has Event Gateway's clock and the rate limit. Not only accepted ones: a
+   * source with no subscriptions has no connection, and Event Gateway rejects its requests as `NO_CONNECTION` while
+   * keeping them, verified, with their data. `isEventRequest` decides which are events.
    */
-  async listAcceptedRequests(query: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }): Promise<{ page: Page<HookdeckRequest>; meta: ResponseMeta }> {
+  async listPollRequests(query: { source_ids: string[]; created_at_gte: string; limit?: number; next?: string }): Promise<{ page: Page<HookdeckRequest>; meta: ResponseMeta }> {
     const { body, meta } = await this.apiWithMeta<Page<HookdeckRequest>>('/requests', {
       retry: false,
       query: {
         source_id: query.source_ids,
-        status: 'accepted',
         include: 'data',
         'created_at[gte]': query.created_at_gte,
         limit: query.limit ?? 255,

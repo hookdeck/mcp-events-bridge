@@ -132,7 +132,7 @@ npm view @hookdeck/mcp-events-bridge dist-tags                                  
 - **The run failed before `npm publish`** (tag mismatch, tests): nothing was published. Fix it on `main`, delete the GitHub release and its tag (`gh release delete vX.Y.Z --cleanup-tag`, with the maintainer's yes), and release again.
 - **`npm publish` failed with an auth error:** trusted publishing isn't set up (see **One-time setup**). Once it is, re-run the failed job (`gh run rerun <id> --failed`); no new release needed.
 - **Published:** check `npx @hookdeck/mcp-events-bridge@X.Y.Z --version` and that the package page shows provenance.
-- **MCP Registry:** for a stable release, the `publish-mcp-registry` job succeeded and `curl -s 'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.hookdeck/mcp-events-bridge'` lists `X.Y.Z`. If only that job failed, npm has the release: fix the cause and re-run the job (`gh run rerun <id> --failed`).
+- **MCP Registry:** for a stable release, the `publish-mcp-registry` job succeeded and `curl -s 'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.hookdeck/mcp-events-bridge'` lists `X.Y.Z`. The job waits up to 10 minutes for npm to serve the version first, since the registry rejects a version npm doesn't serve yet (npm took about 2 minutes for 0.9.0). If only that job failed, npm has the release: fix the cause and re-run the job (`gh run rerun <id> --failed`).
 
 ## Safety
 

@@ -9,7 +9,8 @@ import { ensureTransformations } from './transformation.js';
  * `setup`: creates or updates everything the config describes in Event Gateway and at services: each source, its
  * webhook at the service, and the transformation its subscriptions share. Idempotent: a webhook is registered once
  * and its id is kept in the source description, so re-running doesn't create another. If the enabled events or the
- * registration target (for example GitHub repositories) change, the webhook is updated. Subscriptions themselves are
+ * registration target (for example GitHub repositories) change, the webhook is updated; if it was deleted at the
+ * service (for sources that can check, `webhookExists`), it's registered again. Subscriptions themselves are
  * connections the bridge creates on each source when clients subscribe.
  */
 
@@ -129,6 +130,22 @@ export async function ensureSource(hookdeck: HookdeckClient, provider: ResolvedS
   return { source, existing, configured, missing };
 }
 
+/**
+ * Whether the webhook saved in the source description is still at the service. True when the source can't check, and
+ * when the check fails for another reason than the webhook being gone (a key without read access, the network): setup
+ * then keeps the saved webhook, as before it checked, and warns.
+ */
+async function savedWebhookExists(deps: SetupDeps, provider: ResolvedSource, sourceUrl: string, webhookId: string, log: (message: string) => void) {
+  const { definition } = provider;
+  if (!definition.webhookExists) return true;
+  try {
+    return await definition.webhookExists({ webhookId, sourceUrl, options: provider.options, fetch: deps.fetch });
+  } catch (error) {
+    log(`warning: could not confirm the ${definition.displayName} webhook saved on ${providerSourceName(provider.id)} still exists, so keeping it: ${(error as Error).message}`);
+    return true;
+  }
+}
+
 async function setupProvider(deps: SetupDeps, provider: ResolvedSource) {
   const { config, hookdeck } = deps;
   const log = deps.log ?? (() => {});
@@ -164,10 +181,17 @@ async function setupProvider(deps: SetupDeps, provider: ResolvedSource) {
     const changed =
       !sameList(existing.events, provider.events) || existing.target !== target || (configured !== undefined && configured !== secret);
     if (typeof secret === 'string' && secret) {
-      if (!changed) return report('existing');
-      log(`the ${definition.displayName} events, registration target or secret changed; updating the webhook`);
-      currentSecret = secret;
-      previousId = existing.webhookId;
+      if (!changed) {
+        if (await savedWebhookExists(deps, provider, source.url, existing.webhookId, log)) return report('existing');
+        // Deleted at the service: register it again, as on a first run. The source's secret is offered for reuse, so
+        // a service that lets the caller choose it (GitHub) keeps the one its other webhooks and Event Gateway have.
+        log(`the ${definition.displayName} webhook saved on ${sourceName} is missing at ${definition.displayName}; registering it again`);
+        currentSecret = secret;
+      } else {
+        log(`the ${definition.displayName} events, registration target or secret changed; updating the webhook`);
+        currentSecret = secret;
+        previousId = existing.webhookId;
+      }
     } else {
       // The source lost its signing secret: replace the provider webhook, since its secret can't be read back.
       log(`${sourceName} has no signing secret; replacing the ${definition.displayName} webhook`);

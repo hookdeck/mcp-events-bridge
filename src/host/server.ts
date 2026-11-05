@@ -3,7 +3,7 @@ import http from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler, type McpServer } from '@modelcontextprotocol/server';
 import { CallbackRegistry, type CallbackSettings } from '../core/callbacks.js';
-import { Catalog, descriptionWarnings } from '../core/catalog.js';
+import { Catalog, describeFilters, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
@@ -184,8 +184,11 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
   const sources = () =>
     config.sources.map((p) => {
       // MCP names, as in events/list and events/subscribe.
-      const events = catalog.forProvider(p.id).map((e) => e.name);
-      return { id: p.id, type: p.definition.type, events, subscriptions: store.list().filter((s) => events.includes(s.name)).length };
+      const entries = catalog.forProvider(p.id);
+      const events = entries.map((e) => e.name);
+      // Each event's filters, for clients with tools only, which can't call events/list. `events` stays a list of names.
+      const filters = Object.fromEntries(entries.map((e) => [e.name, describeFilters(e.event.inputSchema)]));
+      return { id: p.id, type: p.definition.type, events, filters, subscriptions: store.list().filter((s) => events.includes(s.name)).length };
     });
 
   const localAgents = options.localAgents ?? config.inbound === 'cli';
