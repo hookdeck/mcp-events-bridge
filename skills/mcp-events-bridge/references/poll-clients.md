@@ -48,7 +48,7 @@ codex exec "Wait for new comments on issues in <owner>/<repo> (github.issue_comm
 
 Codex calls `wait_for_event` and keeps calling it with the `cursor` it returned. Ask "what events can the bridge give me?" for the names and filters your bridge offers.
 
-**Tested:** codex-cli 0.154.0, `codex exec`, against the deployed bridge running 0.8.1, on 5 Nov 2026. Codex called `wait_for_event` in a loop without being told how, and received 2 of 2 `github.issue_comment` events: about 3 s after each webhook when a call was waiting, and about 6 s when the webhook arrived between calls, with none lost. Calls with no events returned after about 44 s, under Codex's default 60 s tool timeout: if you set a shorter one for the server (`tool_timeout_sec`), keep it above 50 s, the longest `wait_for_event` waits. Interactive Codex wasn't tested.
+**Tested:** codex-cli 0.154.0, `codex exec`, against the deployed bridge running 0.8.1, on 5 Nov 2026. Codex called `wait_for_event` in a loop without being told how, and received 2 of 2 `github.issue_comment` events: about 3 s after each webhook when a call was waiting, and about 6 s when the webhook arrived between calls, with none lost. Calls with no events returned after about 44 s, well under Codex's default MCP tool timeout of 300 s. If you set a shorter one for the server (`tool_timeout_sec`), keep it above 50 s, the longest `wait_for_event` waits. Interactive Codex wasn't tested.
 
 ## Cursor
 
