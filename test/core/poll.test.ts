@@ -29,7 +29,7 @@ interface FakeRequest {
   kind: 'event' | 'duplicate' | 'filtered' | 'cli-disconnected';
   symbol: string;
   deliveryId: string;
-  /** Rejected at the source: `NO_CONNECTION` (no subscriptions, so no connection) or a failed signature. */
+  /** Rejected at the source: `NO_CONNECTION` (no webhook subscriptions, so no connection) or a failed signature. */
   rejection?: 'NO_CONNECTION' | 'VERIFICATION_FAILED';
 }
 
@@ -171,7 +171,7 @@ describe('poll mode: cursor', () => {
     expect(result.events.map((e) => e.eventId).sort()).toEqual(['aapl', 'filtered', 'laptop-asleep']);
   });
 
-  it('returns requests to a source with no subscriptions (rejected as NO_CONNECTION), but not ones that failed verification', async () => {
+  it('returns requests to a source with no webhook subscriptions (rejected as NO_CONNECTION), but not ones that failed verification', async () => {
     const { listing, service } = setup();
     const start = await service.poll({ name: NAME });
     listing.add({ createdAt: T0 + 1000, deliveryId: 'no-subscriptions', rejection: 'NO_CONNECTION' });
@@ -280,7 +280,7 @@ describe('poll mode: cursor', () => {
   });
 });
 
-describe('poll mode: sources with and without subscriptions (NO_CONNECTION)', () => {
+describe('poll mode: sources with and without webhook subscriptions (NO_CONNECTION)', () => {
   // A source has a connection only per subscription: with none, Event Gateway rejects each request as NO_CONNECTION
   // (and keeps it); once something subscribes, requests are accepted; when the last subscription goes, NO_CONNECTION again.
 

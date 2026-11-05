@@ -6,7 +6,7 @@ allowed-tools: Bash(events-bridge watches *)
 
 # Watch MCP Events bridge events
 
-This plugin runs a monitor for the whole session that follows this project's watch list. Each watch is an event name and its filters. When an event happens, you get a monitor notification, and you should tell the user about it, briefly, without being asked.
+This plugin runs a monitor for the whole session that follows this project's watch list. Each watch is an event type name and its arguments. When an event happens, you get a monitor notification, and you should tell the user about it, briefly, without being asked.
 
 ## Before you start: is the plugin installed?
 
@@ -18,9 +18,9 @@ This skill is part of the bridge's Claude Code plugin, `mcp-events-bridge`. The 
 - **In Claude Code:** install the plugin with `/plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge` (Claude Code 2.1.275 or later). It asks for the bridge's MCP endpoint and secret. Then start a new session. See the [Claude Code guide](https://github.com/hookdeck/mcp-events-bridge/blob/main/skills/mcp-events-bridge/references/claude-code.md).
 - **In another agent:** use the bridge's `wait_for_event` and `poll_events` MCP tools, which wait for events while you work on a request. If you can run a command in the background and act on its output, `npx @hookdeck/mcp-events-bridge watch <event...>` prints one JSON line per event. It reads the bridge's MCP endpoint from `BRIDGE_MCP_URL` and its secret from `BRIDGE_MCP_SECRET`.
 
-## Find event names and filters
+## Find event types and their arguments
 
-Call the `events-bridge` MCP server's `list_sources` tool (`list_providers` on a bridge before 0.6.0). Event names look like `github.issue_comment` or `resend.email.received`. Its `filters` field maps each event name to the filters it takes, each with a type and description (for GitHub: `repository` as owner/name, `actions` as a list, `sender`). An older bridge's `list_sources` has no `filters`; either way, `watches add` checks the filters with the bridge and says which one is wrong.
+Call the `events-bridge` MCP server's `list_sources` tool (`list_providers` on a bridge before 0.6.0). Each source's `events` lists its event types: each one's `name` (such as `github.issue_comment` or `resend.email.received`), `description`, and `inputSchema`, which describes the arguments it takes (for GitHub: `repository` as owner/name, `actions` as a list, `sender`). A bridge before 0.10.0 lists only the names. Either way, `watches add` checks the arguments (`--filter key=value`) with the bridge and says which one is wrong.
 
 ## Add, remove and list watches
 
@@ -34,7 +34,7 @@ events-bridge watches list --store "${CLAUDE_PLUGIN_DATA}" --project "${CLAUDE_P
 ```
 
 - `--filter` is repeatable. A list value is JSON: `--filter 'actions=["opened","closed"]'`.
-- `add` checks the name and filters with the bridge, and says why if they're wrong. `remove` without `--filter` removes every watch for that event name.
+- `add` checks the name and arguments with the bridge, and says why if they're wrong. `remove` without `--filter` removes every watch for that event name.
 - The monitor picks up a change within a few seconds. A new watch starts from now. Don't start a watch with the Monitor tool yourself: the plugin's monitor already runs.
 - Watches belong to this project and last between sessions. When a session starts, events that happened since the last session arrive first (up to 24 hours old).
 

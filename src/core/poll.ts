@@ -372,7 +372,7 @@ export class PollService {
     const holdAt = (at: number) => (hold = hold === undefined ? at : Math.min(hold, at));
 
     // Every verified request is an event candidate, including one rejected only because the source had no connection
-    // (no subscriptions yet); a request that failed verification isn't, and can't hold the watermark. A repeat (a sender
+    // (no webhook subscriptions yet); a request that failed verification isn't, and can't hold the watermark. A repeat (a sender
     // resending, or a request retried) has an event id already returned, and is skipped.
     for (const request of listing.requests) {
       if (request.source_id !== sourceId || !isEventRequest(request)) continue;

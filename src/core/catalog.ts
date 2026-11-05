@@ -43,17 +43,17 @@ function schemaType(schema: unknown): string {
   return typeof s.type === 'string' ? s.type : 'unknown';
 }
 
-export interface FilterDescription {
+export interface ArgumentDescription {
   type: string;
   description?: string;
   required?: true;
 }
 
 /**
- * The filters (subscribe and poll arguments) an event takes, from its inputSchema: each one's type and description.
- * For list_sources, so a client with tools only, which can't call events/list, can find them.
+ * The arguments an event type takes, from its inputSchema: each one's type and description. For the error that
+ * names a wrong argument, so an agent can correct the call.
  */
-export function describeFilters(inputSchema: JsonSchema): Record<string, FilterDescription> {
+export function describeArguments(inputSchema: JsonSchema): Record<string, ArgumentDescription> {
   const properties = (inputSchema.properties ?? {}) as Record<string, Record<string, unknown>>;
   const required = Array.isArray(inputSchema.required) ? (inputSchema.required as string[]) : [];
   return Object.fromEntries(
@@ -88,8 +88,8 @@ function describeArgumentsError(error: unknown): string {
  * field and lists the arguments the event takes, so an agent can correct the call.
  */
 export function argumentsError(name: string, event: Pick<SourceEvent, 'inputSchema'>, error: unknown) {
-  const filters = Object.entries(describeFilters(event.inputSchema));
-  const takes = filters.length ? `${name} takes ${filters.map(([key, f]) => `${key} (${f.type})`).join(', ')}` : `${name} takes no arguments`;
+  const args = Object.entries(describeArguments(event.inputSchema));
+  const takes = args.length ? `${name} takes ${args.map(([key, f]) => `${key} (${f.type})`).join(', ')}` : `${name} takes no arguments`;
   return invalidParams('arguments do not match the inputSchema', { detail: `${describeArgumentsError(error)}. ${takes}` });
 }
 
