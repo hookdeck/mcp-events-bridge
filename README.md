@@ -339,7 +339,7 @@ Every deployment needs these, whichever sources it uses.
 | --- | --- | --- |
 | `HOOKDECK_API_KEY` | Yes | Project API key, for the Event Gateway API and the Publish API (which replay uses) |
 | `HOOKDECK_SIGNING_SECRET` | Yes | Verifies Event Gateway's signature on the notifications it sends the bridge |
-| `BRIDGE_MCP_SECRET` | To run `serve` | The MCP endpoint's secret: sent as `Authorization: Bearer <BRIDGE_MCP_SECRET>` to `/mcp`, or in the URL (`/mcp/<BRIDGE_MCP_SECRET>`) by clients that can't send a header, such as ChatGPT. `setup` generates one |
+| `BRIDGE_MCP_SECRET` | To run `serve` | The MCP endpoint's secret: sent as `Authorization: Bearer <BRIDGE_MCP_SECRET>` to `/mcp`, or in the URL (`/mcp/<BRIDGE_MCP_SECRET>`) by clients that can't send a header, such as ChatGPT. `setup` generates one, and saves it in `.env` for a local bridge |
 | `BRIDGE_MCP_SECRET_URL` | No | `false` turns the URL form (`/mcp/<BRIDGE_MCP_SECRET>`) off, leaving the header; for a bridge no ChatGPT connects to. Default `true` |
 | `BRIDGE_INBOUND` | No | How Event Gateway's notifications reach the bridge: `cli` (through `hookdeck listen`; also what offers callback URLs to local agents) or `http` (a public URL). Default: `http` on Fly.io, `cli` elsewhere |
 | `BRIDGE_PUBLIC_URL` | For `http` inbound off Fly.io | The bridge's public URL. Default on Fly.io: `https://$FLY_APP_NAME.fly.dev` |
