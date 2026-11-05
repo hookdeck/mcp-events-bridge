@@ -131,6 +131,25 @@ describe('GitHub provider', () => {
     expect(gh.calls.filter((c) => c.startsWith('PATCH'))).toHaveLength(1);
   });
 
+  it('checks the webhooks still exist: in every repository, by source URL, and not in manual mode', async () => {
+    const gh = new FakeGithub();
+    const sourceUrl = 'https://hkdk.events/abc';
+    const options = { token: 'ghp_test', scope: { repos: ['example-org/widgets', 'example-org/gadgets'] } };
+    const { webhookId } = await githubProvider.register!({ sourceUrl, providerEvents: ['issues'], options, fetch: gh.fetch });
+    const exists = () => githubProvider.webhookExists!({ webhookId, sourceUrl, options, fetch: gh.fetch });
+    await expect(exists()).resolves.toBe(true);
+
+    gh.hooks.set('/repos/example-org/gadgets/hooks', [{ id: 99, events: ['push'], config: { url: 'https://other.example.com', secret: 'x' } }]);
+    await expect(exists()).resolves.toBe(false);
+
+    gh.failWith = 404;
+    await expect(exists()).rejects.toThrow(/404/);
+
+    const manual = new FakeGithub();
+    await expect(githubProvider.webhookExists!({ webhookId: 'manual', sourceUrl, options: { webhookSecret: 'a-secret-of-16-chars-plus' }, fetch: manual.fetch })).resolves.toBe(true);
+    expect(manual.calls).toEqual([]);
+  });
+
   it('sends the API version and token, and rejects badly formed repositories', async () => {
     const seen: Array<Record<string, string>> = [];
     const fetchFn = (async (_url: string, init: RequestInit) => {

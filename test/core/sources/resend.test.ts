@@ -117,6 +117,22 @@ describe('Resend register and unregister', () => {
     ).rejects.toThrow(/401/);
   });
 
+  it('checks the webhook still exists: true when Resend has it, false on 404, and rejects on other failures', async () => {
+    const calls: string[] = [];
+    let status = 200;
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push(`${init.method} ${url}`);
+      return new Response(status === 200 ? '{"object":"webhook","id":"wh_1"}' : '{"message":"no"}', { status });
+    }) as unknown as typeof fetch;
+    const exists = () => resend.webhookExists!({ webhookId: 'wh_1', sourceUrl: 'https://hkdk.events/abc', options: { apiKey: 're_test' }, fetch: fetchFn });
+    await expect(exists()).resolves.toBe(true);
+    expect(calls).toEqual(['GET https://api.resend.com/webhooks/wh_1']);
+    status = 404;
+    await expect(exists()).resolves.toBe(false);
+    status = 401;
+    await expect(exists()).rejects.toThrow(/401/);
+  });
+
   it('deletes the webhook', async () => {
     const calls: string[] = [];
     const fetchFn = (async (url: string, init: RequestInit) => {

@@ -116,6 +116,13 @@ export interface SourceDefinition<Options = Record<string, unknown>, Config = an
    */
   register?(ctx: RegisterContext<Options>): Promise<{ webhookId: string; signingSecret: string }>;
   unregister?(ctx: { webhookId: string; sourceUrl: string; options: Options; fetch: typeof fetch }): Promise<void>;
+  /**
+   * Whether the webhook `register` returned still exists at the service. On a re-run with nothing changed, setup asks
+   * before reporting the webhook as existing, and registers it again when this resolves false (someone deleted it at
+   * the service). Rejects when it can't tell (for example the key can't read webhooks, or the network fails): setup
+   * then keeps the saved webhook and warns. Without it, setup trusts the saved webhook id.
+   */
+  webhookExists?(ctx: { webhookId: string; sourceUrl: string; options: Options; fetch: typeof fetch }): Promise<boolean>;
 }
 
 /** `Name <addr@example.com>` or `addr@example.com` to `addr@example.com`, lower-cased. For parsing arguments. */

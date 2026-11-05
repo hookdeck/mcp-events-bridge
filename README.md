@@ -110,7 +110,7 @@ You need:
    npx mcp-events-bridge setup
    ```
 
-   The first run generates an MCP secret: add it to `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run, and updates the webhooks when you add sources or change events or repositories. Removing a source or a repository deletes nothing: delete its webhook (and its Event Gateway source) yourself. Upgrading from 0.7, setup offers to migrate your subscriptions: see [`docs/UPGRADING.md`](docs/UPGRADING.md).
+   The first run generates an MCP secret: add it to `.env` as `BRIDGE_MCP_SECRET`. Setup is safe to re-run, and updates the webhooks when you add sources or change events or repositories. A Resend or GitHub webhook deleted at the service is registered again. Removing a source or a repository deletes nothing: delete its webhook (and its Event Gateway source) yourself. Upgrading from 0.7, setup offers to migrate your subscriptions: see [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 5. **Run the bridge:**
 
@@ -488,6 +488,8 @@ Three TypeScript MCP client libraries have experimental MCP Events support, and 
 | ``Config: `providers` in the config is now `sources` ...`` (or another name "removed in 0.8.0") | A name deprecated in 0.6.0 | Rename it as the message says |
 | `serve` logs `subscription ... is for "...", which this bridge doesn't offer` | The source was removed, its `id` renamed, or the subscription is from 0.1.0 (before `{id}.{event}` names); or it belongs to another bridge in the same Hookdeck project | The agent subscribes again, to a name from `events/list`; ignore another bridge's |
 | `events/subscribe` fails with "Unknown event" | An old or wrong name | Use a name from `events/list` |
+| No events from Resend or GitHub reach the source | The webhook was deleted at the service | Run `setup` again: it checks the saved webhook, and registers it again if it's missing |
+| `setup` logs `warning: could not confirm the <service> webhook saved on bridge-<id> still exists` | The API key or token can't read webhooks, or the service didn't answer | Setup kept the saved webhook. Fix the key or token (GitHub: Webhooks permission) and run `setup` again |
 | A sender gets 401 | Wrong signature, header, encoding or secret | Match the source's `verification` or secret; a new secret can take about a minute to apply |
 | An agent doesn't get an event | The subscription's filter didn't match, the event type isn't enabled, or the callback is failing | In the Event Gateway dashboard, the subscription's connection, `mcp-sub-<id>`, shows each request: `FILTERED` for a filter or an event type it doesn't offer, or the failed attempts. `list_sources` shows each source's events and subscriptions |
 | `serve` logs `warning: <name> is a pass-through callback URL` | A subscription uses a callback URL created without a secret | Expected for Hermes Agent and the client libraries; the receiver must verify every delivery |

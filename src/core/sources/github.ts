@@ -340,4 +340,18 @@ export const githubProvider: SourceDefinition<GithubOptions> = {
       }
     }
   },
+
+  /**
+   * True when every repository in scope (or the organization) has a webhook delivering to the source URL. Webhooks
+   * are matched by URL, so there's no id to look up. A failed listing (GitHub answers 404 for a repository the token
+   * can't see) rejects rather than resolving false. Manual-mode webhooks are added by hand, with no token to check.
+   */
+  async webhookExists({ webhookId, sourceUrl, options, fetch: fetchFn }) {
+    if (webhookId === MANUAL || !options.scope) return true;
+    if (!options.token) throw new Error('github: a token is needed to check the webhooks (GITHUB_TOKEN)');
+    for (const path of hookPaths(options.scope)) {
+      if (!(await hooksForUrl(fetchFn, options.token, path, sourceUrl)).length) return false;
+    }
+    return true;
+  },
 };
