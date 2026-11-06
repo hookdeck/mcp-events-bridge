@@ -28,6 +28,8 @@ The header contains `BRIDGE_MCP_SECRET`, so mind where Claude Code stores it:
 
 **Check:** `claude mcp list` shows `events-bridge` as connected, and `/mcp` in a session lists its tools.
 
+**Or with the lite plugin,** which adds this MCP server, with the endpoint and secret in Claude Code's secure storage, and a `wait` skill for section 2. It runs nothing in the background. It's the version for Claude's plugin directory, and is also in Hookdeck's marketplace: `/plugin install mcp-events-bridge-lite --marketplace hookdeck/mcp-events-bridge`. Use it or the full plugin (section 3), not both: both add the same MCP server. From the directory, it shows a warning that `events-bridge` is an unregistered MCP server: that's expected, because it's the user's own bridge, not a server Hookdeck runs.
+
 ## 2. Ask for events
 
 Name the event type and its arguments, and ask Claude to keep waiting. The examples here use the GitHub source, set up for the repository; ask "what events can the bridge give me?" to see the events and filters your bridge offers.
@@ -48,7 +50,7 @@ Claude calls `wait_for_event`, which returns as soon as there are events, or wit
 /plugin install mcp-events-bridge --marketplace hookdeck/mcp-events-bridge
 ```
 
-(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP endpoint (`https://<bridge>/mcp`, or `http://127.0.0.1:8080/mcp`) and its secret (`BRIDGE_MCP_SECRET`, which the plugin sends as `Authorization: Bearer`), after you choose where to install the plugin, and keeps both in secure storage. An endpoint with the secret in it (`/mcp/<BRIDGE_MCP_SECRET>`), with the secret field left empty, also works. If you skip it (Esc), the plugin still installs and its monitor starts, but it can't reach the bridge: set the URL with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session. To set it from a script without it showing on screen, pipe it in: `printf '{"mcp_url":"%s"}' "$BRIDGE_MCP_URL" | claude plugin configure mcp-events-bridge@hookdeck --values-stdin`, then start a new session. The plugin adds the bridge as an MCP server, so you don't need step 1 as well. Installed from Claude's plugin directory, the plugin shows a warning that `events-bridge` is an unregistered MCP server: that's expected, because it's the user's own bridge, not a server Hookdeck runs.
+(Before Claude Code 2.1.275: `/plugin marketplace add hookdeck/mcp-events-bridge`, then `/plugin install mcp-events-bridge@hookdeck`.) Claude Code asks for the bridge's MCP endpoint (`https://<bridge>/mcp`, or `http://127.0.0.1:8080/mcp`) and its secret (`BRIDGE_MCP_SECRET`, which the plugin sends as `Authorization: Bearer`), after you choose where to install the plugin, and keeps both in secure storage. An endpoint with the secret in it (`/mcp/<BRIDGE_MCP_SECRET>`), with the secret field left empty, also works. If you skip it (Esc), the plugin still installs and its monitor starts, but it can't reach the bridge: set the URL with `/plugin configure mcp-events-bridge@hookdeck`, then start a new session. To set it from a script without it showing on screen, pipe it in: `printf '{"mcp_url":"%s"}' "$BRIDGE_MCP_URL" | claude plugin configure mcp-events-bridge@hookdeck --values-stdin`, then start a new session. The plugin adds the bridge as an MCP server, so you don't need step 1 as well. This plugin isn't in Claude's plugin directory, which doesn't accept monitors from Hookdeck yet.
 
 Then ask, in any project:
 

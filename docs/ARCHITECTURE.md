@@ -400,6 +400,11 @@ Built 9 Oct ([#26](https://github.com/hookdeck/mcp-events-bridge/issues/26), [#4
 - The bridge as an **MCP server**, `url: ${user_config.mcp_url}`, a sensitive option kept in secure storage. Monitor commands can't read user config, so a `SessionStart` hook (`scripts/session-start.sh`) copies it to `${CLAUDE_PLUGIN_DATA}/mcp-url` (mode 0600) for `watch`.
 - `bin/events-bridge` runs `npx -y @hookdeck/mcp-events-bridge@<version>`, written out in full so Claude's plugin directory can check the pin. (Until 0.8.1, `MCP_EVENTS_BRIDGE_CLI` could run a checkout instead; the directory refuses a computed command.)
 
+**The lite plugin** (`plugins/mcp-events-bridge-lite`, `mcp-events-bridge-lite@hookdeck`), for Claude's plugin directory: the same MCP server and options, and a `wait` skill for `wait_for_event`, with no hook, monitor or `bin/`. The directory's check on 6 Nov refused the full plugin (submitted 4 Nov) with `LOCAL_CODE_HOOK_COMMAND` and `LOCAL_CODE_MONITOR`: it accepts command hooks and monitors only from Verified organizations, which Anthropic chooses, with no way to apply yet. Without a hook, nothing can hand the plugin's user config to a command, so the lite plugin can't run `watch` either; Claude hears about events only while it's working on a request. `test/plugin.test.ts` keeps it free of anything that runs on the user's machine.
+
+- **Tested 6 Nov (Claude Code 2.1.319, `claude -p`, Opus 5.5):** installed from a throwaway local marketplace and configured with `--values-stdin`, against the Fly bridge. Asked "Tell me when the next email arrives at my inbox, summarize it, then stop", Claude loaded the `wait` skill itself, called `list_sources`, then `wait_for_event` for `resend.email.received`, and reported a Resend test email about 3 seconds after it was sent (35 s and 6 turns in all).
+- **With both plugins installed,** `claude mcp list` showed only one `events-bridge` server, the full plugin's, which share the same URL; the lite plugin's appeared once the full one was disabled. Hence "install one or the other" in both READMEs.
+
 Limits: plugin monitors run only in interactive sessions (not `claude -p`); two sessions in one project each hear every event and share the saved cursors; events from more than 24 hours before a session starts are skipped.
 
 ### MCP Events clients
