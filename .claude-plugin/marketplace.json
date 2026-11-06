@@ -7,6 +7,11 @@
       "name": "mcp-events-bridge",
       "source": "./plugins/mcp-events-bridge",
       "description": "Watch MCP Events bridge events (GitHub, Resend, webhooks) in the background: Claude is told as each one happens."
+    },
+    {
+      "name": "mcp-events-bridge-lite",
+      "source": "./plugins/mcp-events-bridge-lite",
+      "description": "Wait for MCP Events bridge events (GitHub, Resend, webhooks) while Claude works on a request, with nothing running in the background. Install this or mcp-events-bridge, not both."
     }
   ]
 }

@@ -1,0 +1,30 @@
+{
+  "name": "mcp-events-bridge-lite",
+  "displayName": "MCP Events bridge lite",
+  "version": "0.10.0",
+  "description": "Wait for MCP Events bridge events (GitHub, Resend, webhooks) while Claude works on a request: Claude is told as each one happens.",
+  "author": { "name": "Hookdeck", "url": "https://hookdeck.com" },
+  "homepage": "https://github.com/hookdeck/mcp-events-bridge/blob/main/plugins/mcp-events-bridge-lite/README.md",
+  "repository": "https://github.com/hookdeck/mcp-events-bridge",
+  "license": "MIT",
+  "privacyPolicyUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/plugins/mcp-events-bridge-lite/README.md#privacy",
+  "supportUrl": "https://github.com/hookdeck/mcp-events-bridge/issues",
+  "documentationUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/skills/mcp-events-bridge/references/claude-code.md",
+  "termsOfServiceUrl": "https://github.com/hookdeck/mcp-events-bridge/blob/main/LICENSE",
+  "keywords": ["mcp", "events", "webhooks", "hookdeck"],
+  "userConfig": {
+    "mcp_url": {
+      "type": "string",
+      "title": "Bridge MCP endpoint",
+      "description": "Your bridge's MCP endpoint, https://<bridge>/mcp (or http://127.0.0.1:8080/mcp for a local bridge). The older form with the secret in it, /mcp/<BRIDGE_MCP_SECRET>, still works.",
+      "required": true,
+      "sensitive": true
+    },
+    "mcp_secret": {
+      "type": "string",
+      "title": "Bridge MCP secret",
+      "description": "BRIDGE_MCP_SECRET from the bridge's .env (or its Fly secrets), sent as Authorization: Bearer. Leave it empty only if the endpoint above has the secret in it.",
+      "sensitive": true
+    }
+  }
+}

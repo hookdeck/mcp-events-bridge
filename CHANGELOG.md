@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A lite Claude Code plugin, `mcp-events-bridge-lite`, for Claude's plugin directory:** the bridge as an MCP server, with the endpoint and secret in Claude Code's secure storage, and a `wait` skill that has Claude call `wait_for_event` with the cursor it returned. It has no hook or monitor, so Claude hears about events only while it's working on a request. The directory accepts command hooks and monitors only from Verified organizations, so it refused the full plugin, `mcp-events-bridge`, which stays in Hookdeck's marketplace for events between prompts. Both are in the marketplace: install one or the other (`/plugin install mcp-events-bridge-lite --marketplace hookdeck/mcp-events-bridge`).
+
 ## 0.10.0 (2026-11-05)
 
 Breaking, for code that reads `list_sources`' `events` as a list of names: each entry is now an event type object; read `events[].name`.

@@ -18,6 +18,31 @@ describe('Claude Code plugin', () => {
   });
 });
 
+// Claude's plugin directory accepts command hooks and monitors only from Verified organizations, so the lite plugin,
+// the one submitted to it, is the MCP server and a skill, and nothing that runs on the user's machine.
+describe('Claude Code lite plugin', () => {
+  const root = path.resolve('plugins/mcp-events-bridge-lite');
+  const version = (JSON.parse(fs.readFileSync('package.json', 'utf8')) as { version: string }).version;
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin/plugin.json'), 'utf8')) as Record<string, unknown>;
+
+  it('has the package version in its manifest', () => {
+    expect(manifest.version).toBe(version);
+  });
+
+  it('has no hooks, monitors, commands or programs', () => {
+    for (const key of ['hooks', 'monitors', 'commands', 'agents', 'binaries']) expect(manifest).not.toHaveProperty(key);
+    for (const dir of ['hooks', 'monitors', 'bin', 'scripts', 'commands', 'agents']) expect(fs.existsSync(path.join(root, dir))).toBe(false);
+    expect(fs.readdirSync(path.join(root, 'skills'))).toEqual(['wait']);
+  });
+
+  it('has the same MCP server and options as the full plugin', () => {
+    const full = path.resolve('plugins/mcp-events-bridge');
+    expect(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8')).toBe(fs.readFileSync(path.join(full, '.mcp.json'), 'utf8'));
+    const fullManifest = JSON.parse(fs.readFileSync(path.join(full, '.claude-plugin/plugin.json'), 'utf8')) as Record<string, unknown>;
+    expect(manifest.userConfig).toEqual(fullManifest.userConfig);
+  });
+});
+
 // Claude's plugin directory wants hook commands that name a path from ${CLAUDE_PLUGIN_ROOT} and no other variable,
 // so the session start hook is a script, which copies the plugin's user config for the monitor.
 describe('Claude Code plugin session start hook', () => {
