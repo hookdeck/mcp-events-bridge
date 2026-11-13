@@ -41,10 +41,13 @@ const config = resolved();
 const catalog = new Catalog(config.sources);
 const sourceOf = (id: string) => config.sources.find((s) => s.id === id) as ResolvedSource;
 
-/** Runs a transformation as Event Gateway would: a fresh context with only built-ins, no imports. */
+/**
+ * Runs a transformation as Event Gateway would: a fresh context with only built-ins, no imports. Event Gateway's
+ * runtime has a global `crypto` with `getRandomValues` (verified 13 Nov).
+ */
 function run(code: string, request: object, connection: Record<string, unknown> = { name: 'mcp-sub-sub_1', description: '{}' }) {
   let handler: ((req: unknown, ctx: unknown) => unknown) | undefined;
-  vm.runInNewContext(code, { addHandler: (_type: string, fn: typeof handler) => (handler = fn), Buffer, TextEncoder });
+  vm.runInNewContext(code, { addHandler: (_type: string, fn: typeof handler) => (handler = fn), Buffer, TextEncoder, crypto: globalThis.crypto });
   // Through JSON, as Event Gateway returns it, so the comparison isn't across realms.
   return JSON.parse(JSON.stringify(handler!(request, { connection }))) as {
     headers: Record<string, string>;
@@ -95,6 +98,32 @@ describe('transformation: built from the source runtime, self-contained', () => 
     expect(run(fills, { headers: {}, body: { ...fill, type: 'order.canceled' } }).body.name).toBe('fills.order.canceled');
     expect(run(fills, { headers: {}, body: { ...fill, id: 'f.1' } }).headers['x-mcp-skip']).toMatch(/period/);
     expect(run(fills, { headers: {}, body: { ...fill, notes: 'x'.repeat(300_000) } }).headers['x-mcp-skip']).toBe('envelope over 256 KiB');
+  });
+
+  it("sets webhook-id to the eventId by default (legacy clients), and to a random per-message id when the subscription's description has wid", () => {
+    const req = fixture('resend', 'email-received.json');
+    const code = buildTransformation(sourceOf('resend'), catalog);
+    const legacy = run(code, req, { name: 'mcp-sub-sub_1', description: JSON.stringify({ v: 2, ca: 'a' }) });
+    expect(legacy.headers['webhook-id']).toBe(legacy.body.eventId);
+
+    const sep = { name: 'mcp-sub-sub_1', description: JSON.stringify({ v: 2, ca: 'a', wid: 'msg' }) };
+    const first = run(code, req, sep);
+    const second = run(code, req, sep);
+    // SEP-3415: high entropy, header-safe, not the eventId; the envelope is unchanged.
+    expect(first.headers['webhook-id']).toMatch(/^msg_[A-Za-z0-9_-]{24}$/);
+    expect(first.headers['webhook-id']).not.toBe(first.body.eventId);
+    expect(second.headers['webhook-id']).not.toBe(first.headers['webhook-id']);
+    expect(first.body.eventId).toBe(legacy.body.eventId);
+    expect({ ...first.headers, 'webhook-id': '' }).toEqual({ ...legacy.headers, 'webhook-id': '' });
+  });
+
+  it("delivers an event whose id has a period with a per-message webhook-id, since it isn't the eventId", () => {
+    const fills = buildTransformation(sourceOf('fills'), catalog);
+    const fill = { type: 'order.filled', id: 'f.1', symbol: 'AAPL', notes: 'ok' };
+    const out = run(fills, { headers: {}, body: fill }, { name: 'mcp-sub-sub_1', description: JSON.stringify({ v: 2, ca: 'a', wid: 'msg' }) });
+    expect(out.headers['x-mcp-skip']).toBeUndefined();
+    expect(out.body.eventId).toBe('f.1');
+    expect(out.headers['webhook-id']).toMatch(/^msg_/);
   });
 
   it('maps GitHub events, offering only the enabled ones', () => {

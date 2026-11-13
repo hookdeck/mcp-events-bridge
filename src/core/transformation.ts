@@ -36,17 +36,18 @@ export function functionSource(fn: (...args: never[]) => unknown): string {
 
 /**
  * The transformation's handler. Self-contained: it's serialized into the transformation, and called directly in
- * tests. Anything it can't deliver gets an `x-mcp-skip` header, which every subscription's filter excludes, rather
- * than an error, which would open an issue on every subscription for every request.
+ * tests. It uses only built-ins Event Gateway's runtime has (`Buffer` and `crypto.getRandomValues`). Anything it
+ * can't deliver gets an `x-mcp-skip` header, which every subscription's filter excludes, rather than an error, which
+ * would open an issue on every subscription for every request.
  */
 export function envelopeHandler(
   runtime: Record<string, EventRuntime>,
   events: Array<{ key: string; name: string }>,
   constants: { subscriptionPrefix: string; maxBodyBytes: number; lookbackMs: number },
 ) {
-  // From the connection description (event-gateway-store.ts): `ca`, the cursor's arguments hash, and `rp` while a
-  // replay runs.
-  type Meta = { ca?: unknown; rp?: { f?: unknown; w?: unknown } } | null;
+  // From the connection description (event-gateway-store.ts): `ca`, the cursor's arguments hash, `rp` while a replay
+  // runs, and `wid: "msg"` when the subscription's webhook-id is per message (webhook-id.ts).
+  type Meta = { ca?: unknown; rp?: { f?: unknown; w?: unknown }; wid?: unknown } | null;
   // Poll's cursor format, from now less the look-back, so a client persisting it never skips an event still in flight;
   // during a replay, from where the replay started.
   const cursorFor = (meta: Meta, name: string, now: number) => {
@@ -70,6 +71,9 @@ export function envelopeHandler(
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(request.headers ?? {})) headers[key.toLowerCase()] = String(value);
     const req = { headers, body: request.body };
+    // A per-message webhook-id (SEP-3415): random, so not derived from the event id. Event Gateway runs this once per
+    // event and every attempt reuses its headers, so retries keep it. Otherwise the event id, as legacy clients require.
+    const perMessage = meta !== null && meta.wid === 'msg';
 
     let envelope: { eventId: string; name: string; timestamp: string; data: unknown; cursor: string | null } | null = null;
     let skip: string | null = 'event type not enabled';
@@ -79,7 +83,7 @@ export function envelopeHandler(
         if (!rt || !rt.matches(req)) continue;
         const eventId = String(rt.eventId(req));
         envelope = { eventId, name: event.name, timestamp: rt.occurredAt(req), data: rt.summarize(req), cursor: cursorFor(meta, event.name, Date.now()) };
-        skip = eventId.includes('.') ? 'event id contains a period, which Standard Webhooks ids cannot' : null;
+        skip = !perMessage && eventId.includes('.') ? 'event id contains a period, which Standard Webhooks ids cannot' : null;
       } catch (error) {
         envelope = null;
         skip = `could not build the event: ${error instanceof Error ? error.message : String(error)}`;
@@ -89,7 +93,7 @@ export function envelopeHandler(
     if (envelope && !skip && Buffer.byteLength(JSON.stringify(envelope)) > constants.maxBodyBytes) skip = 'envelope over 256 KiB';
 
     const out: Record<string, string> = { 'content-type': 'application/json', 'x-mcp-subscription-id': subscriptionId };
-    if (envelope) out['webhook-id'] = envelope.eventId;
+    if (envelope) out['webhook-id'] = perMessage ? `msg_${Buffer.from(crypto.getRandomValues(new Uint8Array(18))).toString('base64url')}` : envelope.eventId;
     if (skip) out['x-mcp-skip'] = skip.slice(0, 200);
     // The sender's query string isn't the subscriber's (the destination also ignores the sender's path).
     return { ...request, headers: out, body: envelope ?? {}, query: '', parsed_query: {} };

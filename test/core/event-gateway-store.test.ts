@@ -17,6 +17,7 @@ const input = (over: Partial<SubscriptionInput> = {}): SubscriptionInput => ({
   secret: SECRET,
   replay: null,
   delivery: healthyDelivery(),
+  webhookIdFormat: 'event-id',
   expiresAt: '2026-11-05T12:00:00.000Z',
   createdAt: '2026-10-05T12:00:00.000Z',
   updatedAt: '2026-10-05T12:00:00.000Z',
@@ -58,7 +59,7 @@ describe('EventGatewayStore', () => {
     expect(connection.rules).toEqual([
       { type: 'transform', transformation_id: 'trs_resend' },
       { type: 'filter', headers: { 'x-mcp-skip': { $exist: false } }, body: { name: 'resend.email.received', data: { fromAddress: 'alice@example.com' } } },
-      expect.objectContaining({ type: 'deduplicate', include_fields: ['headers.webhook-id'] }),
+      expect.objectContaining({ type: 'deduplicate', include_fields: ['body.eventId'] }),
       expect.objectContaining({ type: 'retry', response_status_codes: ['>=300', '!410', '!413'] }),
     ]);
   });
@@ -86,6 +87,20 @@ describe('EventGatewayStore', () => {
     expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).rp).toEqual({ f: 1000, w: 2000 });
     await store.update(record.id, (current) => ({ ...current!, replay: null }));
     expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).rp).toBeUndefined();
+  });
+
+  it('marks a per-message webhook-id with wid in the description, reads it back on load, and drops it when a refresh switches to the eventId', async () => {
+    const { gateway, hookdeck, place, store } = await setup();
+    const record = await store.put(input({ webhookIdFormat: 'per-message' }));
+    expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).wid).toBe('msg');
+    const fresh = new EventGatewayStore(hookdeck, place);
+    await fresh.load();
+    expect(fresh.get(record.id)?.webhookIdFormat).toBe('per-message');
+    await store.update(record.id, (current) => ({ ...current!, webhookIdFormat: 'event-id' }));
+    expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).wid).toBeUndefined();
+    const again = new EventGatewayStore(hookdeck, place);
+    await again.load();
+    expect(again.get(record.id)?.webhookIdFormat).toBe('event-id');
   });
 
   it('rebuilds the same records on load, reading each secret from destination auth', async () => {
@@ -172,6 +187,21 @@ describe('EventGatewayStore', () => {
     ).resolves.toBeDefined();
     await expect(store.put(input({ id: 'sub_ffffffffffffffffffffffffffffffff', arguments: { from: 'x'.repeat(320) } }))).rejects.toBeInstanceOf(SubscriptionTooLargeError);
     expect(gateway.connections.size).toBe(1);
+  });
+
+  it('keeps the room an event-id subscription had before per-message ids, and counts wid only for a per-message one', async () => {
+    const { store } = await setup();
+    // The largest `from` an event-id subscription takes, as before #113; a per-message one is 12 characters shorter.
+    let size = 0;
+    for (let n = 1; n < 400; n++) {
+      const fits = await store.put(input({ id: `sub_${String(n).padStart(32, '0')}`, arguments: { from: 'x'.repeat(n) } })).then(() => true, () => false);
+      if (!fits) break;
+      size = n;
+    }
+    expect(size).toBeGreaterThan(0);
+    await expect(store.put(input({ id: 'sub_e', arguments: { from: 'x'.repeat(size) } }))).resolves.toBeDefined();
+    await expect(store.put(input({ id: 'sub_m', arguments: { from: 'x'.repeat(size) }, webhookIdFormat: 'per-message' }))).rejects.toBeInstanceOf(SubscriptionTooLargeError);
+    await expect(store.put(input({ id: 'sub_n', arguments: { from: 'x'.repeat(size - 12) }, webhookIdFormat: 'per-message' }))).resolves.toBeDefined();
   });
 
   it('deletes the connection and destination, and leaves the service source', async () => {

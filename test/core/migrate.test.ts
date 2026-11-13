@@ -71,6 +71,8 @@ describe('migrating from 0.7', () => {
       secret: subscriber,
       expiresAt: '2026-11-05T00:00:00.000Z',
       createdAt: '2026-10-20T00:00:00.000Z',
+      // 0.7 sent the eventId as webhook-id; the client's next refresh picks the format.
+      webhookIdFormat: 'event-id',
     });
     const resendSource = [...gateway.sources.values()].find((s) => s.name === 'bridge-resend')!;
     expect(store.get('sub_live')!.sourceId).toBe(resendSource.id);

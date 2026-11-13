@@ -16,7 +16,7 @@ import { createNodeCallbackTransport } from '../../src/host/callback-transport.j
 import { createBridgeServer, redactPath } from '../../src/host/server.js';
 import { resend } from '../../src/sources.js';
 import { FakeEventGateway } from '../support/fake-event-gateway.js';
-import { Subscriber } from '../support/subscriber.js';
+import { Subscriber, type SubscriberOptions } from '../support/subscriber.js';
 
 /*
  * The whole path in one process, with a fake Event Gateway: an MCP client
@@ -43,7 +43,8 @@ async function startBridge({
   store,
   pollNow,
   secretUrl,
-}: { inbound?: 'cli' | 'http'; store?: MemoryStore; pollNow?: () => number; secretUrl?: 'true' | 'false' } = {}) {
+  webhookIdFormat,
+}: { inbound?: 'cli' | 'http'; store?: MemoryStore; pollNow?: () => number; secretUrl?: 'true' | 'false'; webhookIdFormat?: string } = {}) {
   const gateway = new FakeEventGateway();
   // What setup creates: the service's source, which subscriptions are connections on.
   gateway.sources.set('src_resend', { id: 'src_resend', name: 'bridge-resend', type: 'RESEND', url: 'https://hkdk.events/src_resend' });
@@ -52,6 +53,7 @@ async function startBridge({
     HOOKDECK_SIGNING_SECRET: SIGNING_SECRET,
     BRIDGE_MCP_SECRET: MCP_SECRET,
     ...(secretUrl && { BRIDGE_MCP_SECRET_URL: secretUrl }),
+    ...(webhookIdFormat && { BRIDGE_WEBHOOK_ID_FORMAT: webhookIdFormat }),
   });
   const logs: string[] = [];
   const bridge = await createBridgeServer(config, {
@@ -68,8 +70,9 @@ async function startBridge({
   return { gateway, bridge, port, logs };
 }
 
-async function startSubscriber(port: number, args: Record<string, unknown> = {}) {
+async function startSubscriber(port: number, args: Record<string, unknown> = {}, options: Partial<SubscriberOptions> = {}) {
   const subscriber = new Subscriber({
+    ...options,
     serverUrl: `http://127.0.0.1:${port}/mcp/${MCP_SECRET}`,
     token: '',
     eventName: 'resend.email.received',
@@ -95,7 +98,7 @@ async function deliverFromSource(gateway: FakeEventGateway, subscriber: Subscrib
     if (!connection.name.startsWith('mcp-sub-')) continue;
     const [transform, filter] = connection.rules as Rules;
     let handler: ((req: unknown, ctx: unknown) => unknown) | undefined;
-    vm.runInNewContext(gateway.transformations.get(transform.transformation_id)!.code, { addHandler: (_type: string, fn: typeof handler) => (handler = fn), Buffer, TextEncoder });
+    vm.runInNewContext(gateway.transformations.get(transform.transformation_id)!.code, { addHandler: (_type: string, fn: typeof handler) => (handler = fn), Buffer, TextEncoder, crypto: globalThis.crypto });
     const out = JSON.parse(JSON.stringify(handler!(request, { connection: { name: connection.name, description: connection.description } }))) as {
       headers: Record<string, string>;
       body: Record<string, unknown>;
@@ -169,6 +172,63 @@ describe('bridge server', () => {
     expect(typeof subscriber.events[0]!.cursor).toBe('string');
   });
 
+  it("sends a per-message webhook-id to a client that declares the events extension in _meta, through the MCP SDK's request envelope", async () => {
+    const { gateway, port, bridge, logs } = await startBridge();
+    const webhookIds: string[] = [];
+    const subscriber = await startSubscriber(port, {}, { declareEvents: true, clientName: 'some-sep-client', onEvent: (_event, headers) => webhookIds.push(String(headers['webhook-id'])) });
+    const record = bridge.store.get(subscriber.subscription!.id)!;
+    expect(record.webhookIdFormat).toBe('per-message');
+    expect(logs).toContain(`${record.id}: webhook-id per message (client "some-sep-client" declares io.modelcontextprotocol/events)`);
+
+    await deliverFromSource(gateway, subscriber, resendDelivery());
+    expect(subscriber.events).toHaveLength(1);
+    expect(subscriber.events[0]!.eventId).toBe(fixture.headers['svix-id']);
+    expect(webhookIds).toHaveLength(1);
+    expect(webhookIds[0]).toMatch(/^msg_[A-Za-z0-9_-]{24}$/);
+    expect(webhookIds[0]).not.toBe(fixture.headers['svix-id']);
+  });
+
+  it('keeps webhook-id equal to the eventId for a client that declares nothing, and for a declaring client on the legacy list', async () => {
+    const { gateway, port, bridge, logs } = await startBridge();
+    const cases = [
+      { from: 'a@example.com', options: {}, reason: `client "mcp-events-test-subscriber" doesn't declare io.modelcontextprotocol/events` },
+      { from: 'b@example.com', options: { declareEvents: true, clientName: 'tanstack-ai-mcp' }, reason: 'client "tanstack-ai-mcp" declares io.modelcontextprotocol/events, but is on the legacy client list' },
+    ];
+    for (const { from, options, reason } of cases) {
+      const webhookIds: string[] = [];
+      const subscriber = await startSubscriber(port, { from }, { ...options, onEvent: (_event, headers) => webhookIds.push(String(headers['webhook-id'])) });
+      const record = bridge.store.get(subscriber.subscription!.id)!;
+      expect(record.webhookIdFormat).toBe('event-id');
+      expect(logs).toContain(`${record.id}: webhook-id is the eventId (${reason})`);
+      const email = freshEmail();
+      await deliverFromSource(gateway, subscriber, { headers: fixture.headers, body: { ...email, data: { ...(email.data as object), from } } });
+      expect(webhookIds).toEqual([fixture.headers['svix-id']]);
+    }
+  });
+
+  it("switches a subscription's webhook-id format when a refresh comes from a client that declares differently, with dedupe on eventId either way", async () => {
+    const { gateway, port, bridge } = await startBridge();
+    const connectionOf = (id: string) => [...gateway.connections.values()].find((c) => c.name === `mcp-sub-${id}`)!;
+    const sep = await startSubscriber(port, { from: 'a@example.com' }, { declareEvents: true, clientName: 'some-sep-client' });
+    const id = sep.subscription!.id;
+    expect(JSON.parse(connectionOf(id).description!).wid).toBe('msg');
+    expect(connectionOf(id).rules).toContainEqual(expect.objectContaining({ type: 'deduplicate', include_fields: ['body.eventId'] }));
+
+    // Same principal, URL, event and arguments: the same subscription, refreshed by a client that declares nothing.
+    const legacy = await startSubscriber(port, { from: 'a@example.com' });
+    expect(legacy.subscription!.id).toBe(id);
+    expect(bridge.store.get(id)!.webhookIdFormat).toBe('event-id');
+    expect(JSON.parse(connectionOf(id).description!).wid).toBeUndefined();
+    expect(connectionOf(id).rules).toContainEqual(expect.objectContaining({ type: 'deduplicate', include_fields: ['body.eventId'] }));
+  });
+
+  it('logs a format set by the operator as the setting, not as something the client declared', async () => {
+    const { port, bridge, logs } = await startBridge({ webhookIdFormat: 'per-message' });
+    const subscriber = await startSubscriber(port, {}, { clientName: 'tanstack-ai-mcp' });
+    expect(bridge.store.get(subscriber.subscription!.id)!.webhookIdFormat).toBe('per-message');
+    expect(logs).toContain(`${subscriber.subscription!.id}: webhook-id per message (set to per-message by BRIDGE_WEBHOOK_ID_FORMAT or subscriptions.webhookIdFormat)`);
+  });
+
   it('lists sources with their event types, as events/list describes them, and how many webhook subscriptions each has', async () => {
     const { port } = await startBridge();
     await startSubscriber(port);
@@ -229,7 +289,7 @@ describe('bridge server', () => {
     const store = new MemoryStore();
     await store.put({
       id: 'sub_old', principal: 'owner', name: 'email.received', arguments: {}, url: 'https://receiver.example.com/hook',
-      secret: generateWebhookSecret(), replay: null, delivery: healthyDelivery(),
+      secret: generateWebhookSecret(), replay: null, delivery: healthyDelivery(), webhookIdFormat: 'event-id',
       expiresAt: '2099-01-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
     });
     const { logs } = await startBridge({ store });

@@ -79,6 +79,15 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET_URL: 'no' })).toThrow(/BRIDGE_MCP_SECRET_URL must be true or false/);
   });
 
+  it('chooses webhook-id per subscription (auto) unless BRIDGE_WEBHOOK_ID_FORMAT or subscriptions.webhookIdFormat says event-id or per-message', () => {
+    expect(resolveConfig(config(), base).subscriptions.webhookIdFormat).toBe('auto');
+    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'event-id' }).subscriptions.webhookIdFormat).toBe('event-id');
+    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'per-message' }).subscriptions.webhookIdFormat).toBe('per-message');
+    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'Event-ID' }).subscriptions.webhookIdFormat).toBe('event-id');
+    expect(resolveConfig(config({ subscriptions: { webhookIdFormat: 'event-id' } }), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'per-message' }).subscriptions.webhookIdFormat).toBe('event-id');
+    expect(() => resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'sep' })).toThrow(/BRIDGE_WEBHOOK_ID_FORMAT \(subscriptions.webhookIdFormat\) must be auto, event-id, per-message/);
+  });
+
   it('rejects a BRIDGE_MCP_SECRET that isn\'t URL-safe, such as a pasted line with a note after the value', () => {
     expect(resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 'Ab-_9.~z' }).auth.mcpSecret).toBe('Ab-_9.~z');
     expect(() => resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET: 'abc123   (in .env, or: ...)' })).toThrow(/BRIDGE_MCP_SECRET can only contain/);

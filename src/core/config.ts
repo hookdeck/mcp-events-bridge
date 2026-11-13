@@ -1,4 +1,5 @@
 import type { SourceDefinition } from './sources/types.js';
+import { WEBHOOK_ID_FORMATS, type WebhookIdFormatSetting } from './webhook-id.js';
 
 /*
  * The typed config file, bridge.config.ts:
@@ -92,6 +93,12 @@ export interface BridgeConfig {
 }
 
 export interface SubscriptionSettings {
+  /**
+   * What deliveries' `webhook-id` holds: `auto` (`per-message` for a client that declares the events extension in its
+   * request `_meta`, else `event-id`), `event-id` (always the event's `eventId`) or `per-message` (always a new id per
+   * delivery). See webhook-id.ts. Default: BRIDGE_WEBHOOK_ID_FORMAT, else `auto`.
+   */
+  webhookIdFormat: WebhookIdFormatSetting;
   defaultTtlMs: number;
   minTtlMs: number;
   maxTtlMs: number;
@@ -102,6 +109,7 @@ export interface SubscriptionSettings {
 }
 
 export const DEFAULT_SUBSCRIPTION_SETTINGS: SubscriptionSettings = {
+  webhookIdFormat: 'auto',
   // Long: ChatGPT sent no ttlMs in the 1 Oct test, and the bridge may be offline when a refresh is due.
   defaultTtlMs: 30 * 24 * 60 * 60 * 1000,
   minTtlMs: 60 * 1000,
@@ -141,6 +149,13 @@ function parseBoolean(name: string, value: string | undefined, fallback: boolean
   if (/^true$/i.test(value)) return true;
   if (/^false$/i.test(value)) return false;
   throw new ConfigError(`${name} must be true or false`);
+}
+
+function parseWebhookIdFormat(value: string | undefined): WebhookIdFormatSetting {
+  if (value === undefined || value === '') return DEFAULT_SUBSCRIPTION_SETTINGS.webhookIdFormat;
+  const lower = value.toLowerCase();
+  if ((WEBHOOK_ID_FORMATS as readonly string[]).includes(lower)) return lower as WebhookIdFormatSetting;
+  throw new ConfigError(`BRIDGE_WEBHOOK_ID_FORMAT (subscriptions.webhookIdFormat) must be ${WEBHOOK_ID_FORMATS.join(', ')}`);
 }
 
 /** Resolves env() references and defaults. Missing required variables are collected into one error. */
@@ -198,7 +213,11 @@ export function resolveConfig(config: BridgeConfig, environment: Record<string, 
       mcpSecret: read(config.auth?.mcpSecret, env('BRIDGE_MCP_SECRET', { optional: true })),
       secretUrl: config.auth?.secretUrl ?? parseBoolean('BRIDGE_MCP_SECRET_URL', environment.BRIDGE_MCP_SECRET_URL, true),
     },
-    subscriptions: { ...DEFAULT_SUBSCRIPTION_SETTINGS, ...config.subscriptions },
+    subscriptions: {
+      ...DEFAULT_SUBSCRIPTION_SETTINGS,
+      ...config.subscriptions,
+      webhookIdFormat: parseWebhookIdFormat(config.subscriptions?.webhookIdFormat ?? environment.BRIDGE_WEBHOOK_ID_FORMAT),
+    },
     warnings,
   };
 
