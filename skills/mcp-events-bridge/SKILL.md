@@ -110,7 +110,7 @@ Before connecting an agent, check the bridge on its own: from the bridge's folde
 
 With an agent:
 
-1. Subscribe an agent (step 4), and check that `serve` logs `subscribed sub_... until ...`. An agent that polls doesn't subscribe: skip to step 2.
+1. Subscribe an agent (step 4), and check that `serve` logs `subscribed sub_... until ...`, then `sub_...: webhook-id per message (...)` or `sub_...: webhook-id is the eventId (...)`, saying why. An agent that polls doesn't subscribe: skip to step 2.
 2. Trigger a real event: send an email to the Resend receiving address, open a GitHub issue, or have the sender post one.
 3. The agent gets it. Events don't pass through the bridge, so `serve` logs nothing for it, except for a local agent: `[listen] agent <agent>: ... POST http://localhost:<port><path>`.
 4. In the Event Gateway dashboard, the subscription's connection, `mcp-sub-<id>` on `bridge-<source id>`, shows each request: delivered, with its attempts, or `FILTERED` when the subscription's filter or event type didn't match.

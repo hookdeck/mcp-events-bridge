@@ -339,3 +339,32 @@ Run on the built 0.8.0 branch, in the dedicated project, under deployment names 
 **What it means for the design:** pass-through callback URLs work for a client with a secret per subscription under one base URL, and the migration keeps subscribers' subscriptions and URLs working with no bridge between the service and the subscriber.
 
 **Resources:** the `mig07` subscription, callback URL, subscriber callback and notifications connection were deleted by the test (its issue triggers, `bridge-*-mig07`, remain). The Hermes subscription was unsubscribed and its callback URL, `agent-hermes-base`, deleted. `e2e080`'s notifications connection and issue triggers are kept for further e2e runs.
+
+## Per-message webhook-id (#113)
+
+Checks for [#113](https://github.com/hookdeck/mcp-events-bridge/issues/113), on 13 Nov 2026: whether Event Gateway keeps a `webhook-id` a transformation generates across retries, whether the runtime has a random source, and what the client libraries declare.
+
+### What we ran
+
+- In the bridge's Hookdeck project, a connection `spike-113` from a source `spike-113-in` to an HTTP destination with `STANDARD_WEBHOOKS` auth, at a local receiver behind a cloudflared quick tunnel (Event Gateway had to act on the receiver's status code, which `hookdeck listen` doesn't return to it). Rules: a transformation `spike-113-random-id` that set `webhook-id` to `msg_` and 18 bytes from `crypto.getRandomValues`, a header with `Math.random()`, one with `Date.now()`, and one listing which built-ins exist; and a linear retry rule, 3 retries 20 seconds apart.
+- One request, answered `500`, `500`, then `200`. Then a manual retry of the event (`POST /events/{id}/retry`) and a request retry (`POST /requests/{id}/retry`).
+- The connection changed to a transformation that sets `body.eventId` from the request, and a dedupe rule on `body.eventId`; requests with keys `A`, `A`, `B`.
+- The client libraries' code, read (not run) at vercel/ai `8bc7652` (`@ai-sdk/mcp` 2.0.99), TanStack/ai `1888233` (`@tanstack/ai-mcp` 1.2.0), openclaw/openclaw `94018632` (v2026.11.3: `847611d`), and NousResearch/hermes-agent `9eb9b11`.
+
+### What we saw
+
+- The built-ins: `crypto` is an object, with `getRandomValues` and `randomUUID`; `require` exists.
+- All four attempts (initial, two automatic, one manual) had the same `webhook-id`, `Math.random()` value and `Date.now()` value, with a fresh `webhook-timestamp` and signature each. The event's `data.headers['webhook-id']` was the same id. The transformation ran once.
+- The request retry was refused: `400`, "Request is not eligible for retry because it not rejected or has no ignored events".
+- Dedupe on `body.eventId`: the second `A` was ignored as `DUPLICATE`, though its random `webhook-id` differed; `B` was delivered.
+- The clients: TanStack AI declares `extensions["io.modelcontextprotocol/events"]` whenever events are enabled (`packages/ai-mcp/src/client.ts:311`, `events/capability.ts:29`), and the MCP TypeScript SDK sends a client's capabilities in every request's `_meta`; the bridge's own test with the SDK client confirmed that the declaration and `clientInfo` reach `ctx.mcpReq.envelope`. The AI SDK sends `_meta` with the capabilities the application passes (none by default; `mcp-client.ts:1071`). OpenClaw sends `clientCapabilities: {}` and `clientInfo.name: "openclaw"` (`src/agents/mcp-event-request.ts:116`). All three still reject a `webhook-id` that isn't the `eventId` (`mcp-event-webhook.ts:211`, `events/webhook.ts:297`, `extensions/mcp-events/src/protocol.ts:179`). Hermes declares nothing and dedupes on `eventId`. Default client names: `tanstack-ai-mcp` and `ai-sdk-mcp-client` (both can be changed by the application), `openclaw`.
+
+### What it means for the design
+
+- A random `webhook-id` set in the transformation is stable across retries, so no hash of the subscription and `eventId` is needed (which the SEP forbids anyway).
+- Dedupe has to move to `body.eventId`: a service's resend runs the transformation again and gets a new random id.
+- The per-request `_meta` declaration alone would break TanStack AI, so the bridge keeps the `eventId` for a legacy list of client names, with `BRIDGE_WEBHOOK_ID=event` for a renamed client. See `ARCHITECTURE.md`, "Which `webhook-id`".
+
+### Resources
+
+`spike-113`, `spike-113-in`, `spike-113-dest` and `spike-113-random-id` were deleted after the run.

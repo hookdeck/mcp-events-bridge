@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A per-message `webhook-id` for clients that follow SEP-3415:** a webhook delivery's `webhook-id` was always the event's `eventId`. SEP-3415 now requires a per-message id, unique to one event on one subscription and never derived from `eventId`, so a receiver that dedupes on `webhook-id` doesn't drop an event that matches two of its subscriptions. A client that declares the events extension in a request's `_meta` (`io.modelcontextprotocol/clientCapabilities`) now gets `msg_` and 24 random characters, the same on every retry. Every other client still gets the `eventId`, as do TanStack AI, the Vercel AI SDK and OpenClaw by their default client names, since they reject a delivery whose `webhook-id` isn't its `eventId` (TanStack AI declares the extension). `BRIDGE_WEBHOOK_ID` (`subscriptions.webhookId`) is `auto` by default; `event` or `message` applies to every subscription. A subscription's mode is chosen when it's made or refreshed, and `serve` logs it: `<subscription id>: webhook-id per message (client "<name>" declares io.modelcontextprotocol/events)` or `<subscription id>: webhook-id is the eventId (...)`. With a per-message id, an event whose id contains a period is delivered rather than skipped ([#113](https://github.com/hookdeck/mcp-events-bridge/issues/113)).
+
+### Changed
+
+- **Subscriptions dedupe on `eventId`, not `webhook-id`:** each subscription's connection (and a replay's) drops a repeated event by the envelope's `eventId`, since a per-message `webhook-id` differs each time a service resends an event. It's the same as before for subscriptions that get the `eventId`. Existing subscriptions change when they're next refreshed ([#113](https://github.com/hookdeck/mcp-events-bridge/issues/113)).
+
 ## 0.10.0 (2026-11-05)
 
 Breaking, for code that reads `list_sources`' `events` as a list of names: each entry is now an event type object; read `events[].name`.
