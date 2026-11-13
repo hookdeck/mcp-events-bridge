@@ -17,6 +17,7 @@ const input = (over: Partial<SubscriptionInput> = {}): SubscriptionInput => ({
   secret: SECRET,
   replay: null,
   delivery: healthyDelivery(),
+  webhookIdMode: 'event',
   expiresAt: '2026-11-05T12:00:00.000Z',
   createdAt: '2026-10-05T12:00:00.000Z',
   updatedAt: '2026-10-05T12:00:00.000Z',
@@ -58,7 +59,7 @@ describe('EventGatewayStore', () => {
     expect(connection.rules).toEqual([
       { type: 'transform', transformation_id: 'trs_resend' },
       { type: 'filter', headers: { 'x-mcp-skip': { $exist: false } }, body: { name: 'resend.email.received', data: { fromAddress: 'alice@example.com' } } },
-      expect.objectContaining({ type: 'deduplicate', include_fields: ['headers.webhook-id'] }),
+      expect.objectContaining({ type: 'deduplicate', include_fields: ['body.eventId'] }),
       expect.objectContaining({ type: 'retry', response_status_codes: ['>=300', '!410', '!413'] }),
     ]);
   });
@@ -86,6 +87,20 @@ describe('EventGatewayStore', () => {
     expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).rp).toEqual({ f: 1000, w: 2000 });
     await store.update(record.id, (current) => ({ ...current!, replay: null }));
     expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).rp).toBeUndefined();
+  });
+
+  it('marks a per-message webhook-id with wid in the description, reads it back on load, and drops it when a refresh switches to the eventId', async () => {
+    const { gateway, hookdeck, place, store } = await setup();
+    const record = await store.put(input({ webhookIdMode: 'message' }));
+    expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).wid).toBe('msg');
+    const fresh = new EventGatewayStore(hookdeck, place);
+    await fresh.load();
+    expect(fresh.get(record.id)?.webhookIdMode).toBe('message');
+    await store.update(record.id, (current) => ({ ...current!, webhookIdMode: 'event' }));
+    expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).wid).toBeUndefined();
+    const again = new EventGatewayStore(hookdeck, place);
+    await again.load();
+    expect(again.get(record.id)?.webhookIdMode).toBe('event');
   });
 
   it('rebuilds the same records on load, reading each secret from destination auth', async () => {

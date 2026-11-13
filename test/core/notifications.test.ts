@@ -37,6 +37,7 @@ const subscription = (over: Partial<SubscriptionInput> = {}): SubscriptionInput 
   secret: generateWebhookSecret(),
   replay: null,
   delivery: healthyDelivery(),
+  webhookIdMode: 'event',
   expiresAt: '2026-11-05T00:00:00.000Z',
   createdAt: '2026-10-05T16:00:00.000Z',
   updatedAt: '2026-10-05T16:00:00.000Z',

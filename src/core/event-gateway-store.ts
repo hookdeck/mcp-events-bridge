@@ -1,4 +1,4 @@
-import { HookdeckApiError, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE, type Connection, type HookdeckClient, type Rule } from './hookdeck.js';
+import { HookdeckApiError, SUBSCRIPTION_RETRY_RULE, EVENT_ID_DEDUPE_RULE, type Connection, type HookdeckClient, type Rule } from './hookdeck.js';
 import { SUBSCRIPTION_PREFIX, subscriptionResourceName } from './names.js';
 import {
   SubscriptionTooLargeError,
@@ -13,13 +13,14 @@ import {
  * on its service's source (`bridge-<source id>`), to an HTTP destination at the callback URL:
  *
  *   rules                    the source's transformation (it builds the MCP event), a filter for the event name and
- *                            the subscription's arguments, dedupe on webhook-id, and retry.
+ *                            the subscription's arguments, dedupe on the event id, and retry.
  *   destination              the callback URL; STANDARD_WEBHOOKS auth with the subscriber's secret, so Event Gateway
  *                            signs every attempt. The sender's path isn't forwarded.
  *   connection description   JSON metadata: principal, event name, arguments, expiry, timestamps, delivery state
- *                            (omitted while healthy), and what the transformation needs for cursors: `ca`, the
- *                            arguments hash, and `rp` while a replay runs. Versioned: {"v":2. Version 1 is a
- *                            subscription from 0.7 or earlier, on a topic source, left for the migration.
+ *                            (omitted while healthy), and what the transformation needs: `ca`, the cursor's
+ *                            arguments hash, `rp` while a replay runs, and `wid: "msg"` for a per-message
+ *                            webhook-id. Versioned: {"v":2. Version 1 is a subscription from 0.7 or earlier,
+ *                            on a topic source, left for the migration.
  *
  * Reads come from an in-memory index built by `load()` (one listing, plus one destination read per subscription for
  * its secret) and kept current by `put()` and `delete()`. One bridge instance per deployment.
@@ -41,6 +42,8 @@ interface Metadata {
   ca: string;
   /** While a replay runs, where it started (the cursor's floor and watermark). */
   rp?: { f: number; w: number };
+  /** `msg` when deliveries' `webhook-id` is per message, for the transformation; omitted when it's the `eventId`. */
+  wid?: 'msg';
 }
 
 /** Where a subscription's connection goes, and what its rules hold: from the catalog and the source's transformation. */
@@ -157,14 +160,16 @@ export class EventGatewayStore implements SubscriptionStore {
       ...(!isHealthy(input.delivery) && { delivery: input.delivery }),
       ca: placement.cursorArgs,
       ...(input.replay && { rp: input.replay }),
+      ...(input.webhookIdMode === 'message' && { wid: 'msg' as const }),
     };
     const description = JSON.stringify(metadata);
-    // Checked with the largest delivery block a failure notification can add later and a replay marker, so neither
-    // can overflow it.
+    // Checked with the largest delivery block a failure notification can add later, a replay marker and the
+    // per-message marker, so none of them can overflow it, and a refresh can switch the mode.
     const worstCase = JSON.stringify({
       ...metadata,
       delivery: { active: false, lastError: 'connection_refused', failedSince: input.updatedAt },
       rp: { f: 9_999_999_999_999, w: 9_999_999_999_999 },
+      wid: 'msg',
     });
     if (worstCase.length > DESCRIPTION_LIMIT) throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
 
@@ -177,7 +182,7 @@ export class EventGatewayStore implements SubscriptionStore {
         type: 'HTTP',
         config: { url: input.url, path_forwarding_disabled: true, auth_type: 'STANDARD_WEBHOOKS', auth: { webhook_secret_key: input.secret } },
       },
-      rules: [{ type: 'transform', transformation_id: placement.transformationId }, placement.filter, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
+      rules: [{ type: 'transform', transformation_id: placement.transformationId }, placement.filter, EVENT_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
     });
     const record: SubscriptionRecord = { ...input, connectionId: connection.id, destinationId: connection.destination.id, sourceId: connection.source.id };
     this.records.set(record.id, record);
@@ -201,6 +206,7 @@ export class EventGatewayStore implements SubscriptionStore {
       secret,
       replay: metadata.rp ?? null,
       delivery: metadata.delivery ?? healthyDelivery(),
+      webhookIdMode: metadata.wid === 'msg' ? 'message' : 'event',
       expiresAt: metadata.expiresAt,
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,

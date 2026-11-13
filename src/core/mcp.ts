@@ -217,8 +217,10 @@ export function buildMcpServer(deps: {
 
   const anyParams = z.record(z.string(), z.unknown());
   server.server.setRequestHandler('events/list', { params: anyParams.optional() }, async () => ({ events: catalog.list() }));
-  server.server.setRequestHandler('events/subscribe', { params: anyParams }, async (params) => ({
-    ...(await subscriptions.subscribe(principal, params)),
+  // The SDK lifts the per-request envelope (clientCapabilities, clientInfo) out of `_meta` into `ctx.mcpReq.envelope`;
+  // subscribe reads them from both, under their full `_meta` keys, to choose the webhook-id mode.
+  server.server.setRequestHandler('events/subscribe', { params: anyParams }, async (params, ctx) => ({
+    ...(await subscriptions.subscribe(principal, params, { meta: { ...ctx.mcpReq._meta, ...(ctx.mcpReq.envelope as Record<string, unknown> | undefined) } })),
   }));
   if (poll) server.server.setRequestHandler('events/poll', { params: anyParams }, async (params) => ({ ...(await poll.poll(params)) }));
   server.server.setRequestHandler('events/unsubscribe', { params: anyParams }, async (params) => subscriptions.unsubscribe(principal, params));

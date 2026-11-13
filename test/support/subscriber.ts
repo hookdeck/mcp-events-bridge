@@ -50,6 +50,10 @@ export interface SubscriberOptions {
   /** Log each `webhook-signature` entry and which secret (current or previous) produced it. */
   debug?: boolean;
   onEvent?: (event: McpEvent, headers: http.IncomingHttpHeaders) => void;
+  /** The client name the SDK sends in `_meta["io.modelcontextprotocol/clientInfo"]`. Default mcp-events-test-subscriber. */
+  clientName?: string;
+  /** Declare the events extension in the client's capabilities, which the SDK sends in every request's `_meta`. */
+  declareEvents?: boolean;
   /** Tests: the status to answer a verified event delivery with (default 200), for example 410 or 500. Not recorded as received unless 2xx. */
   respondWith?: (event: McpEvent) => number;
   /** Called for every verified event delivery attempt, whatever the response. */
@@ -70,7 +74,7 @@ const MAX_BODY_BYTES = 256 * 1024;
 const ROTATION_OVERLAP_MS = 15 * 60 * 1000;
 
 export class Subscriber {
-  readonly client = new Client({ name: 'mcp-events-test-subscriber', version: '0.1.0' }, { versionNegotiation: { mode: 'auto' } });
+  readonly client: Client;
   readonly events: McpEvent[] = [];
   readonly verificationsAnswered: string[] = [];
   subscription?: SubscribeResponse;
@@ -87,6 +91,10 @@ export class Subscriber {
 
   constructor(private readonly options: SubscriberOptions) {
     this.log = options.log ?? ((message) => console.log(`[client] ${message}`));
+    this.client = new Client(
+      { name: options.clientName ?? 'mcp-events-test-subscriber', version: '0.1.0' },
+      { versionNegotiation: { mode: 'auto' }, ...(options.declareEvents && { capabilities: { extensions: { 'io.modelcontextprotocol/events': {} } } }) },
+    );
     if (options.secret && !isValidWebhookSecret(options.secret)) throw new Error('secret must be whsec_ followed by base64 of 24 to 64 bytes');
     if (options.secret && options.rotateSecretOnRefresh) throw new Error('secret and rotateSecretOnRefresh cannot be combined');
     this.secret = options.secret ?? generateWebhookSecret();

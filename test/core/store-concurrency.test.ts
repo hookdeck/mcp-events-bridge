@@ -143,6 +143,7 @@ function input(id: string, from = ''): SubscriptionInput {
     secret: generateWebhookSecret(),
     replay: null,
     delivery: healthyDelivery(),
+    webhookIdMode: 'event',
     expiresAt: '2026-11-04T12:00:00.000Z',
     createdAt: '2026-10-05T12:00:00.000Z',
     updatedAt: '2026-10-05T12:00:00.000Z',

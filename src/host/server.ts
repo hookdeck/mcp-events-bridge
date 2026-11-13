@@ -7,7 +7,8 @@ import { Catalog, descriptionWarnings } from '../core/catalog.js';
 import { assertCredentials, type ResolvedConfig } from '../core/config.js';
 import { EventGatewayStore } from '../core/event-gateway-store.js';
 import { EventHistory } from '../core/event-history.js';
-import { HookdeckApiError, HookdeckClient, isSettled, SUBSCRIPTION_RETRY_RULE, WEBHOOK_ID_DEDUPE_RULE } from '../core/hookdeck.js';
+import { deliveryWebhookId } from '../core/webhook-id.js';
+import { HookdeckApiError, HookdeckClient, isSettled, SUBSCRIPTION_RETRY_RULE, EVENT_ID_DEDUPE_RULE } from '../core/hookdeck.js';
 import { buildMcpServer } from '../core/mcp.js';
 import { Notifications } from '../core/notifications.js';
 import { REPLAY_CONNECTION_PREFIX, REPLAY_SOURCE, replayConnectionName } from '../core/names.js';
@@ -148,12 +149,16 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
         name: replayConnectionName(subscription.id),
         source_id: replaySourceId,
         destination_id: subscription.destinationId,
-        rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': subscription.id } }, WEBHOOK_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
+        rules: [{ type: 'filter', headers: { 'x-mcp-subscription-id': subscription.id } }, EVENT_ID_DEDUPE_RULE, SUBSCRIPTION_RETRY_RULE],
       });
       return connection.id;
     },
     publish: (subscription, envelope) =>
-      hookdeck.publish(REPLAY_SOURCE, { 'content-type': 'application/json', 'webhook-id': envelope.eventId, 'x-mcp-subscription-id': subscription.id }, JSON.stringify(envelope)),
+      hookdeck.publish(
+        REPLAY_SOURCE,
+        { 'content-type': 'application/json', 'webhook-id': deliveryWebhookId(subscription.webhookIdMode, envelope.eventId), 'x-mcp-subscription-id': subscription.id },
+        JSON.stringify(envelope),
+      ),
     settled: async (connectionId, count, timeoutMs) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
