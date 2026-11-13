@@ -83,6 +83,7 @@ describe('resolveConfig', () => {
     expect(resolveConfig(config(), base).subscriptions.webhookIdFormat).toBe('auto');
     expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'event-id' }).subscriptions.webhookIdFormat).toBe('event-id');
     expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'per-message' }).subscriptions.webhookIdFormat).toBe('per-message');
+    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'Event-ID' }).subscriptions.webhookIdFormat).toBe('event-id');
     expect(resolveConfig(config({ subscriptions: { webhookIdFormat: 'event-id' } }), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'per-message' }).subscriptions.webhookIdFormat).toBe('event-id');
     expect(() => resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'sep' })).toThrow(/BRIDGE_WEBHOOK_ID_FORMAT \(subscriptions.webhookIdFormat\) must be auto, event-id, per-message/);
   });

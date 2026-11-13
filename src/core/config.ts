@@ -153,7 +153,8 @@ function parseBoolean(name: string, value: string | undefined, fallback: boolean
 
 function parseWebhookIdFormat(value: string | undefined): WebhookIdFormatSetting {
   if (value === undefined || value === '') return DEFAULT_SUBSCRIPTION_SETTINGS.webhookIdFormat;
-  if ((WEBHOOK_ID_FORMATS as readonly string[]).includes(value)) return value as WebhookIdFormatSetting;
+  const lower = value.toLowerCase();
+  if ((WEBHOOK_ID_FORMATS as readonly string[]).includes(lower)) return lower as WebhookIdFormatSetting;
   throw new ConfigError(`BRIDGE_WEBHOOK_ID_FORMAT (subscriptions.webhookIdFormat) must be ${WEBHOOK_ID_FORMATS.join(', ')}`);
 }
 

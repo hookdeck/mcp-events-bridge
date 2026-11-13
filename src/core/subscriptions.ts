@@ -6,7 +6,7 @@ import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
 import type { CallbackRegistry } from './callbacks.js';
 import { SubscriptionTooLargeError, healthyDelivery, type CursorPosition, type SubscriptionRecord, type SubscriptionStore } from './store.js';
-import { chooseWebhookIdFormat, clientName, declaresEventsExtension } from './webhook-id.js';
+import { chooseWebhookIdFormat, clientName, declaresEventsExtension, type WebhookIdFormat } from './webhook-id.js';
 
 /*
  * MCP Events webhook subscriptions: subscribe (and refresh), unsubscribe,
@@ -81,11 +81,14 @@ export function describeParams(params: Params): string {
 }
 
 /** Why a subscription got its webhook-id format, for the log. */
-function describeClient(setting: SubscriptionSettings['webhookIdFormat'], meta: unknown): string {
-  if (setting !== 'auto') return `BRIDGE_WEBHOOK_ID_FORMAT=${setting}`;
+function describeClient(setting: SubscriptionSettings['webhookIdFormat'], format: WebhookIdFormat, meta: unknown): string {
+  if (setting !== 'auto') return `set to ${setting} by BRIDGE_WEBHOOK_ID_FORMAT or subscriptions.webhookIdFormat`;
   const name = clientName(meta);
   const client = name === undefined ? 'the client' : `client ${JSON.stringify(name.slice(0, 60))}`;
-  return `${client} ${declaresEventsExtension(meta) ? 'declares' : "doesn't declare"} io.modelcontextprotocol/events`;
+  if (!declaresEventsExtension(meta)) return `${client} doesn't declare io.modelcontextprotocol/events`;
+  return format === 'event-id'
+    ? `${client} declares io.modelcontextprotocol/events, but is on the legacy client list`
+    : `${client} declares io.modelcontextprotocol/events`;
 }
 
 /** A callback URL for logs: the query string can include a token, so it's replaced. */
@@ -222,7 +225,7 @@ export class SubscriptionService {
     const existing = prior.record;
     if (existing && existing.secret !== secret) this.log(`rotated secret for ${id}`);
     this.log(`${existing ? 'refreshed' : 'subscribed'} ${id} until ${expiresAt.toISOString()}`);
-    this.log(`${id}: webhook-id ${webhookIdFormat === 'per-message' ? 'per message' : 'is the eventId'} (${describeClient(settings.webhookIdFormat, request.meta)})`);
+    this.log(`${id}: webhook-id ${webhookIdFormat === 'per-message' ? 'per message' : 'is the eventId'} (${describeClient(settings.webhookIdFormat, webhookIdFormat, request.meta)})`);
 
     return {
       id,

@@ -163,13 +163,13 @@ export class EventGatewayStore implements SubscriptionStore {
       ...(input.webhookIdFormat === 'per-message' && { wid: 'msg' as const }),
     };
     const description = JSON.stringify(metadata);
-    // Checked with the largest delivery block a failure notification can add later, a replay marker and the
-    // per-message marker, so none of them can overflow it, and a refresh can switch the mode.
+    // Checked with the largest delivery block a failure notification can add later and a replay marker, so neither
+    // can overflow it. `wid` is counted only when this write sets it: only a subscribe changes the format, and it runs
+    // this check, so an event-id subscription keeps the room it had before per-message ids existed.
     const worstCase = JSON.stringify({
       ...metadata,
       delivery: { active: false, lastError: 'connection_refused', failedSince: input.updatedAt },
       rp: { f: 9_999_999_999_999, w: 9_999_999_999_999 },
-      wid: 'msg',
     });
     if (worstCase.length > DESCRIPTION_LIMIT) throw new SubscriptionTooLargeError('Subscription arguments are too large to store');
 

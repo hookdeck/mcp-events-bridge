@@ -189,6 +189,21 @@ describe('EventGatewayStore', () => {
     expect(gateway.connections.size).toBe(1);
   });
 
+  it('keeps the room an event-id subscription had before per-message ids, and counts wid only for a per-message one', async () => {
+    const { store } = await setup();
+    // The largest `from` an event-id subscription takes, as before #113; a per-message one is 12 characters shorter.
+    let size = 0;
+    for (let n = 1; n < 400; n++) {
+      const fits = await store.put(input({ id: `sub_${String(n).padStart(32, '0')}`, arguments: { from: 'x'.repeat(n) } })).then(() => true, () => false);
+      if (!fits) break;
+      size = n;
+    }
+    expect(size).toBeGreaterThan(0);
+    await expect(store.put(input({ id: 'sub_e', arguments: { from: 'x'.repeat(size) } }))).resolves.toBeDefined();
+    await expect(store.put(input({ id: 'sub_m', arguments: { from: 'x'.repeat(size) }, webhookIdFormat: 'per-message' }))).rejects.toBeInstanceOf(SubscriptionTooLargeError);
+    await expect(store.put(input({ id: 'sub_n', arguments: { from: 'x'.repeat(size - 12) }, webhookIdFormat: 'per-message' }))).resolves.toBeDefined();
+  });
+
   it('deletes the connection and destination, and leaves the service source', async () => {
     const { gateway, source, store } = await setup();
     const a = await store.put(input());
