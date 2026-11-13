@@ -6,7 +6,7 @@ import { deriveSubscriptionId, verificationKey } from './identity.js';
 import { isValidWebhookSecret } from './secret.js';
 import type { CallbackRegistry } from './callbacks.js';
 import { SubscriptionTooLargeError, healthyDelivery, type CursorPosition, type SubscriptionRecord, type SubscriptionStore } from './store.js';
-import { chooseWebhookIdMode, clientName, declaresEventsExtension } from './webhook-id.js';
+import { chooseWebhookIdFormat, clientName, declaresEventsExtension } from './webhook-id.js';
 
 /*
  * MCP Events webhook subscriptions: subscribe (and refresh), unsubscribe,
@@ -80,9 +80,9 @@ export function describeParams(params: Params): string {
   return JSON.stringify({ ...params, delivery: redacted });
 }
 
-/** Why a subscription got its webhook-id mode, for the log. */
-function describeClient(setting: SubscriptionSettings['webhookId'], meta: unknown): string {
-  if (setting !== 'auto') return `BRIDGE_WEBHOOK_ID=${setting}`;
+/** Why a subscription got its webhook-id format, for the log. */
+function describeClient(setting: SubscriptionSettings['webhookIdFormat'], meta: unknown): string {
+  if (setting !== 'auto') return `BRIDGE_WEBHOOK_ID_FORMAT=${setting}`;
   const name = clientName(meta);
   const client = name === undefined ? 'the client' : `client ${JSON.stringify(name.slice(0, 60))}`;
   return `${client} ${declaresEventsExtension(meta) ? 'declares' : "doesn't declare"} io.modelcontextprotocol/events`;
@@ -186,8 +186,8 @@ export class SubscriptionService {
     }
 
     const expiresAt = new Date(now.getTime() + grantTtlMs(params.ttlMs, settings));
-    // Chosen on every subscribe, so a refresh picks up a client upgrade or a change to BRIDGE_WEBHOOK_ID.
-    const webhookIdMode = chooseWebhookIdMode(settings.webhookId, request.meta);
+    // Chosen on every subscribe, so a refresh picks up a client upgrade or a change to BRIDGE_WEBHOOK_ID_FORMAT.
+    const webhookIdFormat = chooseWebhookIdFormat(settings.webhookIdFormat, request.meta);
     const live = (record: SubscriptionRecord | undefined) => record !== undefined && Date.parse(record.expiresAt) > now.getTime();
     // Read and written in the store's queue, so a concurrent write (a delivery-failure notification) can't be lost or undo this.
     const prior: { record?: SubscriptionRecord } = {};
@@ -208,7 +208,7 @@ export class SubscriptionService {
           replay: cursorCheck && this.deps.cursors && !live(existing) ? cursorCheck.position : live(existing) ? existing!.replay : null,
           // A refresh is the subscriber's liveness signal: delivery is active again.
           delivery: healthyDelivery(),
-          webhookIdMode,
+          webhookIdFormat,
           expiresAt: expiresAt.toISOString(),
           createdAt: existing?.createdAt ?? now.toISOString(),
           updatedAt: now.toISOString(),
@@ -222,7 +222,7 @@ export class SubscriptionService {
     const existing = prior.record;
     if (existing && existing.secret !== secret) this.log(`rotated secret for ${id}`);
     this.log(`${existing ? 'refreshed' : 'subscribed'} ${id} until ${expiresAt.toISOString()}`);
-    this.log(`${id}: webhook-id ${webhookIdMode === 'message' ? 'per message' : 'is the eventId'} (${describeClient(settings.webhookId, request.meta)})`);
+    this.log(`${id}: webhook-id ${webhookIdFormat === 'per-message' ? 'per message' : 'is the eventId'} (${describeClient(settings.webhookIdFormat, request.meta)})`);
 
     return {
       id,

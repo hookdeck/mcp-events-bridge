@@ -175,7 +175,7 @@ describe('bridge server', () => {
     const webhookIds: string[] = [];
     const subscriber = await startSubscriber(port, {}, { declareEvents: true, clientName: 'some-sep-client', onEvent: (_event, headers) => webhookIds.push(String(headers['webhook-id'])) });
     const record = bridge.store.get(subscriber.subscription!.id)!;
-    expect(record.webhookIdMode).toBe('message');
+    expect(record.webhookIdFormat).toBe('per-message');
     expect(logs).toContain(`${record.id}: webhook-id per message (client "some-sep-client" declares io.modelcontextprotocol/events)`);
 
     await deliverFromSource(gateway, subscriber, resendDelivery());
@@ -196,7 +196,7 @@ describe('bridge server', () => {
       const webhookIds: string[] = [];
       const subscriber = await startSubscriber(port, { from }, { ...options, onEvent: (_event, headers) => webhookIds.push(String(headers['webhook-id'])) });
       const record = bridge.store.get(subscriber.subscription!.id)!;
-      expect(record.webhookIdMode).toBe('event');
+      expect(record.webhookIdFormat).toBe('event-id');
       expect(logs).toContain(`${record.id}: webhook-id is the eventId (${reason})`);
       const email = freshEmail();
       await deliverFromSource(gateway, subscriber, { headers: fixture.headers, body: { ...email, data: { ...(email.data as object), from } } });
@@ -264,7 +264,7 @@ describe('bridge server', () => {
     const store = new MemoryStore();
     await store.put({
       id: 'sub_old', principal: 'owner', name: 'email.received', arguments: {}, url: 'https://receiver.example.com/hook',
-      secret: generateWebhookSecret(), replay: null, delivery: healthyDelivery(), webhookIdMode: 'event',
+      secret: generateWebhookSecret(), replay: null, delivery: healthyDelivery(), webhookIdFormat: 'event-id',
       expiresAt: '2099-01-01T00:00:00.000Z', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
     });
     const { logs } = await startBridge({ store });

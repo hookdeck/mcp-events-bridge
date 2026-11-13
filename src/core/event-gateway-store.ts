@@ -160,7 +160,7 @@ export class EventGatewayStore implements SubscriptionStore {
       ...(!isHealthy(input.delivery) && { delivery: input.delivery }),
       ca: placement.cursorArgs,
       ...(input.replay && { rp: input.replay }),
-      ...(input.webhookIdMode === 'message' && { wid: 'msg' as const }),
+      ...(input.webhookIdFormat === 'per-message' && { wid: 'msg' as const }),
     };
     const description = JSON.stringify(metadata);
     // Checked with the largest delivery block a failure notification can add later, a replay marker and the
@@ -206,7 +206,7 @@ export class EventGatewayStore implements SubscriptionStore {
       secret,
       replay: metadata.rp ?? null,
       delivery: metadata.delivery ?? healthyDelivery(),
-      webhookIdMode: metadata.wid === 'msg' ? 'message' : 'event',
+      webhookIdFormat: metadata.wid === 'msg' ? 'per-message' : 'event-id',
       expiresAt: metadata.expiresAt,
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,

@@ -156,7 +156,7 @@ export async function createBridgeServer(config: ResolvedConfig, options: Bridge
     publish: (subscription, envelope) =>
       hookdeck.publish(
         REPLAY_SOURCE,
-        { 'content-type': 'application/json', 'webhook-id': deliveryWebhookId(subscription.webhookIdMode, envelope.eventId), 'x-mcp-subscription-id': subscription.id },
+        { 'content-type': 'application/json', 'webhook-id': deliveryWebhookId(subscription.webhookIdFormat, envelope.eventId), 'x-mcp-subscription-id': subscription.id },
         JSON.stringify(envelope),
       ),
     settled: async (connectionId, count, timeoutMs) => {

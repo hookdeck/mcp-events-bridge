@@ -213,7 +213,7 @@ export async function migrate(deps: { hookdeck: MigrationHookdeck; config: Resol
           replay: null,
           delivery: metadata.delivery ?? healthyDelivery(),
           // 0.7 and earlier sent the eventId; the client's next refresh picks the mode.
-          webhookIdMode: 'event',
+          webhookIdFormat: 'event-id',
           expiresAt: metadata.expiresAt,
           createdAt: metadata.createdAt,
           updatedAt: now.toISOString(),

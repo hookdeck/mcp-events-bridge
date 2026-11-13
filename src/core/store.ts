@@ -1,5 +1,5 @@
 import type { CallbackFailureReason } from './errors.js';
-import type { WebhookIdMode } from './webhook-id.js';
+import type { WebhookIdFormat } from './webhook-id.js';
 
 /*
  * Subscription state. Event Gateway is the store: each subscription is a connection from its service's source to a
@@ -32,8 +32,8 @@ export interface SubscriptionInput {
   /** While a replay runs, where it started: every delivery's cursor has it until the replay is done. */
   replay: CursorPosition | null;
   delivery: SubscriptionDeliveryState;
-  /** Whether deliveries' `webhook-id` is the `eventId` (legacy clients) or per message (SEP-3415). See webhook-id.ts. */
-  webhookIdMode: WebhookIdMode;
+  /** What deliveries' `webhook-id` holds: the `eventId` (legacy clients) or a per-message id (SEP-3415). See webhook-id.ts. */
+  webhookIdFormat: WebhookIdFormat;
   expiresAt: string;
   createdAt: string;
   updatedAt: string;

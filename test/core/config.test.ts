@@ -79,12 +79,12 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig(config(), { ...base, BRIDGE_MCP_SECRET_URL: 'no' })).toThrow(/BRIDGE_MCP_SECRET_URL must be true or false/);
   });
 
-  it('chooses webhook-id per subscription (auto) unless BRIDGE_WEBHOOK_ID or subscriptions.webhookId says event or message', () => {
-    expect(resolveConfig(config(), base).subscriptions.webhookId).toBe('auto');
-    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID: 'event' }).subscriptions.webhookId).toBe('event');
-    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID: 'message' }).subscriptions.webhookId).toBe('message');
-    expect(resolveConfig(config({ subscriptions: { webhookId: 'event' } }), { ...base, BRIDGE_WEBHOOK_ID: 'message' }).subscriptions.webhookId).toBe('event');
-    expect(() => resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID: 'sep' })).toThrow(/BRIDGE_WEBHOOK_ID \(subscriptions.webhookId\) must be auto, event, message/);
+  it('chooses webhook-id per subscription (auto) unless BRIDGE_WEBHOOK_ID_FORMAT or subscriptions.webhookIdFormat says event-id or per-message', () => {
+    expect(resolveConfig(config(), base).subscriptions.webhookIdFormat).toBe('auto');
+    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'event-id' }).subscriptions.webhookIdFormat).toBe('event-id');
+    expect(resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'per-message' }).subscriptions.webhookIdFormat).toBe('per-message');
+    expect(resolveConfig(config({ subscriptions: { webhookIdFormat: 'event-id' } }), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'per-message' }).subscriptions.webhookIdFormat).toBe('event-id');
+    expect(() => resolveConfig(config(), { ...base, BRIDGE_WEBHOOK_ID_FORMAT: 'sep' })).toThrow(/BRIDGE_WEBHOOK_ID_FORMAT \(subscriptions.webhookIdFormat\) must be auto, event-id, per-message/);
   });
 
   it('rejects a BRIDGE_MCP_SECRET that isn\'t URL-safe, such as a pasted line with a note after the value', () => {

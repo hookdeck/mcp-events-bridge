@@ -17,7 +17,7 @@ const input = (over: Partial<SubscriptionInput> = {}): SubscriptionInput => ({
   secret: SECRET,
   replay: null,
   delivery: healthyDelivery(),
-  webhookIdMode: 'event',
+  webhookIdFormat: 'event-id',
   expiresAt: '2026-11-05T12:00:00.000Z',
   createdAt: '2026-10-05T12:00:00.000Z',
   updatedAt: '2026-10-05T12:00:00.000Z',
@@ -91,16 +91,16 @@ describe('EventGatewayStore', () => {
 
   it('marks a per-message webhook-id with wid in the description, reads it back on load, and drops it when a refresh switches to the eventId', async () => {
     const { gateway, hookdeck, place, store } = await setup();
-    const record = await store.put(input({ webhookIdMode: 'message' }));
+    const record = await store.put(input({ webhookIdFormat: 'per-message' }));
     expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).wid).toBe('msg');
     const fresh = new EventGatewayStore(hookdeck, place);
     await fresh.load();
-    expect(fresh.get(record.id)?.webhookIdMode).toBe('message');
-    await store.update(record.id, (current) => ({ ...current!, webhookIdMode: 'event' }));
+    expect(fresh.get(record.id)?.webhookIdFormat).toBe('per-message');
+    await store.update(record.id, (current) => ({ ...current!, webhookIdFormat: 'event-id' }));
     expect(JSON.parse(gateway.connections.get(record.connectionId)!.description!).wid).toBeUndefined();
     const again = new EventGatewayStore(hookdeck, place);
     await again.load();
-    expect(again.get(record.id)?.webhookIdMode).toBe('event');
+    expect(again.get(record.id)?.webhookIdFormat).toBe('event-id');
   });
 
   it('rebuilds the same records on load, reading each secret from destination auth', async () => {

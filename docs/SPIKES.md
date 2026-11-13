@@ -363,7 +363,7 @@ Checks for [#113](https://github.com/hookdeck/mcp-events-bridge/issues/113), on 
 
 - A random `webhook-id` set in the transformation is stable across retries, so no hash of the subscription and `eventId` is needed (which the SEP forbids anyway).
 - Dedupe has to move to `body.eventId`: a service's resend runs the transformation again and gets a new random id.
-- The per-request `_meta` declaration alone would break TanStack AI, so the bridge keeps the `eventId` for a legacy list of client names, with `BRIDGE_WEBHOOK_ID=event` for a renamed client. See `ARCHITECTURE.md`, "Which `webhook-id`".
+- The per-request `_meta` declaration alone would break TanStack AI, so the bridge keeps the `eventId` for a legacy list of client names, with `BRIDGE_WEBHOOK_ID_FORMAT=event-id` for a renamed client. See `ARCHITECTURE.md`, "Which `webhook-id`".
 
 ### Resources
 
